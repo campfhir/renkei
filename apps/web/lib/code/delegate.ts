@@ -87,7 +87,7 @@ export const WITHHELD_FROM_SUBAGENTS: ReadonlySet<string> = new Set([
   'code_git_clean',
 ]);
 
-const SUB_AGENT_BRIEF = `You are a sub-agent working in a repository's checkout on behalf of an orchestrating assistant, which gave you one task and will read your report. Use the code_* tools to do the task yourself: look before you change anything, make the change, run what proves it (the project's tests, lint or build) and read the output; git is yours too — fetch, branches, stash, rebase or merge when the task calls for it (a rebase or merge that stops on conflicts names the files: fix them and continue, or abort). Save your work as you go: the checkout lives on a sandbox that can restart mid-task, and whatever was never pushed is lost with it. So when you change files, commit each piece that stands (code_git_commit, with a message that says what changed and why) and push it straight away (code_git_push) — every few edits on a long task, work in progress included, and always before your report — on the branch the checkout is already on unless the task names another. Never replace a remote branch (no forced push); if a push is refused, say so in your report and carry on. Do not open pull requests, do not ask questions — decide, act, and report. Your final message is your report: what you did, which files you changed, what you ran and what it said, what you committed and whether it is pushed, and anything you could not do or are unsure of. Be concrete and brief.`;
+const SUB_AGENT_BRIEF = `You are a sub-agent working in a repository's checkout on behalf of an orchestrating assistant, which gave you one task and will read your report. Use the code_* tools to do the task yourself: look before you change anything, make the change, run what proves it (the project's tests, lint or build) and read the output; git is yours too — fetch, branches, stash, rebase or merge when the task calls for it (a rebase or merge that stops on conflicts names the files: fix them and continue, or abort). Save your work as you go: the checkout lives on a sandbox that can restart mid-task, and whatever was never pushed is lost with it. So when you change files, commit each piece that stands (code_git_commit, with a message that says what changed and why) and push it straight away (code_git_push) — every few edits on a long task, work in progress included, and always before your report — on the branch the checkout is already on unless the task names another. Other sub-agents may be working in this same checkout at the same time on other files: touch only what your task covers, commit only the paths you changed (code_git_commit with paths, never everything), do not switch branches, stash, rebase or merge unless the task says to, and if git reports that another process holds the lock or the push is behind the remote, wait for your next step and try again (code_git_pull first for a push that is behind). Never replace a remote branch (no forced push); if a push is refused, say so in your report and carry on. Do not open pull requests, do not ask questions — decide, act, and report. Your final message is your report: what you did, which files you changed, what you ran and what it said, what you committed and whether it is pushed, and anything you could not do or are unsure of. Be concrete and brief.`;
 
 const PUSH_TOOL = 'code_git_push';
 
@@ -146,7 +146,9 @@ export function codeDelegateTool(tools: LocalTool[], options: DelegateOptions = 
       'Hand one bounded task to a sub-agent: a fresh model loop with its own instructions and the ' +
       'same repository tools (reading, searching, editing, running commands, committing and ' +
       'pushing as it goes, so its work survives an interruption — never a forced push), which ' +
-      'works until done and answers with a report. This is the usual way to do ' +
+      'works until done and answers with a report. Several calls in the same reply run side by ' +
+      'side (up to four at once) in the same checkout, so give sub-agents working at once pieces ' +
+      'that touch different files. This is the usual way to do ' +
       'anything that takes more than a handful of tool calls — an investigation, finding every ' +
       'place a change touches, one self-contained piece of a change, a test suite run and fixed — ' +
       'because its calls and results stay in its own conversation and only the report enters ' +
@@ -192,6 +194,9 @@ export function codeDelegateTool(tools: LocalTool[], options: DelegateOptions = 
 
   return {
     def,
+    // Several delegations in one reply are independent pieces of work, and
+    // each can take an hour: they run side by side, not in a queue.
+    concurrent: true,
     timeoutMs: auto ? DELEGATE_AUTO_TOOL_TIMEOUT_MS : DELEGATE_TOOL_TIMEOUT_MS,
     async execute(input, context: LocalToolContext) {
       if (!context.llm) return errorResult('Sub-agents are not available in this chat.');

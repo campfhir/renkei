@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'changed',
+        title: 'Sub-agents run side by side',
+        detail:
+          'When a chat hands several independent pieces of work to sub-agents in one reply, they now work at the same time, up to four at once, instead of one after another. In a code project this used to queue; ordinary chats are now told to send independent pieces out together as well.',
+      },
+      {
+        kind: 'changed',
         title: 'Code projects commit and push as they work',
         detail:
           'A code chat now commits and pushes its branch as each piece of work stands instead of once at the end, and its sub-agents can commit and push their own work too (never a forced push). A restart of the sandbox or the server in the middle of a run no longer takes unpushed work with it.',

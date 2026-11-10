@@ -966,6 +966,7 @@ async function executeTurnBody(
         localTools,
         localContext,
         readOnlyTools: new Set([...surface.readOnlyTools, ...localTools.readOnlyNames()]),
+        concurrentTools: new Set(localTools.concurrentNames()),
         widgetResourceUris: surface.widgetResourceUris,
         discoverableTools: surface.discoverable.map((entry) => entry.def),
         // Every call that acts asks first, unless this person has said

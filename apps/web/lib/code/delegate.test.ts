@@ -488,6 +488,10 @@ describe('code_delegate', () => {
     expect(pushes).toEqual([]);
   });
 
+  it('is a tool whose calls in one reply run side by side', () => {
+    expect(codeDelegateTool([readTool]).concurrent).toBe(true);
+  });
+
   it('tells the sub-agent to commit and push as it goes', async () => {
     let system = '';
     const llm = llmOf({

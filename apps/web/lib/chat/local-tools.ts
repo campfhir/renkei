@@ -126,6 +126,14 @@ export interface LocalTool {
    */
   readOnly?: boolean;
   /**
+   * The tool acts, but several calls of it in one round do not depend on
+   * each other, so the runner runs them side by side rather than one
+   * after another (a code project's sub-agents: each is a loop of its
+   * own that can run for an hour). Each call is still asked for where
+   * acting calls are.
+   */
+  concurrent?: boolean;
+  /**
    * Overrides the turn's own `toolTimeoutMs` for this call. Almost every
    * local tool finishes in seconds and is well served by the turn's
    * default; a tool that runs a bounded loop of its own (a code project's
@@ -143,6 +151,8 @@ export interface LocalToolSet {
   defs(): LlmToolDef[];
   /** The names of the tools declared read-only. */
   readOnlyNames(): string[];
+  /** The names of the acting tools whose calls may run beside each other. */
+  concurrentNames(): string[];
   /** This tool's own timeout override, or null when the turn's own limit applies. */
   timeoutMsFor(name: string): number | null;
   run(name: string, input: unknown, context: LocalToolContext): Promise<McpToolResult>;
@@ -175,6 +185,10 @@ export function createLocalToolSet(tools: LocalTool[]): LocalToolSet {
     defs: () => [...byName.values()].map((tool) => tool.def),
     readOnlyNames: () =>
       [...byName.values()].filter((tool) => tool.readOnly === true).map((tool) => tool.def.name),
+    concurrentNames: () =>
+      [...byName.values()]
+        .filter((tool) => tool.concurrent === true && tool.readOnly !== true)
+        .map((tool) => tool.def.name),
     timeoutMsFor: (name) => byName.get(name)?.timeoutMs ?? null,
     async run(name, input, context) {
       const tool = byName.get(name);

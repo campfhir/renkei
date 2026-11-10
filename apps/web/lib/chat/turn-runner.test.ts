@@ -265,6 +265,15 @@ describe('toolGroups', () => {
     ]);
   });
 
+  it('batches consecutive concurrent acts together, apart from the reads around them', () => {
+    const isConcurrent = (use: string) => use.startsWith('d');
+    expect(
+      toolGroups(['r1', 'd1', 'd2', 'r2', 'a1', 'd3', 'd4', 'd5'], isRead, 2, isConcurrent)
+    ).toEqual([['r1'], ['d1', 'd2'], ['r2'], ['a1'], ['d3', 'd4'], ['d5']]);
+    expect(toolGroups(['d1', 'd2'], isRead, 1, isConcurrent)).toEqual([['d1'], ['d2']]);
+    expect(toolGroups(['d1', 'd2'], isRead, 4)).toEqual([['d1'], ['d2']]);
+  });
+
   it('runs everything alone at width 1 or with nothing vouched for', () => {
     expect(toolGroups(['r1', 'r2', 'a1'], isRead, 1)).toEqual([['r1'], ['r2'], ['a1']]);
     expect(toolGroups(['r1', 'r2'], () => false, 4)).toEqual([['r1'], ['r2']]);
@@ -604,6 +613,55 @@ describe('runChatTurn', () => {
     expect(
       rows[1].blocks.map((block) => (block.type === 'tool_result' ? block.toolUseId : ''))
     ).toEqual(['tu_a', 'tu_b', 'tu_c', 'tu_d']);
+  });
+
+  it('runs several sub-agents started in one reply side by side', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-2e');
+    const gates = new Map<string, () => void>();
+    const delegate: LocalTool = {
+      def: { name: 'code_delegate', description: 'delegate', inputSchema: { type: 'object' } },
+      concurrent: true,
+      async execute(input) {
+        const piece = String(input.task);
+        await new Promise<void>((resolve) => gates.set(piece, resolve));
+        return textResult(`report on ${piece}`);
+      },
+    };
+    const localTools = createLocalToolSet([delegate]);
+    const reply: LlmResponse = {
+      content: [
+        { type: 'tool_use', id: 'tu_a', name: 'code_delegate', input: { task: 'a' } },
+        { type: 'tool_use', id: 'tu_b', name: 'code_delegate', input: { task: 'b' } },
+      ],
+      stopReason: 'tool_use',
+      usage: { inputTokens: 20, outputTokens: 8 },
+    };
+    const run = runChatTurn(
+      {
+        llm: llmOf(provider([reply, text('Done')])),
+        tools: [],
+        mcp: null,
+        localTools,
+        localContext,
+        concurrentTools: new Set(localTools.concurrentNames()),
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-2e')
+    );
+    // Both are at work before either reports.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect([...gates.keys()].sort()).toEqual(['a', 'b']);
+    gates.get('b')!();
+    gates.get('a')!();
+    const outcome = await run;
+    expect(outcome.status).toBe('completed');
+    const rows = [...fake.rows.values()].sort((a, b) => a.seq - b.seq);
+    expect(
+      rows[1].blocks.map((block) => (block.type === 'tool_result' ? block.content : ''))
+    ).toEqual(['report on a', 'report on b']);
   });
 
   it('keeps the files a tool hands back and announces them on the stream', async () => {
