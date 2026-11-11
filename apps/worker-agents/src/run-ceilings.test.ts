@@ -11,6 +11,9 @@ jest.mock('@renkei/settings', () => ({
     ok: true,
     val: { agentMaxChainDepth: 3, agentMaxRunsPerDay: orgCap },
   }),
+  // Nobody here is over a token limit: these tests are about the run ceilings.
+  checkTokenLimit: async () => null,
+  tokenLimitMessage: () => '',
 }));
 
 import { createMemoryDataStore, getDataStore, registerDataStore, resetDataStore } from '@renkei/db';

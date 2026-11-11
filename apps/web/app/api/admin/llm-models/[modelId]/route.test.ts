@@ -19,7 +19,6 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import {
   AAD_PURPOSE,
   aadFor,
-  decrypt,
   decryptBoundValue,
   encrypt,
   parseEncryptionKey,
