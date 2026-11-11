@@ -112,6 +112,8 @@ export interface CodeToolBinding {
   repoProvider: string;
   /** The deployment's origin, for the host's app reader when a token needs refreshing. */
   origin: string;
+  /** The organization's preview host, when previews are served on one (preview-host.ts). */
+  previewHost?: string;
   /**
    * Bring the checkout back when the worker says it is gone (lib/code/turn.ts):
    * clone it again, or adopt one another turn already cloned. Absent, a
@@ -1215,7 +1217,13 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       repoFullName: binding.repoFullName,
       failed,
     }),
-    ...previewTools({ target, ref, origin: binding.origin, failed }),
+    ...previewTools({
+      target,
+      ref,
+      origin: binding.origin,
+      ...(binding.previewHost ? { previewHost: binding.previewHost } : {}),
+      failed,
+    }),
     ...pipelineVariableTools({
       repoProvider: binding.repoProvider,
       repoFullName: binding.repoFullName,

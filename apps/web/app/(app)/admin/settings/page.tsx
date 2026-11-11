@@ -83,6 +83,7 @@ export default async function SettingsPage(): Promise<React.ReactNode> {
     sandboxServicePids: settings.sandboxServicePids,
     sandboxWorkspacesDebug: settings.sandboxWorkspacesDebug,
     admanagerProductName: settings.admanagerProductName,
+    codePreviewHost: settings.codePreviewHost,
   };
 
   return (

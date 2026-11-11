@@ -25,6 +25,7 @@ import {
 } from '@/lib/code/previews';
 import { getOrigin } from '@/lib/get-origin';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { codePreviewHost } from '@/lib/code/preview-host-server';
 import { logger } from '@/lib/logger';
 import { who } from '@/lib/log-actor';
 
@@ -36,6 +37,7 @@ export async function GET(
   const ready = await codeProjectContext(request, projectId, { chatId });
   if (!ready.ok) return ready.response;
   const origin = await getOrigin(request);
+  const previewHost = await codePreviewHost();
   const listed = await sbPreviewList(codeProjectTarget(projectId));
   if (!listed.ok) {
     const failure = clientFailure(listed.err);
@@ -58,7 +60,12 @@ export async function GET(
   return NextResponse.json({
     // Each port's addresses a browser opens; a token travels only inside its link.
     previews: listed.val.map((preview) =>
-      withAddresses(preview, origin.ok ? origin.val : '', { projectId, chatId: chatId ?? null })
+      withAddresses(
+        preview,
+        origin.ok ? origin.val : '',
+        { projectId, chatId: chatId ?? null },
+        previewHost
+      )
     ),
   });
 }
@@ -79,12 +86,16 @@ export async function POST(
   if (!origin.ok)
     return jsonError(500, 'origin', 'The deployment’s address could not be determined.');
   // One share token per port when public: each port's link is its own secret.
-  const addresses = previewAddresses(origin.val, {
-    projectId,
-    chatId: chatId ?? null,
-    name: input.name,
-    ports: input.ports.map((name) => ({ name, token: input.public ? mintPreviewToken() : null })),
-  });
+  const addresses = previewAddresses(
+    origin.val,
+    {
+      projectId,
+      chatId: chatId ?? null,
+      name: input.name,
+      ports: input.ports.map((name) => ({ name, token: input.public ? mintPreviewToken() : null })),
+    },
+    await codePreviewHost()
+  );
   const started = await sbPreviewStart(codeProjectTarget(projectId), {
     id: workspaceId,
     name: input.name,

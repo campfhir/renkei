@@ -14,6 +14,8 @@ import { jsonError } from '@/lib/chat/route-support';
 import { codeProjectContext } from '@/lib/code/route-access';
 import { codeProjectTarget } from '@/lib/code/scope';
 import { previewRelay } from '@/lib/code/previews';
+import { hostMemberPath } from '@/lib/code/preview-host';
+import { movedToPreviewHost } from '@/lib/code/preview-host-server';
 
 type Params = Promise<{ projectId: string; chatId?: string; name: string; path?: string[] }>;
 
@@ -23,6 +25,12 @@ async function relay(request: NextRequest, { params }: { params: Params }): Prom
   if (!ready.ok) return ready.response;
   const name = validatePreviewName(rawName);
   if (!name.ok) return jsonError(404, 'not-found', 'No such preview');
+  const moved = await movedToPreviewHost(
+    request,
+    hostMemberPath({ projectId, chatId: chatId ?? null, name: name.name }),
+    path
+  );
+  if (moved) return moved;
   return previewRelay(
     request,
     { subject: codeProjectTarget(projectId).subject, name: name.name },

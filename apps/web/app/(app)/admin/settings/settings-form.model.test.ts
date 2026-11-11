@@ -67,6 +67,7 @@ const STORED: EditableSettings = {
   sandboxServicePids: 512,
   sandboxWorkspacesDebug: false,
   admanagerProductName: 'Renkei',
+  codePreviewHost: '',
 };
 
 function run(...actions: SettingsAction[]): SettingsState {

@@ -376,6 +376,15 @@ export interface OrgSettings {
    */
   admanagerProductName: string;
   /**
+   * The host name code-project previews are served on, e.g.
+   * `preview.example.com`: a separate origin from the app's, so a preview's
+   * own HTML and script never run where the app's session is. The
+   * operator's reverse proxy forwards that host to the app's
+   * `/api/code/preview-host/` prefix. Empty serves previews on the app's
+   * own origin, as before the setting existed.
+   */
+  codePreviewHost: string;
+  /**
    * The most tokens one person may spend in a week, their agents' runs
    * included (the token ledger, llm_calls: input plus output); 0 sets no
    * weekly limit. Past it no new chat turn or agent run starts for them
@@ -483,6 +492,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   sandboxServicePids: 512,
   sandboxWorkspacesDebug: false,
   admanagerProductName: 'Renkei',
+  codePreviewHost: '',
   tokenLimitWeekly: 0,
   tokenLimitMonthly: 0,
   tokenLimitWeekResetDay: 1,
@@ -683,6 +693,7 @@ export async function getOrgSettings(): Promise<Result<OrgSettings, 'DB_ERROR'>>
       stored.get('admanager_product_name'),
       d.admanagerProductName
     ),
+    codePreviewHost: coerceString(stored.get('code_preview_host'), d.codePreviewHost).toLowerCase(),
     tokenLimitWeekly: Number(coerce(stored.get('token_limit_weekly'), d.tokenLimitWeekly)),
     tokenLimitMonthly: Number(coerce(stored.get('token_limit_monthly'), d.tokenLimitMonthly)),
     tokenLimitWeekResetDay: Number(
@@ -794,6 +805,7 @@ export async function setOrgSettings(
     ['sandbox_service_pids', updates.sandboxServicePids],
     ['sandbox_workspaces_debug', updates.sandboxWorkspacesDebug],
     ['admanager_product_name', updates.admanagerProductName],
+    ['code_preview_host', updates.codePreviewHost],
     ['token_limit_weekly', updates.tokenLimitWeekly],
     ['token_limit_monthly', updates.tokenLimitMonthly],
     ['token_limit_week_reset_day', updates.tokenLimitWeekResetDay],

@@ -944,6 +944,51 @@ the request's origin is used) for the minted URLs to be reachable.
   (uploads) and reports a timeout error — if a request to the app still
   never returns, the layer eating it is in front of the app.
 
+### A host of their own for code-project previews
+
+A code-project preview is a repository's or a model's code answering in a
+browser. Served on the app's own address, its pages run where the app's
+session is and can call the app's API as whoever opened them. Give previews
+a host name of their own and that stops: set **Preview host** under
+admin → Settings → Code previews (for example `preview.example.com`, not the
+app's own host), and point that host at the app's
+`/api/code/preview-host/` path. The proxy does only that — the app decides
+which preview a path names and who may see it:
+
+```nginx
+server {
+  listen 443 ssl;
+  server_name preview.example.com;
+  # ssl_certificate / ssl_certificate_key for preview.example.com
+
+  location / {
+    # Everything on this host goes to the one prefix, path and query kept.
+    proxy_pass http://127.0.0.1:3000/api/code/preview-host/;
+    proxy_http_version 1.1;
+    # The app answers this prefix only for the preview host: tell it which
+    # host the request was for.
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_buffering off;
+  }
+}
+```
+
+With the host set, preview addresses (the ones a chat answers with, the
+share links, `RENKEI_PREVIEW_URL` inside the preview) are on that host, and
+the app's own preview paths redirect there instead of serving. A share link
+is `https://preview.example.com/t/<token>/`. A member's preview is
+`https://preview.example.com/p/<project>/…`: the first visit bounces through
+the app, which checks the person's session and hands them a one-minute
+ticket; the preview host then keeps its own cookie (`renkei_preview`,
+12 hours) and checks project access on every request. That cookie is signed
+with a key derived from `TOKEN_ENCRYPTION_KEY`, so rotating that key signs
+everyone out of the preview host only. Previews on the one host can see each
+other's cookies; they cannot see the app's. Leave the setting empty and
+previews are served on the app's own address, as before.
+
 ## SSL/TLS with Let's Encrypt
 
 ```bash

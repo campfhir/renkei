@@ -263,3 +263,28 @@ describe('the start payload and the addresses', () => {
     ).toBe('https://r.example/api/code/projects/p1/previews/web/app/');
   });
 });
+
+describe('addresses on the organization’s preview host', () => {
+  it('are on that host, by its own layout, and nothing is addressed on the app', () => {
+    const addresses = previewAddresses(
+      'https://app.example.com',
+      {
+        projectId: 'p1',
+        chatId: 'c1',
+        name: 'web',
+        ports: [
+          { name: 'app', token: 'tok-a' },
+          { name: 'api', token: null },
+        ],
+      },
+      'preview.example.com'
+    );
+    expect(addresses.url).toBe('https://preview.example.com/p/p1/c/c1/web/app/');
+    expect(addresses.publicUrl).toBe('https://preview.example.com/t/tok-a/');
+    expect(addresses.ports[1]).toMatchObject({
+      url: 'https://preview.example.com/p/p1/c/c1/web/ports/api/',
+      publicUrl: null,
+    });
+    expect(JSON.stringify(addresses)).not.toContain('app.example.com');
+  });
+});

@@ -585,6 +585,15 @@ through the signed-in relay calls an API reached through the same relay
 from the same origin, so the member's session covers both and no CORS is
 involved.
 
+**A host of their own.** That same origin is, by default, the app's own:
+a preview's script runs where the app's session is. An organization that
+sets a preview host (admin → Settings; `lib/code/preview-host.ts`,
+DEPLOYMENT.md) serves every preview on that host instead — share links at
+`/t/<token>/`, members' previews at `/p/<project>/…` behind the preview
+host's own signed cookie, handed over by the app — and the app's own
+preview paths redirect there. The app's cookies never reach a preview on
+either arrangement (`previewRelay` strips them both ways).
+
 **Lifetime and bounds.** A preview is working state in the worker's memory
 and process table: at most 3 per project and as many ports as the pool
 holds across the worker, alive 4 hours past its last

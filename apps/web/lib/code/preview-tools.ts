@@ -41,6 +41,8 @@ export interface PreviewToolDeps {
   ref: { id: string };
   /** The deployment's origin, which the addresses hang off. */
   origin: string;
+  /** The organization's preview host, when previews are served on one (preview-host.ts). */
+  previewHost?: string;
   failed: (error: SandboxClientError) => McpToolResult;
 }
 
@@ -81,12 +83,16 @@ export function previewTools(deps: PreviewToolDeps): LocalTool[] {
     context: { projectId: string | null; chatId: string },
     preview: { name: string; ports: ReadonlyArray<{ name: string; token: string | null }> }
   ) =>
-    previewAddresses(deps.origin, {
-      projectId: context.projectId ?? '',
-      chatId: context.chatId,
-      name: preview.name,
-      ports: preview.ports,
-    });
+    previewAddresses(
+      deps.origin,
+      {
+        projectId: context.projectId ?? '',
+        chatId: context.chatId,
+        name: preview.name,
+        ports: preview.ports,
+      },
+      deps.previewHost ?? ''
+    );
 
   return [
     {

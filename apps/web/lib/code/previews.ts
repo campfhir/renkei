@@ -36,6 +36,12 @@ import {
   type WirePreviewPort,
 } from '@renkei/sandbox-client';
 import { sessionCookieName } from '@/lib/session';
+import {
+  hostMemberPath,
+  hostTokenPath,
+  previewHostBase,
+  PREVIEW_SESSION_COOKIE,
+} from './preview-host';
 
 export interface PreviewsView {
   previews: WirePreview[];
@@ -115,20 +121,30 @@ export function previewAddresses(
     chatId: string | null;
     name: string;
     ports: ReadonlyArray<{ name: string; token: string | null }>;
-  }
+  },
+  /** The organization's preview host (preview-host.ts); '' serves previews on the app's origin. */
+  previewHost = ''
 ): PreviewAddresses {
-  const base = origin.replace(/\/$/, '');
-  const ports = input.ports.map((port, index) => ({
-    name: port.name,
-    url: `${base}${previewProxyPath({
+  const base = previewHost ? previewHostBase(previewHost) : origin.replace(/\/$/, '');
+  const ports = input.ports.map((port, index) => {
+    const ref = {
       projectId: input.projectId,
       chatId: input.chatId,
       name: input.name,
       ...(index === 0 ? {} : { port: port.name }),
-    })}`,
-    publicUrl: port.token ? `${base}${publicPreviewPath(port.token)}` : null,
-    token: port.token,
-  }));
+    };
+    const publicPath = port.token
+      ? previewHost
+        ? hostTokenPath(port.token)
+        : publicPreviewPath(port.token)
+      : null;
+    return {
+      name: port.name,
+      url: `${base}${previewHost ? hostMemberPath(ref) : previewProxyPath(ref)}`,
+      publicUrl: publicPath ? `${base}${publicPath}` : null,
+      token: port.token,
+    };
+  });
   return { url: ports[0]?.url ?? '', publicUrl: ports[0]?.publicUrl ?? null, ports };
 }
 
@@ -151,13 +167,18 @@ export type ListedPreview = Omit<WirePreview, 'ports'> & {
 export function withAddresses(
   preview: WirePreview,
   origin: string,
-  scope: { projectId: string; chatId: string | null }
+  scope: { projectId: string; chatId: string | null },
+  previewHost = ''
 ): ListedPreview {
-  const addresses = previewAddresses(origin, {
-    ...scope,
-    name: preview.name,
-    ports: preview.ports,
-  });
+  const addresses = previewAddresses(
+    origin,
+    {
+      ...scope,
+      name: preview.name,
+      ports: preview.ports,
+    },
+    previewHost
+  );
   return {
     ...preview,
     url: addresses.url,
@@ -174,13 +195,17 @@ export function withAddresses(
 const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
 
 /**
- * The web app's own cookies. A preview is served on the app's origin and
- * runs a repository's or a model's code, so it is neither sent these nor
- * allowed to set them: the session, and the sign-in and connect-flow state.
+ * The web app's own cookies. A preview runs a repository's or a model's
+ * code, so it is neither sent these nor allowed to set them: the session,
+ * the sign-in and connect-flow state, and the preview host's own session
+ * (preview-host.ts).
  */
 function isAppCookie(name: string): boolean {
   return (
-    name === sessionCookieName() || name.startsWith('oidc_') || name.startsWith('connect_state_')
+    name === sessionCookieName() ||
+    name === PREVIEW_SESSION_COOKIE ||
+    name.startsWith('oidc_') ||
+    name.startsWith('connect_state_')
   );
 }
 

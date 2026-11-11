@@ -20,6 +20,8 @@ jest.mock('./checkout', () => ({
 }));
 jest.mock('@/lib/chat/store', () => ({ getChatRow: jest.fn() }));
 jest.mock('@/lib/chat/projects', () => ({ getProjectRow: jest.fn() }));
+// Previews on the app's own origin: no preview host is set here.
+jest.mock('./preview-host-server', () => ({ codePreviewHost: jest.fn(async () => '') }));
 jest.mock('./tools', () => ({
   codeTools: jest.fn(() => [{ def: { name: 'code_ls' }, execute: jest.fn() }]),
 }));

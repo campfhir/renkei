@@ -75,6 +75,11 @@ const NON_SESSION_AUTH: Record<string, string> = {
     'public (lib/code/previews.ts), checked for shape here and answered by the sandbox worker ' +
     'only while it holds that token; it dies with the preview (docs/sandbox-workspaces-design.md, ' +
     '“Share links”)',
+  'api/code/preview-host/[[...path]]/route.ts':
+    'the organization’s preview host (lib/code/preview-host.ts): answers only for that host, ' +
+    'never the app’s own; a share link by its opaque token, a member’s preview by the preview ' +
+    'host’s own HMAC-signed cookie (set from a one-minute ticket the app mints for a signed-in ' +
+    'person) with project access checked against that subject on every request',
   'api/webhooks/microsoft/[accountId]/route.ts':
     'per-subscription clientState secret matched against webhook_subscriptions',
   'api/webhooks/webex/user/[accountId]/route.ts':

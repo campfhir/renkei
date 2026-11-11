@@ -41,6 +41,7 @@ import { ensureChatWorktree } from './worktree';
 import { codeProjectTarget } from './scope';
 import { codeTools, type CheckoutRecovery } from './tools';
 import type { ResourceRole } from '@/lib/chat/access';
+import { codePreviewHost } from './preview-host-server';
 import {
   CLONE_WAIT_MS,
   awaitClone,
@@ -201,7 +202,11 @@ export async function codeProjectContext(
   // The org's roster, read once per turn: the orchestrator picks a
   // sub-agent's model from it per task (delegate.ts) — the same enabled
   // rows the composer's own picker offers.
-  const [env, subagentModels] = await Promise.all([sbEnvList(target), listChatModels()]);
+  const [env, subagentModels, previewHost] = await Promise.all([
+    sbEnvList(target),
+    listChatModels(),
+    codePreviewHost(),
+  ]);
   const envNames = env.ok ? env.val.map((variable) => variable.name) : [];
   const allTools = codeTools({
     target,
@@ -210,6 +215,7 @@ export async function codeProjectContext(
     repoFullName: project.repo.fullName,
     repoProvider: project.repo.provider,
     origin: actor.origin ?? getPublicBaseUrl() ?? '',
+    ...(previewHost ? { previewHost } : {}),
     recover: (lostId) => recoverCheckout(project, actor.chat, actor, target, lostId),
     servicesEnabled,
     ...(actor.auto ? { auto: true } : {}),
