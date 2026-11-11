@@ -91,6 +91,16 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     }
   }
 
+  // A month holds at least a week: 0 is no limit, so only two real limits can conflict.
+  const weeklyAfter = updates.tokenLimitWeekly ?? current.val.tokenLimitWeekly;
+  const monthlyAfter = updates.tokenLimitMonthly ?? current.val.tokenLimitMonthly;
+  if (weeklyAfter > 0 && monthlyAfter > 0 && monthlyAfter < weeklyAfter) {
+    return NextResponse.json(
+      { error: 'The monthly limit must be at least the weekly limit' },
+      { status: 400 }
+    );
+  }
+
   if ('timeZone' in body) {
     // An IANA name this server's Intl knows: the resets are computed here.
     if (!isTimeZone(body.timeZone)) {
@@ -126,6 +136,12 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
         if (weekly === null || monthly === null) {
           return NextResponse.json(
             { error: 'A model limit is two numbers of tokens' },
+            { status: 400 }
+          );
+        }
+        if (weekly > 0 && monthly > 0 && monthly < weekly) {
+          return NextResponse.json(
+            { error: 'A model’s monthly limit must be at least its weekly limit' },
             { status: 400 }
           );
         }

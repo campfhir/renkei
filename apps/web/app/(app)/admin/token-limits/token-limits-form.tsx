@@ -14,6 +14,8 @@ import {
   isAmount,
   isDirty,
   limitsAnything,
+  modelLimitProblem,
+  orgLimitProblem,
   saveRequest,
   timeZoneOptions,
   tokenLimitsReducer,
@@ -34,16 +36,23 @@ function AmountInput({
   label,
   value,
   onChange,
+  conflict = false,
 }: {
   label: string;
   value: string;
   onChange: (text: string) => void;
+  /** The pair this amount is in does not add up (monthly below weekly). */
+  conflict?: boolean;
 }) {
-  const valid = isAmount(value);
+  const valid = isAmount(value) && !conflict;
   return (
     <input
       type="text"
-      inputMode="decimal"
+      inputMode="text"
+      autoCapitalize="characters"
+      autoComplete="off"
+      autoCorrect="off"
+      spellCheck={false}
       aria-label={label}
       aria-invalid={!valid}
       placeholder="No limit"
@@ -121,6 +130,7 @@ export function TokenLimitsForm({ initial }: { initial: TokenLimitsView }) {
   const [state, dispatch] = useReducer(tokenLimitsReducer, initial, initTokenLimits);
   const { draft, view } = state;
   const people = visiblePeople(state);
+  const orgProblem = orgLimitProblem(state);
   const zone = view.policy.timeZone;
   // The browser's list of zones; the stored one is offered even if it is not on it.
   const zones = useMemo(
@@ -284,7 +294,11 @@ export function TokenLimitsForm({ initial }: { initial: TokenLimitsView }) {
               <span className="mb-1 block text-gray-500">Extra tokens</span>
               <input
                 type="text"
-                inputMode="decimal"
+                inputMode="text"
+                autoCapitalize="characters"
+                autoComplete="off"
+                autoCorrect="off"
+                spellCheck={false}
                 aria-label="Boost tokens"
                 placeholder="500K"
                 value={state.boost.tokens}
@@ -342,6 +356,7 @@ export function TokenLimitsForm({ initial }: { initial: TokenLimitsView }) {
           >
             <AmountInput
               label="Weekly limit"
+              conflict={orgProblem !== null}
               value={draft.weekly}
               onChange={(weekly) => dispatch({ type: 'limitsChanged', patch: { weekly } })}
             />
@@ -352,10 +367,16 @@ export function TokenLimitsForm({ initial }: { initial: TokenLimitsView }) {
           >
             <AmountInput
               label="Monthly limit"
+              conflict={orgProblem !== null}
               value={draft.monthly}
               onChange={(monthly) => dispatch({ type: 'limitsChanged', patch: { monthly } })}
             />
           </Row>
+          {orgProblem && (
+            <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+              {orgProblem}
+            </p>
+          )}
           <Row
             label="The week resets on"
             hint={`The day and time of day the weekly count starts over, on a clock in the time zone below. This week resets ${formatReset(view.weekResetsAt, zone)}.`}
@@ -436,6 +457,7 @@ export function TokenLimitsForm({ initial }: { initial: TokenLimitsView }) {
                   Weekly
                   <AmountInput
                     label={`Weekly limit for ${model.label}`}
+                    conflict={modelLimitProblem(state, model.id) !== null}
                     value={draft.models[model.id]?.weekly ?? ''}
                     onChange={(weekly) =>
                       dispatch({ type: 'modelChanged', modelId: model.id, patch: { weekly } })
@@ -444,12 +466,18 @@ export function TokenLimitsForm({ initial }: { initial: TokenLimitsView }) {
                   Monthly
                   <AmountInput
                     label={`Monthly limit for ${model.label}`}
+                    conflict={modelLimitProblem(state, model.id) !== null}
                     value={draft.models[model.id]?.monthly ?? ''}
                     onChange={(monthly) =>
                       dispatch({ type: 'modelChanged', modelId: model.id, patch: { monthly } })
                     }
                   />
                 </span>
+                {modelLimitProblem(state, model.id) && (
+                  <p role="alert" className="w-full text-xs text-red-600 dark:text-red-400">
+                    {modelLimitProblem(state, model.id)}
+                  </p>
+                )}
               </li>
             ))}
           </ul>

@@ -235,14 +235,40 @@ export function tokenLimitsReducer(
   }
 }
 
-/** The draft as numbers, or null while any field is not an amount or a time. */
+/**
+ * Why a typed weekly/monthly pair cannot be saved, or null. A month holds
+ * at least a week, so a monthly limit below the weekly one is a slip; an
+ * empty field means no limit and is never a conflict. Amounts that do not
+ * read are the field's own marking (`isAmount`), not this.
+ */
+export function limitPairProblem(weeklyText: string, monthlyText: string): string | null {
+  const weekly = parseTokens(weeklyText);
+  const monthly = parseTokens(monthlyText);
+  if (weekly === null || monthly === null || weekly === 0 || monthly === 0) return null;
+  return monthly < weekly ? 'The monthly limit must be at least the weekly limit.' : null;
+}
+
+/** The problem with the organization's weekly and monthly limits as typed, or null. */
+export function orgLimitProblem(state: TokenLimitsState): string | null {
+  return limitPairProblem(state.draft.weekly, state.draft.monthly);
+}
+
+/** The problem with one model's weekly and monthly limits as typed, or null. */
+export function modelLimitProblem(state: TokenLimitsState, modelId: string): string | null {
+  const typed = state.draft.models[modelId];
+  return typed ? limitPairProblem(typed.weekly, typed.monthly) : null;
+}
+
+/** The draft as numbers, or null while any field is not an amount or a time, or a pair conflicts. */
 export function draftPolicy(state: TokenLimitsState): Policy | null {
+  if (orgLimitProblem(state)) return null;
   const weekly = parseTokens(state.draft.weekly);
   const monthly = parseTokens(state.draft.monthly);
   const weekResetMinute = timeToMinute(state.draft.weekResetTime);
   if (weekly === null || monthly === null || weekResetMinute === null) return null;
   const models: Record<string, ModelLimit> = {};
   for (const [modelId, typed] of Object.entries(state.draft.models)) {
+    if (modelLimitProblem(state, modelId)) return null;
     const modelWeekly = parseTokens(typed.weekly);
     const modelMonthly = parseTokens(typed.monthly);
     if (modelWeekly === null || modelMonthly === null) return null;

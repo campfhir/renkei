@@ -9,6 +9,8 @@ import {
   isDirty,
   limitsAnything,
   minuteToTime,
+  modelLimitProblem,
+  orgLimitProblem,
   saveRequest,
   timeToMinute,
   timeZoneOptions,
@@ -99,6 +101,33 @@ describe('the organization limits', () => {
     expect(saveRequest(state)).toBeNull();
     // Something is still unsaved: the page says so.
     expect(isDirty(state)).toBe(true);
+  });
+
+  it('a monthly limit below the weekly one holds Save back and says why', () => {
+    const state = fold(initTokenLimits(view()), {
+      type: 'limitsChanged',
+      patch: { weekly: '2M', monthly: '1M' },
+    });
+    expect(orgLimitProblem(state)).toBe('The monthly limit must be at least the weekly limit.');
+    expect(canSave(state)).toBe(false);
+    expect(saveRequest(state)).toBeNull();
+  });
+
+  it('a monthly limit equal to or above the weekly one is fine, and an empty one is no limit', () => {
+    const weekly = (monthly: string) =>
+      fold(initTokenLimits(view()), {
+        type: 'limitsChanged',
+        patch: { weekly: '2M', monthly },
+      });
+    expect(orgLimitProblem(weekly('2M'))).toBeNull();
+    expect(orgLimitProblem(weekly('1B'))).toBeNull();
+    expect(orgLimitProblem(weekly(''))).toBeNull();
+    expect(canSave(weekly('2M'))).toBe(true);
+    const onlyMonthly = fold(initTokenLimits(view()), {
+      type: 'limitsChanged',
+      patch: { monthly: '1M' },
+    });
+    expect(orgLimitProblem(onlyMonthly)).toBeNull();
   });
 
   it('clearing a limit removes it', () => {
@@ -250,6 +279,20 @@ describe('limits on a model', () => {
       patch: { monthly: '9M' },
     });
     expect(saveRequest(state)).toEqual({ models: { [HAIKU]: { weekly: 0, monthly: 9_000_000 } } });
+  });
+
+  it('a monthly limit below the weekly one holds Save back and says why', () => {
+    const state = fold(initTokenLimits(view()), {
+      type: 'modelChanged',
+      modelId: OPUS,
+      patch: { weekly: '2M', monthly: '1M' },
+    });
+    expect(modelLimitProblem(state, OPUS)).toMatch(/at least the weekly/);
+    expect(modelLimitProblem(state, HAIKU)).toBeNull();
+    expect(canSave(state)).toBe(false);
+    const fixed = fold(state, { type: 'modelChanged', modelId: OPUS, patch: { monthly: '2M' } });
+    expect(modelLimitProblem(fixed, OPUS)).toBeNull();
+    expect(canSave(fixed)).toBe(true);
   });
 
   it('a model amount that does not read holds Save back', () => {

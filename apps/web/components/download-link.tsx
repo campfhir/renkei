@@ -1,6 +1,12 @@
 'use client';
 
-import { useEffect, useState, type AnchorHTMLAttributes, type MouseEvent } from 'react';
+import {
+  useEffect,
+  useReducer,
+  useState,
+  type AnchorHTMLAttributes,
+  type MouseEvent,
+} from 'react';
 import { clientLogger } from '@/lib/client-logger';
 
 /**
@@ -17,9 +23,11 @@ import { clientLogger } from '@/lib/client-logger';
  * Image", "Save to Files", AirDrop, and an ✕ that drops the person back
  * where they were. iOS only allows `navigator.share` straight from a tap,
  * not after awaiting a fetch, so the bytes are fetched ahead of the tap:
- * on mount when `prefetch` is set (a window opened to save one file), and
- * otherwise as the finger goes down. If the file isn't in hand by the
- * click, or this iOS can't share files, it falls back to the new window.
+ * as soon as the link renders (an effect with no dependency list, so it
+ * retries on every render) and again as the finger goes down. The link is
+ * `aria-disabled` and ignores taps until the file is in hand, so a tap never
+ * burns the gesture. If the fetch fails, or this iOS can't share files, it
+ * falls back to the new window.
  *
  * `navigator.standalone` exists only on iOS/iPadOS WebKit, so none of this
  * touches desktop browsers, Safari tabs, or Android installs (whose
@@ -34,7 +42,14 @@ export function isIosStandalone(): boolean {
 const fetched = new Map<string, File>();
 /** Fetches in progress, by URL, so a second ask waits on the first. */
 const inFlight = new Map<string, Promise<boolean>>();
+/** URLs whose fetch failed, so the link stops waiting on them and falls back to a new window. */
+const failed = new Set<string>();
 const KEEP = 8;
+
+/** Whether this browser fetches ahead of a tap at all (iOS home-screen apps that can share files). */
+function fetchesAhead(): boolean {
+  return isIosStandalone() && canShareFiles();
+}
 
 function canShareFiles(): boolean {
   return typeof navigator.share === 'function' && typeof navigator.canShare === 'function';
@@ -52,6 +67,7 @@ function prefetchFile(href: string, filename: string | undefined): Promise<boole
   if (running) return running;
   const started = (async () => {
     try {
+      failed.delete(href);
       const response = await fetch(href, { credentials: 'same-origin' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const blob = await response.blob();
@@ -59,7 +75,10 @@ function prefetchFile(href: string, filename: string | undefined): Promise<boole
         filename ||
         decodeURIComponent(new URL(href, location.href).pathname.split('/').pop() ?? 'download');
       const file = new File([blob], name, { type: blob.type });
-      if (!navigator.canShare({ files: [file] })) return false;
+      if (!navigator.canShare({ files: [file] })) {
+        failed.add(href);
+        return false;
+      }
       fetched.set(href, file);
       while (fetched.size > KEEP) {
         const oldest = fetched.keys().next().value;
@@ -71,6 +90,7 @@ function prefetchFile(href: string, filename: string | undefined): Promise<boole
       clientLogger.warn('download', 'could not fetch the file for the share sheet', error, {
         path: href.split('?')[0],
       });
+      failed.add(href);
       return false;
     } finally {
       inFlight.delete(href);
@@ -107,7 +127,7 @@ export function useDownloadReady(href: string, filename: string | undefined): 'p
 export default function DownloadLink({
   href,
   filename,
-  prefetch = false,
+  prefetch: _prefetch,
   onClick,
   onPointerDown,
   ...props
@@ -115,14 +135,28 @@ export default function DownloadLink({
   href: string;
   /** The saved file's name; omit to keep the server's Content-Disposition name. */
   filename?: string;
-  /** Fetch the file as soon as this renders on iOS standalone, so the first tap can share it. */
+  /** Ignored: every link fetches ahead now. Kept so existing callers still compile. */
   prefetch?: boolean;
 }) {
+  const [, rerender] = useReducer((count: number) => count + 1, 0);
+  // Where the file is fetched ahead, the link is off until it is in hand (or the
+  // fetch failed, when it falls back to a new window).
+  const pending = fetchesAhead() && !fetched.has(href) && !failed.has(href);
+
+  // No dependency list, on purpose: this runs after every render, so a link that
+  // re-rendered with a new href, or whose cached file was evicted, is fetched
+  // again. A file already in hand or in flight costs nothing.
   useEffect(() => {
-    if (prefetch) prefetchFile(href, filename);
-  }, [prefetch, href, filename]);
+    if (!fetchesAhead() || fetched.has(href) || failed.has(href)) return;
+    void prefetchFile(href, filename).then(() => rerender());
+  });
 
   const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (pending) {
+      // Not ready: a tap now would fall back to a bare window, so it does nothing.
+      event.preventDefault();
+      return;
+    }
     onClick?.(event);
     if (event.defaultPrevented || !isIosStandalone()) return;
     event.preventDefault();
@@ -144,10 +178,12 @@ export default function DownloadLink({
     <a
       href={href}
       download={filename ?? true}
+      aria-disabled={pending || undefined}
+      data-pending={pending || undefined}
       onClick={handleClick}
       onPointerDown={(event) => {
         onPointerDown?.(event);
-        prefetchFile(href, filename);
+        void prefetchFile(href, filename);
       }}
       {...props}
     />
