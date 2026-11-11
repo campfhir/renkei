@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { isRecord } from '@renkei/guards';
 import { checkInboundLimit } from '@/lib/inbound-rate-limit';
 import { logger } from '@/lib/logger';
 
@@ -17,10 +18,6 @@ import { logger } from '@/lib/logger';
  */
 
 const MAX_BODY_BYTES = 16 * 1024;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /** The origin of a URL, or the keyword a report uses instead ("inline", "eval"); nothing else. */
 function originOf(value: unknown): string | undefined {
