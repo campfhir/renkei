@@ -55,6 +55,7 @@ import { deviceKeyRequests } from './device-key-requests';
 import { personalAccount } from './personal-account';
 import { activityLogs } from './activity-logs';
 import { toolUsage } from './tool-usage';
+import { tokenLimits } from './token-limits';
 import { knowledgeChunks } from './knowledge-chunks';
 import { pendingSignins } from './pending-signins';
 import { webhookSubscriptions } from './webhook-subscriptions';
@@ -108,6 +109,7 @@ export const DOMAINS = {
   scheduleCalendars,
   orgAccess,
   usage,
+  tokenLimits,
   agents,
   agentRuns,
   agentUsage,

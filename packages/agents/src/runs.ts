@@ -14,6 +14,9 @@
  *   - depth: chains stop at the org's agentMaxChainDepth.
  *   - daily cap: runs created in the last 24h stop at agentMaxRunsPerDay —
  *     the brake on a runaway trigger, priced per org.
+ *   - token limit: the owner's weekly or monthly token limit, or the run's
+ *     model's own (@renkei/settings' token-limits). Checked here, when the
+ *     run is made, and not again: a run already queued or going finishes.
  *
  * A refused run returns a typed reason so the caller can put it where its
  * kind surfaces failures (a trigger's last_error, an API 429, a parent
@@ -23,7 +26,7 @@
 import { randomUUID } from 'node:crypto';
 import { getDataStore } from '@renkei/db';
 import type { QueueProducer } from '@renkei/queue';
-import { getOrgSettings } from '@renkei/settings';
+import { checkTokenLimit, getOrgSettings, tokenLimitMessage } from '@renkei/settings';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { AgentDefinition } from './definition';
@@ -56,7 +59,13 @@ export interface CreateAgentRunOptions {
 }
 
 export type CreateAgentRunError =
-  'AGENT_CYCLE' | 'CHAIN_TOO_DEEP' | 'DAILY_RUN_CAP' | 'DB_ERROR' | 'QUEUE_ERROR';
+  | 'AGENT_CYCLE'
+  | 'CHAIN_TOO_DEEP'
+  | 'DAILY_RUN_CAP'
+  /** The agent's owner is at their token limit; the message says which, and when it resets. */
+  | 'TOKEN_LIMIT'
+  | 'DB_ERROR'
+  | 'QUEUE_ERROR';
 
 export async function createAgentRun(
   producer: QueueProducer,
@@ -90,6 +99,15 @@ export async function createAgentRun(
   if (countResult.val >= settings.agentMaxRunsPerDay) {
     return err('DAILY_RUN_CAP' as const, {
       message: `This organization has reached its ${settings.agentMaxRunsPerDay} runs per day.`,
+    });
+  }
+
+  // The owner's spend, whoever or whatever asked: an agent's tokens are its
+  // owner's (llm_calls.subject), so the owner's limit is the one it runs under.
+  const block = await checkTokenLimit(input.ownerSubject, input.llmModelId);
+  if (block) {
+    return err('TOKEN_LIMIT' as const, {
+      message: tokenLimitMessage(block, { whose: "This agent's owner has" }),
     });
   }
 

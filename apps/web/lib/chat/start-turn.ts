@@ -32,7 +32,12 @@ import {
   type ResolvedLlm,
 } from '@renkei/agent-llm';
 import type { LlmCallModel } from '@renkei/agents/runs';
-import { getOrgSettings, type OrgSettings } from '@renkei/settings';
+import {
+  checkTokenLimit,
+  getOrgSettings,
+  tokenLimitMessage,
+  type OrgSettings,
+} from '@renkei/settings';
 import { sandboxChartsEnabled, sandboxConfig, sandboxScriptsServed } from '@renkei/sandbox-client';
 import { CODE_TURN_LIMITS, codeProjectContext } from '@/lib/code/turn';
 import { CODE_DELEGATE_TOOL } from '@/lib/code/delegate';
@@ -173,6 +178,8 @@ export type StartTurnError =
   | 'ALREADY_RUNNING'
   | 'NO_MODEL'
   | 'MODEL_ERROR'
+  /** The person is at their token limit, or at this model's; the message says which. */
+  | 'TOKEN_LIMIT'
   | 'CONTENT_KEY'
   | 'DB_ERROR';
 
@@ -346,6 +353,37 @@ export async function startChatTurn(
     );
   }
   const llm = llmResult.val;
+
+  // Before anything is saved: a person at their limit starts no new turn.
+  // A turn already running is not looked at again, so it finishes.
+  const block = await checkTokenLimit(input.session.subject, llm.modelConfigId);
+  if (block) {
+    // The name the person picked it by, from the roster; the vendor's name if that cannot be read.
+    const modelLabel = block.llmModelId
+      ? ((
+          await getDataStore()
+            .llmModels.get(block.llmModelId)
+            .catch(() => null)
+        )?.label ?? llm.model)
+      : null;
+    logger.info(
+      '{actor} sent a message in the chat "{chat}", but they are at their {period} token limit{forModel} ({used} of {limit}); the turn did not start',
+      {
+        component: 'chat/turn',
+        ...(await whoIs(input.session.subject)),
+        chatId: chat.id,
+        chat: chat.title || 'New chat',
+        period: block.period === 'week' ? 'weekly' : 'monthly',
+        forModel: modelLabel ? ` for the model ${modelLabel}` : '',
+        llmModelId: block.llmModelId,
+        used: block.used,
+        limit: block.limit,
+      }
+    );
+    return err('TOKEN_LIMIT' as const, {
+      message: tokenLimitMessage(block, { modelLabel }),
+    });
+  }
 
   const settingsResult = await getOrgSettings();
   const settings = settingsResult.ok ? settingsResult.val : null;

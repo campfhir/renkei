@@ -5,6 +5,7 @@
  */
 
 import { getDataStore } from '@renkei/db';
+import { modelLimitNotes } from '@/lib/token-limits/own';
 import type { ModelOption } from './views';
 
 /** The context window an admin recorded in a model's settings, if it is a usable number. */
@@ -28,6 +29,21 @@ export async function listChatModels(): Promise<ModelOption[]> {
     supportsThinking: row.provider === 'anthropic',
     contextWindow: contextWindowOf(row.settings),
   }));
+}
+
+/**
+ * The roster as `subject`'s own picker shows it: each model they are at a
+ * token limit for carries why (`limitReached`), so it can be shown as
+ * unavailable before they pick it.
+ */
+export async function listChatModelsFor(subject: string): Promise<ModelOption[]> {
+  const models = await listChatModels();
+  const notes = await modelLimitNotes(
+    subject,
+    models.map((model) => model.id)
+  );
+  if (notes.size === 0) return models;
+  return models.map((model) => ({ ...model, limitReached: notes.get(model.id) ?? null }));
 }
 
 /** An image generation model the org has enabled, as the chat's image tool offers it. */

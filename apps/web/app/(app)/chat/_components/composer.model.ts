@@ -402,8 +402,10 @@ export function hasDraft(state: ComposerState): boolean {
 export type SendStep =
   { kind: 'nothing' } | { kind: 'placeThenSend' } | { kind: 'submit'; input: ComposerSubmit };
 
-export function sendStep(state: ComposerState, disabled: boolean): SendStep {
-  if (disabled) return { kind: 'nothing' };
+export function sendStep(state: ComposerState, disabled: boolean, blocked = false): SendStep {
+  // `blocked`: nothing may be sent (the model in use is at a token limit),
+  // though the box still takes typing — Enter does what the button does.
+  if (disabled || blocked) return { kind: 'nothing' };
   if (placing(state)) return { kind: 'placeThenSend' };
   const text = state.text.trim();
   if ((!text && state.attachments.length === 0) || state.uploading > 0) return { kind: 'nothing' };
@@ -436,11 +438,13 @@ export type SendButton =
 
 export function sendButton(
   state: ComposerState,
-  context: { running: boolean; disabled: boolean }
+  context: { running: boolean; disabled: boolean; blocked?: boolean }
 ): SendButton {
   const draft = hasDraft(state);
   if (context.running && !draft) return { kind: 'stop' };
-  const busy = context.disabled || state.uploading > 0;
+  // Blocked (the model in use is at a token limit): Send and Queue are off
+  // whatever is typed, until another model is picked; Stop still stops.
+  const busy = context.disabled || context.blocked === true || state.uploading > 0;
   if (context.running) return { kind: 'queue', disabled: busy };
   return { kind: 'send', disabled: busy || !draft };
 }

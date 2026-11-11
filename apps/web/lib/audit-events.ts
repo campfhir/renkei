@@ -44,6 +44,13 @@ export type AuditAction =
   | 'agent.access_revoked'
   | 'agent.copied'
   | 'settings.updated'
+  /** An operator changed the token limits: the weekly or monthly limit, the weekly reset, a model's limit (details: changed). */
+  | 'token_limits.updated'
+  /** An operator exempted a person from the token limits, or put them back under them (details: subject, exempt). */
+  | 'token_limits.exemption_changed'
+  /** An operator granted a person extra tokens for the week or month in progress (details: subject, period, tokens, expiresAt). */
+  | 'token_limits.boost_granted'
+  | 'token_limits.boost_revoked'
   /** A person allowed an MCP client to act as them (details: clientId, redirectTarget). */
   | 'oauth.consent_granted'
   /** A person refused an MCP client on the consent page (details: clientId, redirectTarget). */

@@ -120,6 +120,7 @@ function rememberDropChoice(projectId: string, choice: DropDestination): void {
 export default function Composer({
   chatId,
   disabled,
+  sendBlocked = null,
   running,
   queue,
   onRemoveQueued,
@@ -144,6 +145,12 @@ export default function Composer({
 }: {
   chatId: string;
   disabled: boolean;
+  /**
+   * Why nothing can be sent although the box still takes typing: the model
+   * in use is at a token limit. Send and Queue are off and carry this as
+   * their tooltip; picking another model clears it.
+   */
+  sendBlocked?: string | null;
   running: boolean;
   /** Sends waiting for the current turn to finish, oldest first — auto-sent one at a time, no click needed. */
   queue: QueuedComposerItem[];
@@ -409,7 +416,7 @@ export default function Composer({
   }, []);
 
   const send = useCallback(async () => {
-    const step = sendStep(state, disabled);
+    const step = sendStep(state, disabled, sendBlocked !== null);
     // Files still waiting for the person to say where they go: Send is
     // the answer — the choice as it stands is taken, the files upload,
     // and the message goes out once they are up.
@@ -423,7 +430,7 @@ export default function Composer({
     if (step.kind !== 'submit') return;
     const ok = await onSubmit(step.input);
     if (ok) dispatch({ type: 'submitted' });
-  }, [state, disabled, onSubmit, confirmDrop]);
+  }, [state, disabled, sendBlocked, onSubmit, confirmDrop]);
 
   const sendAfterUpload = readyToSendAfterUpload(state);
   useEffect(() => {
@@ -458,7 +465,7 @@ export default function Composer({
     if (uploads && event.dataTransfer.files?.length) upload(event.dataTransfer.files);
   };
 
-  const slot = sendButton(state, { running, disabled });
+  const slot = sendButton(state, { running, disabled, blocked: sendBlocked !== null });
 
   return (
     <div
@@ -873,7 +880,7 @@ export default function Composer({
               type="button"
               onClick={() => void send()}
               aria-label="Queue this message"
-              title="Sends once the current reply finishes"
+              title={sendBlocked ?? 'Sends once the current reply finishes'}
               disabled={slot.disabled}
               className="rounded-md bg-blue-600 p-1.5 text-white hover:bg-blue-700 disabled:opacity-40"
             >
@@ -884,6 +891,7 @@ export default function Composer({
               type="button"
               onClick={() => void send()}
               aria-label="Send"
+              title={sendBlocked ?? undefined}
               disabled={slot.disabled}
               className="rounded-md bg-blue-600 p-1.5 text-white hover:bg-blue-700 disabled:opacity-40"
               {...sendAnchor}

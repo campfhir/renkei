@@ -215,7 +215,8 @@ export async function recordWidgetModelContext(input: {
     // the person had to repeat themselves once the reply finished.
     case 'ALREADY_RUNNING':
     case 'NO_MODEL':
-    case 'MODEL_ERROR': {
+    case 'MODEL_ERROR':
+    case 'TOKEN_LIMIT': {
       const appended = await appendWidgetModelContext({
         chatId: input.chatId,
         text,

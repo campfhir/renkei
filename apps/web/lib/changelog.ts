@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'added',
+        title: 'Token limits per person',
+        detail:
+          'An organization can cap the tokens each person spends in a week and a month, their agents included, with its own limit for a costly model and a reset day, time and time zone of its choosing. Operators can make a person unlimited or grant a boost; My usage shows progress against each limit, and a chat marks a model that has reached its limit before you send.',
+      },
+      {
+        kind: 'added',
         title: 'Salesforce Admin can propose formula fields',
         detail:
           'Ask for a calculated field, such as whole years since an enrollment date, and it is proposed for review like any other new field. Salesforce checks the formula before anyone approves it, and the field is read only wherever it is given to people.',
