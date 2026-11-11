@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'added',
+        title: 'Salesforce Admin can change existing reports, and reports can roll with the date',
+        detail:
+          "Ask for a change to an existing Salesforce report (columns, filters, date range, groupings, name) or report type (fields added or taken out, renamed) and it is proposed for review like any other change. A report's date range can now be relative, such as the last 12 months or this week, so it moves forward by itself.",
+      },
+      {
+        kind: 'added',
         title: 'GitHub projects get the full Actions page',
         detail:
           "A GitHub code project's Actions page now works like Bitbucket's Pipelines: turn Actions on or off, write and commit workflow files (starting from your organization's templates), and read and edit repository and environment variables, with secrets listed by name and added on GitHub. Reconnect GitHub with Configure Actions enabled to use the switch and variables.",

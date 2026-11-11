@@ -9,11 +9,13 @@
  * priorities), the status objects that carry them. A custom report type
  * has no Tooling API object at all, so it is read with the Metadata API's
  * SOAP readMetadata, whose envelope — the session goes in it — the
- * delegate writes (apps/worker-delegate/src/salesforce-soap.ts).
+ * delegate writes (apps/worker-delegate/src/salesforce-soap.ts). A report
+ * is read the same way, by its folder and developer name.
  */
 
 import {
   isDeveloperName,
+  normalizeReport,
   normalizeReportType,
   readMetadataRecords,
   SALESFORCE_API_VERSION,
@@ -75,6 +77,53 @@ export async function readReportType(
   if (!record || !record.baseObject) return null;
   const metadata = normalizeReportType(record);
   return { name: developerName, metadata, fingerprint: fingerprintOf(metadata) };
+}
+
+export interface LiveReport {
+  /** `Folder/Developer_Name`, as a deploy names it. */
+  fullName: string;
+  /** As readMetadata gives it, the lists a change touches always arrays. */
+  metadata: Record<string, unknown>;
+  fingerprint: string;
+}
+
+const REPORT_FULL_NAME = /^[A-Za-z][A-Za-z0-9_]{0,79}\/[A-Za-z][A-Za-z0-9_]{0,79}$/;
+
+/**
+ * A report whole, by its folder's and its own developer name
+ * (`Program_Reports/Visits_by_Outcome`), through the delegate's
+ * readMetadata; null when there is none.
+ */
+export async function readReport(
+  context: SalesforceCallContext,
+  access: SalesforceAccess,
+  fullName: string
+): Promise<LiveReport | null | string> {
+  if (!REPORT_FULL_NAME.test(fullName)) return `${fullName} is not a report’s folder and API name.`;
+  let response: Response;
+  try {
+    response = await access.auth(
+      `${access.instanceUrl}/services/Soap/m/${SALESFORCE_API_VERSION}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/xml; charset=UTF-8' },
+        body:
+          '<readMetadata xmlns="http://soap.sforce.com/2006/04/metadata">' +
+          `<type>Report</type><fullNames>${fullName}</fullNames></readMetadata>`,
+        signal: AbortSignal.timeout(60_000),
+      }
+    );
+  } catch (error) {
+    return `Could not reach Salesforce to read the report: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  const refused = refusalTextOf(response, 'Salesforce Admin');
+  if (refused) return refused;
+  const read = readMetadataRecords(await response.text().catch(() => ''));
+  if (!Array.isArray(read)) return `Salesforce would not read the report: ${read.fault}`;
+  const record = read[0];
+  if (!record || !record.reportType) return null;
+  const metadata = normalizeReport(record);
+  return { fullName, metadata, fingerprint: fingerprintOf(metadata) };
 }
 
 export interface RecordTypeRef {
@@ -376,6 +425,8 @@ export async function wholeComponentFingerprint(
       return wrap(await readGlobalValueSet(context, access, precondition.name));
     case 'ReportType':
       return wrap(await readReportType(context, access, precondition.name));
+    case 'Report':
+      return wrap(await readReport(context, access, precondition.name));
     case 'StandardValueSet': {
       const [object, field] = [precondition.object, precondition.name];
       const set = standardValueSetOf(object, field);
