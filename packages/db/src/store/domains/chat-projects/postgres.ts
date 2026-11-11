@@ -73,7 +73,10 @@ export function postgresChatProjects(db: () => Kysely<DB>): ChatProjectStore {
     async update(projectId, patch) {
       const result = await db()
         .updateTable('chat_projects')
-        .set({ ...projectPatchValues(patch), updated_at: sql<Date>`NOW()` })
+        .set({
+          ...projectPatchValues(patch),
+          ...(patch.keepUpdatedAt ? {} : { updated_at: sql<Date>`NOW()` }),
+        })
         .where('id', '=', projectId)
         .executeTakeFirst();
       return Number(result.numUpdatedRows) > 0;
