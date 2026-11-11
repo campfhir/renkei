@@ -21,6 +21,7 @@ import {
 import { logger } from '@/lib/logger';
 import { who, whichAgentOf } from '@/lib/log-actor';
 
+import { tokenLimitRefusal } from '@/lib/token-limits/refusal';
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ agentId: string }> }
@@ -34,6 +35,10 @@ export async function POST(
   if (!access.viewerIsOwner) {
     return NextResponse.json({ error: 'Only the owner can analyze this agent.' }, { status: 403 });
   }
+
+  const overLimit = await tokenLimitRefusal(session.subject, null);
+  if (overLimit)
+    return NextResponse.json({ error: overLimit, code: 'token-limit' }, { status: 429 });
 
   // One at a time: a second pass while the first runs would spend a second
   // model call on the same evidence for the same answer.

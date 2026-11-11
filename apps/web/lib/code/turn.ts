@@ -40,6 +40,7 @@ import type { PreludeStep, TurnLimits } from '@/lib/chat/turn-runner';
 import { ensureChatWorktree } from './worktree';
 import { codeProjectTarget } from './scope';
 import { codeTools, type CheckoutRecovery } from './tools';
+import type { ResourceRole } from '@/lib/chat/access';
 import {
   CLONE_WAIT_MS,
   awaitClone,
@@ -146,6 +147,13 @@ export async function codeProjectContext(
     chat: Chat;
     /** The session's roles, for the note turn that wakes the chat when its checkout is ready. */
     roles?: string[];
+    /**
+     * The chatting person's role on the project. A viewer's chat gets the
+     * tools that read the checkout and none that change it, the repository
+     * or its pipelines — the same line the project's own routes draw
+     * (route-access.ts, pipelines-access.ts). Absent means unrestricted.
+     */
+    projectRole?: ResourceRole;
   },
   options: { quickWaitMs?: number } = {}
 ): Promise<CodeTurnContext | null> {
@@ -195,7 +203,7 @@ export async function codeProjectContext(
   // rows the composer's own picker offers.
   const [env, subagentModels] = await Promise.all([sbEnvList(target), listChatModels()]);
   const envNames = env.ok ? env.val.map((variable) => variable.name) : [];
-  const tools = codeTools({
+  const allTools = codeTools({
     target,
     workspaceId: workspace.id,
     workspaceRef,
@@ -213,6 +221,8 @@ export async function codeProjectContext(
       isDefault,
     })),
   });
+  const tools =
+    actor.projectRole === 'viewer' ? allTools.filter((tool) => tool.readOnly === true) : allTools;
 
   // A clone in flight — this turn's or an earlier one's — is the turn's
   // first step: it waits a little, makes the chat's worktree, and answers

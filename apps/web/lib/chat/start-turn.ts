@@ -48,7 +48,7 @@ import { logger } from '@/lib/logger';
 import { who, whoIs } from '@/lib/log-actor';
 import { getIdentityDisplay } from '@/lib/identity';
 import { isUuid } from '@/lib/uuid';
-import { resolveChatAccess } from './access';
+import { resolveChatAccess, resolveResourceAccess } from './access';
 import type { ContentCipher } from './content-crypto';
 import { projectCipherById } from './chat-keys';
 import {
@@ -735,6 +735,11 @@ async function executeTurnBody(
             subject: input.session.subject,
             roles: input.session.roles,
             chat: { id: input.chat.id, workspaceId: input.chat.workspaceId },
+            // Someone the project is no longer shared with reads as a viewer:
+            // their chat keeps its history, not the tools that change things.
+            projectRole:
+              (await resolveResourceAccess(input.session.subject, 'chat_project', project.id))
+                ?.role ?? 'viewer',
             // Auto mode's sub-agents run long (delegate.ts).
             auto: input.chat.autoMode && !readOnly,
           })

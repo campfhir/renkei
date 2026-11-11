@@ -20,6 +20,7 @@ import { getLibrary, PROMPT_BODY_MAX_CHARS, PROMPT_TITLE_MAX_CHARS } from '@/lib
 import { listChatModels } from '@/lib/chat/models';
 import { refinePrompt, REFINE_PROMPT_GUIDANCE_MAX_CHARS } from '@/lib/chat/refine-prompt';
 
+import { tokenLimitRefusal } from '@/lib/token-limits/refusal';
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ libraryId: string }> }
@@ -49,6 +50,8 @@ export async function POST(
     if (!model) return jsonError(400, 'invalid-model', 'That model is not available.');
     llmModelId = model.id;
   }
+  const overLimit = await tokenLimitRefusal(session.subject, llmModelId);
+  if (overLimit) return jsonError(429, 'token-limit', overLimit);
 
   const outcome = await refinePrompt(
     session.subject,

@@ -20,6 +20,7 @@ import { getProjectRow, PROJECT_INSTRUCTIONS_MAX_CHARS } from '@/lib/chat/projec
 import { listChatModels } from '@/lib/chat/models';
 import { refineInstructions, REFINE_GUIDANCE_MAX_CHARS } from '@/lib/chat/refine-instructions';
 
+import { tokenLimitRefusal } from '@/lib/token-limits/refusal';
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
@@ -48,6 +49,8 @@ export async function POST(
     if (!model) return jsonError(400, 'invalid-model', 'That model is not available.');
     llmModelId = model.id;
   }
+  const overLimit = await tokenLimitRefusal(session.subject, llmModelId);
+  if (overLimit) return jsonError(429, 'token-limit', overLimit);
 
   const outcome = await refineInstructions(
     session.subject,

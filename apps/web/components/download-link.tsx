@@ -1,13 +1,8 @@
 'use client';
 
-import {
-  useEffect,
-  useRef,
-  useState,
-  type AnchorHTMLAttributes,
-  type MouseEvent,
-} from 'react';
+import { useEffect, useRef, useState, type AnchorHTMLAttributes, type MouseEvent } from 'react';
 import { clientLogger } from '@/lib/client-logger';
+import { DOWNLOAD_PREFETCH_HEADER } from '@/lib/download-prefetch';
 
 /**
  * An <a> that downloads a file from this app — and doesn't strand the
@@ -64,7 +59,11 @@ function prefetchFile(href: string, filename: string | undefined): Promise<boole
   if (running) return running;
   const started = (async () => {
     try {
-      const response = await fetch(href, { credentials: 'same-origin' });
+      // Marked as a fetch ahead: a route that audits its download waits for the tap.
+      const response = await fetch(href, {
+        credentials: 'same-origin',
+        headers: { [DOWNLOAD_PREFETCH_HEADER]: '1' },
+      });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const blob = await response.blob();
       const name =
@@ -120,6 +119,7 @@ export default function DownloadLink({
   href,
   filename,
   prefetch: _prefetch,
+  reportTaken,
   onClick,
   onPointerDown,
   ...props
@@ -129,6 +129,13 @@ export default function DownloadLink({
   filename?: string;
   /** Ignored: every link fetches ahead now. Kept so existing callers still compile. */
   prefetch?: boolean;
+  /**
+   * For a download that is an audit event: when the file fetched ahead is
+   * handed to the share sheet, POST the same address so the route records
+   * the tap (lib/download-prefetch.ts). Anywhere else the download is the
+   * browser's own GET, which the route audits itself.
+   */
+  reportTaken?: boolean;
 }) {
   // The href whose fetch has settled (in hand, or failed and falling back to a
   // new window), and the href a fetch was last started for. The ref is what keeps
@@ -157,6 +164,11 @@ export default function DownloadLink({
     event.preventDefault();
     const file = fetched.get(href);
     if (file) {
+      if (reportTaken) {
+        void fetch(href, { method: 'POST', credentials: 'same-origin', keepalive: true }).catch(
+          () => undefined
+        );
+      }
       // Called synchronously in the tap: an await before it would cost the user gesture.
       navigator.share({ files: [file] }).catch((error: unknown) => {
         if (error instanceof DOMException && error.name === 'AbortError') return;
