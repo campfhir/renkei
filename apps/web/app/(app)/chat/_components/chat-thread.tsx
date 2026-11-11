@@ -1490,6 +1490,7 @@ export default function ChatThread({
                 chatId={chat.id}
                 draft={initialChat.draft}
                 disabled={sending || models.length === 0}
+                sendBlocked={currentModel?.limitReached ?? null}
                 running={running}
                 queue={queueView}
                 onRemoveQueued={removeQueued}

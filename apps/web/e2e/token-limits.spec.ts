@@ -1,8 +1,8 @@
 /**
  * Token limits end to end: an operator puts a weekly limit on one model on
  * the Token limits page, a chat on that model spends past it, the next
- * message is refused with the reason, the model picker marks the model as
- * unavailable, My usage shows the limit and the
+ * message is refused with the reason, the chat turns Send off and the model
+ * picker marks the model as unavailable, My usage shows the limit and the
  * progress against it, and making the person unlimited lets them go on. A
  * boost is granted and taken back on the person's row, and the page fits a
  * phone.
@@ -67,25 +67,29 @@ test('a model limit stops new chat turns, shows on My usage, and an operator lif
       modelId
     );
 
-    // Past it, the next message is refused, with the reason on screen.
+    // Past it, the server refuses the next turn and says why.
+    const refused = await page.request.post(`/api/chat/chats/${chatId}/turns`, {
+      data: { text: 'One more thing.', llmModelId: modelId },
+    });
+    expect(refused.status()).toBe(429);
+    expect((await refused.json()).error).toContain(
+      `reached the weekly token limit for the model ${label} (5K of 3K)`
+    );
+
+    // The chat says so before anything is sent: the box takes typing, but
+    // Send is off and carries the reason.
     await page.goto(`/chat/${chatId}`);
     const box = page.getByRole('textbox', { name: 'Message' });
     await box.fill('One more thing.');
-    const refused = page.waitForResponse(
-      (response) =>
-        response.url().endsWith(`/api/chat/chats/${chatId}/turns`) &&
-        response.request().method() === 'POST'
+    const sendButton = page.getByRole('button', { name: 'Send', exact: true });
+    await expect(sendButton).toBeDisabled();
+    await expect(sendButton).toHaveAttribute(
+      'title',
+      /Weekly limit for this model reached · resets .* UTC/
     );
-    await page.getByRole('button', { name: 'Send', exact: true }).click();
-    expect((await refused).status()).toBe(429);
-    await expect(
-      page
-        .getByRole('alert')
-        .filter({ hasText: `reached the weekly token limit for the model ${label} (5K of 3K)` })
-    ).toBeVisible();
 
-    // The picker says so before the model is chosen again: marked on the
-    // button, and in the menu listed with the reason but not selectable.
+    // The picker too: marked on the button, and in the menu listed with
+    // the reason but not selectable.
     const picker = page.getByRole('button', { name: 'Model', exact: true });
     await expect(picker).toContainText('Limit reached');
     await picker.click();

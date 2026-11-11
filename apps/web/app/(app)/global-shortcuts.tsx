@@ -268,6 +268,7 @@ function QuickChat({ onClose }: { onClose: () => void }) {
             <Composer
               chatId={chatId}
               disabled={models.length === 0}
+              sendBlocked={models.find((model) => model.id === modelId)?.limitReached ?? null}
               running={false}
               queue={[]}
               onRemoveQueued={() => {}}
