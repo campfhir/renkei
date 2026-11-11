@@ -473,6 +473,19 @@ function fakeOrg(method: string, path: string, query: string): Response {
       : all;
     return answer(200, { totalSize: rows.length, done: true, records: rows });
   }
+  if (method === 'GET' && path === `${V}/query` && /FROM Report WHERE DeveloperName/.test(q)) {
+    const rows = /'(Pipeline|Open Pipeline)'/.test(q)
+      ? [
+          {
+            Id: '00O000000000001AAA',
+            Name: 'Open Pipeline',
+            DeveloperName: 'Pipeline',
+            OwnerId: '00l000000000001AAA',
+          },
+        ]
+      : [];
+    return answer(200, { totalSize: rows.length, done: true, records: rows });
+  }
   if (method === 'GET' && path === `${V}/query` && /FROM Report WHERE OwnerId/.test(q)) {
     const rows = /DeveloperName = 'Pipeline'/.test(q) ? [{ Id: '00O000000000001AAA' }] : [];
     return answer(200, { totalSize: rows.length, done: true, records: rows });
@@ -606,9 +619,13 @@ function fakeOrg(method: string, path: string, query: string): Response {
   // readMetadata, through the delegate's SOAP envelope (here, straight to the org).
   if (method === 'POST' && path === '/services/Soap/m/68.0') {
     const known = /<fullNames>Site_Visits<\/fullNames>/.test(lastBody());
-    const record = known
-      ? `<records xsi:type="ReportType"><fullName>Site_Visits</fullName><baseObject>Site_Visit__c</baseObject><category>other</category><deployed>true</deployed><description>Visits</description><label>Site Visits</label><sections><columns><checkedByDefault>true</checkedByDefault><field>Name</field><table>Site_Visit__c</table></columns><columns><checkedByDefault>false</checkedByDefault><displayNameOverride>Visit Stage</displayNameOverride><field>Stage__c</field><table>Site_Visit__c</table></columns><columns><checkedByDefault>false</checkedByDefault><field>Owner</field><table>Site_Visit__c</table></columns><masterLabel>Visits</masterLabel></sections><join><outerJoin>false</outerJoin><relationship>Visit_Notes__r</relationship></join><sections><columns><checkedByDefault>true</checkedByDefault><field>Body__c</field><table>Site_Visit__c.Visit_Notes__r</table></columns><masterLabel>Visit Notes</masterLabel></sections></records>`
-      : '<records xsi:nil="true"/>';
+    const record = /<type>Report<\/type><fullNames>Program_Reports\/Pipeline<\/fullNames>/.test(
+      lastBody()
+    )
+      ? '<records xsi:type="Report"><fullName>Program_Reports/Pipeline</fullName><chart><chartType>HorizontalBar</chartType></chart><columns><field>OPPORTUNITY_NAME</field></columns><columns><aggregateTypes>Sum</aggregateTypes><field>AMOUNT</field></columns><filter><criteriaItems><column>STAGE_NAME</column><columnToColumn>false</columnToColumn><isUnlocked>true</isUnlocked><operator>notEqual</operator><value>Closed Lost</value></criteriaItems></filter><format>Tabular</format><name>Open Pipeline</name><reportType>Opportunity</reportType><scope>organization</scope><showDetails>true</showDetails><timeFrameFilter><dateColumn>CLOSE_DATE</dateColumn><interval>INTERVAL_CUSTOM</interval><startDate>2025-11-11</startDate></timeFrameFilter></records>'
+      : known
+        ? `<records xsi:type="ReportType"><fullName>Site_Visits</fullName><baseObject>Site_Visit__c</baseObject><category>other</category><deployed>true</deployed><description>Visits</description><label>Site Visits</label><sections><columns><checkedByDefault>true</checkedByDefault><field>Name</field><table>Site_Visit__c</table></columns><columns><checkedByDefault>false</checkedByDefault><displayNameOverride>Visit Stage</displayNameOverride><field>Stage__c</field><table>Site_Visit__c</table></columns><columns><checkedByDefault>false</checkedByDefault><field>Owner</field><table>Site_Visit__c</table></columns><masterLabel>Visits</masterLabel></sections><join><outerJoin>false</outerJoin><relationship>Visit_Notes__r</relationship></join><sections><columns><checkedByDefault>true</checkedByDefault><field>Body__c</field><table>Site_Visit__c.Visit_Notes__r</table></columns><masterLabel>Visit Notes</masterLabel></sections></records>`
+        : '<records xsi:nil="true"/>';
     return new Response(
       `<?xml version="1.0"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns="http://soap.sforce.com/2006/04/metadata" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><soapenv:Body><readMetadataResponse><result>${record}</result></readMetadataResponse></soapenv:Body></soapenv:Envelope>`,
       { status: 200, headers: { 'content-type': 'text/xml' } }
@@ -1913,6 +1930,86 @@ describe('salesforce_admin_propose_report_type_changes', () => {
       add: [{ fields: ['Name'] }],
     });
     expect(text(nowhere)).toContain('there is no custom report type Elsewhere__c');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
+    expect(deploys()).toHaveLength(0);
+  });
+});
+
+describe('salesforce_admin_propose_report_changes', () => {
+  it('shows a report as it is built, its filters numbered', async () => {
+    const shown = text(await call('salesforce_admin_get_report', { report: 'Open Pipeline' }));
+    expect(shown).toContain('Program Reports / Open Pipeline (Program_Reports/Pipeline)');
+    expect(shown).toContain('Report type: Opportunity');
+    expect(shown).toContain('  AMOUNT (Sum)');
+    expect(shown).toContain('  1. STAGE_NAME notEqual Closed Lost');
+    expect(shown).toContain('Date range: CLOSE_DATE: 2025-11-11 to …');
+  });
+
+  it('makes a fixed cutoff a rolling year and adds a column, leaving the rest as it was', async () => {
+    const result = await call('salesforce_admin_propose_report_changes', {
+      report: 'Pipeline',
+      folder: 'Program Reports',
+      addColumns: [{ field: 'stage_name' }],
+      dateFilter: { column: 'close_date', relative: 'LAST_N_DAYS:365' },
+    });
+    expect(result.isError).toBeUndefined();
+    const { files } = await received();
+    expect(Object.keys(files).sort()).toEqual([
+      'package.xml',
+      'reports/Program_Reports/Pipeline.report',
+    ]);
+    const xml = files['reports/Program_Reports/Pipeline.report'];
+    // What the change does not name stays: the chart, the first filter, the name.
+    expect(xml).toContain('<chartType>HorizontalBar</chartType>');
+    expect(xml).toContain('<value>Closed Lost</value>');
+    expect(xml).toContain('<name>Open Pipeline</name>');
+    expect(xml).toContain('<field>STAGE_NAME</field>');
+    expect(xml).toMatch(
+      /<column>CLOSE_DATE<\/column>[\s\S]*<operator>equals<\/operator>\s*<value>LAST_N_DAYS:365<\/value>/
+    );
+    expect(xml).not.toContain('<timeFrameFilter>');
+    expect(xml).not.toContain('<fullName>');
+    expect(stored().kind).toBe('report');
+    expect(stored().payload.components[0]).toMatchObject({
+      type: 'Report',
+      name: 'Program_Reports/Pipeline',
+      action: 'update',
+    });
+    const [precondition] = stored().payload.preconditions;
+    expect(precondition).toEqual({
+      kind: 'component-unchanged',
+      type: 'Report',
+      object: '',
+      name: 'Program_Reports/Pipeline',
+      fingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+    });
+    const access = await stubAuth.resolve();
+    if (typeof access === 'string') throw new Error(access);
+    const context = { subject: 'subject-1' } as unknown as MCPToolContext;
+    expect(await brokenPreconditions(context, access, [precondition])).toEqual([]);
+    expect(
+      await brokenPreconditions(context, access, [{ ...precondition, fingerprint: 'moved' }])
+    ).toEqual([
+      'The report Program_Reports/Pipeline was changed since this was proposed; propose again from what it is now.',
+    ]);
+  });
+
+  it('refuses a report that is not there, a column the type lacks, and a change of nothing', async () => {
+    const nowhere = await call('salesforce_admin_propose_report_changes', {
+      report: 'No Such Report',
+      name: 'Renamed',
+    });
+    expect(text(nowhere)).toContain('There is no report "No Such Report"');
+    const unknown = await call('salesforce_admin_propose_report_changes', {
+      report: 'Pipeline',
+      addColumns: [{ field: 'NOPE' }],
+    });
+    expect(text(unknown)).toContain('Opportunity has no column NOPE');
+    const nothing = await call('salesforce_admin_propose_report_changes', {
+      report: 'Pipeline',
+      name: 'Open Pipeline',
+    });
+    expect(text(nothing)).toContain('Nothing in that changes the report');
     expect(store.createChangeRequest).not.toHaveBeenCalled();
     expect(deploys()).toHaveLength(0);
   });

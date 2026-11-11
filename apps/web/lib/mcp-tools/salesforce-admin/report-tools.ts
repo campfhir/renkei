@@ -30,7 +30,9 @@ import {
   reportColumnOf,
   reportFileColumn,
   reportFileColumnsFromLayout,
+  editReport,
   editReportType,
+  reportLines,
   metadataFile,
   packageXml,
   reportTypeTables,
@@ -55,6 +57,7 @@ import {
 } from '../salesforce/client';
 import { describeObject, resolveObject } from '../salesforce/schema';
 import {
+  findReports,
   isMissingReportType,
   listReportFolders,
   reportExists,
@@ -63,7 +66,7 @@ import {
   REPORT_TYPE_KIND,
   type ComponentView,
 } from '@/lib/salesforce-admin/plan';
-import { readReportType } from '@/lib/salesforce-admin/whole-components';
+import { readReport, readReportType } from '@/lib/salesforce-admin/whole-components';
 import { proposeAndValidate, reasonField, refusesChanges, replacesField } from './shared';
 
 const bullets = (errors: string[]) =>
@@ -211,6 +214,84 @@ async function reportFileColumns(
   }
   return names;
 }
+
+/**
+ * A report type's columns as a report file names them, by either spelling
+ * in lower case. A standard type's describe names them as the file does; a
+ * custom type's are spelled differently in the file (reportFileColumns).
+ */
+async function knownColumns(
+  context: MCPToolContext,
+  access: SalesforceAccess,
+  described: ReportTypeDescribe
+): Promise<Map<string, string>> {
+  const known = new Map<string, string>();
+  if (isCustomReportType(described.type)) {
+    for (const [name, file] of await reportFileColumns(context, access, described)) {
+      known.set(name.toLowerCase(), file);
+      known.set(file.toLowerCase(), file);
+    }
+  } else {
+    for (const column of described.sections.flatMap((section) => section.columns)) {
+      known.set(column.name.toLowerCase(), column.name);
+    }
+  }
+  return known;
+}
+
+/**
+ * The one report a name and an optional folder name, read whole — or why
+ * there is not exactly one.
+ */
+async function liveReport(
+  context: MCPToolContext,
+  access: SalesforceAccess,
+  report: string,
+  folder: string | undefined
+) {
+  const found = await findReports(context, access, report.trim(), folder?.trim() || undefined);
+  if (typeof found === 'string') return found;
+  if (found.length === 0) {
+    return `There is no report "${report}"${folder ? ` in the folder "${folder}"` : ' in a report folder'} (a report in a private folder or in Unfiled Public Reports cannot be read here; move it to a folder first).`;
+  }
+  if (found.length > 1) {
+    return `Several reports are called "${report}": ${found.map((r) => `${r.folder.name} / ${r.name} (${r.folder.developerName}/${r.developerName})`).join('; ')}. Name one by its API name and folder.`;
+  }
+  const ref = found[0];
+  const live = await readReport(
+    context,
+    access,
+    `${ref.folder.developerName}/${ref.developerName}`
+  );
+  if (typeof live === 'string') return live;
+  if (!live) return `Salesforce did not return the report ${ref.folder.name} / ${ref.name}.`;
+  return { ref, live };
+}
+
+const filterInput = z.object({
+  column: z.string().min(1),
+  operator: z.enum(REPORT_FILTER_OPERATORS),
+  value: z
+    .string()
+    .describe(
+      'The value; several as a comma-separated list; a date as YYYY-MM-DD, or relative to the day the report is run: TODAY, THIS_MONTH, LAST_N_DAYS:90, LAST_N_MONTHS:12, N_DAYS_AGO:30 (greaterOrEqual N_DAYS_AGO:30 is "in the last 30 days and after").'
+    ),
+});
+
+const dateFilterInput = z
+  .object({
+    column: z.string().min(1).describe('A date column of the report type.'),
+    interval: z.enum(DATE_INTERVALS).optional().describe('Default INTERVAL_CUSTOM, with dates.'),
+    start: z.string().optional().describe('YYYY-MM-DD, for INTERVAL_CUSTOM.'),
+    end: z.string().optional().describe('YYYY-MM-DD, for INTERVAL_CUSTOM.'),
+    relative: z
+      .string()
+      .optional()
+      .describe(
+        'In place of interval and dates: a range counted from the day the report is run, so it rolls forward by itself. LAST_N_DAYS:365 (a rolling year up to today), LAST_N_MONTHS:12 (the twelve whole calendar months before this one), LAST_N_WEEKS:4, NEXT_N_DAYS:30, THIS_YEAR, LAST_QUARTER, THIS_FISCAL_YEAR… It is saved as a filter on the column.'
+      ),
+  })
+  .describe('The date range: one of relative, interval, or start and end.');
 
 /** The describe as a report type proposal needs it. */
 function objectInfo(describe: Awaited<ReturnType<typeof describeObject>>): ReportObjectInfo | null {
@@ -783,7 +864,8 @@ export function registerAdminReportTools(
     {
       title: 'Salesforce Admin · Act — Propose a report',
       description:
-        'Propose a new report in a report folder — an existing one (salesforce_admin_list_report_folders) ' +
+        'Propose a new report (to change one that exists, use ' +
+        'salesforce_admin_propose_report_changes) in a report folder — an existing one (salesforce_admin_list_report_folders) ' +
         'or a new one created with it: its report type, format (Tabular; Summary, grouped by up ' +
         'to three fields; Matrix, grouped by rows and columns), columns with their summaries ' +
         '(Sum, Average…), filters and filter logic, a date range — fixed dates, a named interval, ' +
@@ -820,39 +902,9 @@ export function registerAdminReportTools(
           .optional()
           .describe('Summary and Matrix: rows.'),
         groupingsAcross: z.array(groupingInput).max(2).optional().describe('Matrix only: columns.'),
-        filters: z
-          .array(
-            z.object({
-              column: z.string().min(1),
-              operator: z.enum(REPORT_FILTER_OPERATORS),
-              value: z
-                .string()
-                .describe(
-                  'The value; several as a comma-separated list; a date as YYYY-MM-DD, or relative to the day the report is run: TODAY, THIS_MONTH, LAST_N_DAYS:90, LAST_N_MONTHS:12, N_DAYS_AGO:30 (greaterOrEqual N_DAYS_AGO:30 is "in the last 30 days and after").'
-                ),
-            })
-          )
-          .max(20)
-          .optional(),
+        filters: z.array(filterInput).max(20).optional(),
         filterLogic: z.string().optional().describe('Over filter numbers: "1 AND (2 OR 3)".'),
-        dateFilter: z
-          .object({
-            column: z.string().min(1).describe('A date column of the report type.'),
-            interval: z
-              .enum(DATE_INTERVALS)
-              .optional()
-              .describe('Default INTERVAL_CUSTOM, with dates.'),
-            start: z.string().optional().describe('YYYY-MM-DD, for INTERVAL_CUSTOM.'),
-            end: z.string().optional().describe('YYYY-MM-DD, for INTERVAL_CUSTOM.'),
-            relative: z
-              .string()
-              .optional()
-              .describe(
-                'In place of interval and dates: a range counted from the day the report is run, so it rolls forward by itself. LAST_N_DAYS:365 (a rolling year up to today), LAST_N_MONTHS:12 (the twelve whole calendar months before this one), LAST_N_WEEKS:4, NEXT_N_DAYS:30, THIS_YEAR, LAST_QUARTER, THIS_FISCAL_YEAR… It is saved as a filter on the column.'
-              ),
-          })
-          .optional()
-          .describe('The date range: one of relative, interval, or start and end.'),
+        dateFilter: dateFilterInput.optional(),
         scope: z
           .string()
           .optional()
@@ -926,17 +978,7 @@ export function registerAdminReportTools(
       // the report file does; a custom type's are spelled differently in the
       // file (reportFileColumns), and either spelling is taken.
       {
-        const known = new Map<string, string>();
-        if (isCustomReportType(described.type)) {
-          for (const [name, file] of await reportFileColumns(context, access, described)) {
-            known.set(name.toLowerCase(), file);
-            known.set(file.toLowerCase(), file);
-          }
-        } else {
-          for (const column of described.sections.flatMap((section) => section.columns)) {
-            known.set(column.name.toLowerCase(), column.name);
-          }
-        }
+        const known = await knownColumns(context, access, described);
         const unknown: string[] = [];
         const fix = (name: string) => {
           const found = known.get(name.toLowerCase());
@@ -999,6 +1041,160 @@ export function registerAdminReportTools(
           `• ${spec.folder}/${spec.developerName} — “${spec.name}”, ${spec.format.toLowerCase()} on ${spec.reportType}`,
           ...(spec.newFolder ? [`  in a new folder “${spec.newFolder.label}”`] : []),
           `  ${spec.columns.length} columns${spec.groupingsDown.length ? `, grouped by ${spec.groupingsDown.map((g) => g.field).join(', ')}` : ''}${spec.filters.length ? `, ${spec.filters.length} filters` : ''}`,
+        ],
+      });
+    }
+  );
+
+  server.registerTool(
+    'salesforce_admin_get_report',
+    {
+      title: 'Salesforce Admin · Read — A report as it is built',
+      description:
+        'One existing report’s definition: its report type, format, columns with their ' +
+        'summaries, groupings, filters as its filter logic numbers them, date range, records ' +
+        '(scope) and sort — what salesforce_admin_propose_report_changes changes. By the ' +
+        'report’s name or API name, with its folder when several share the name.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        report: z.string().min(1).describe('The report’s name or API name.'),
+        folder: z.string().optional().describe('Its folder, by name or API name.'),
+      }),
+    },
+    async (args) => {
+      const access = await auth.resolve();
+      if (typeof access === 'string') return errText(access);
+      const found = await liveReport(context, access, args.report, args.folder);
+      if (typeof found === 'string') return errText(found);
+      return textResult(
+        [
+          `${found.ref.folder.name} / ${found.ref.name} (${found.live.fullName})`,
+          ...reportLines(found.live.metadata),
+        ].join('\n')
+      );
+    }
+  );
+
+  server.registerTool(
+    'salesforce_admin_propose_report_changes',
+    {
+      title: 'Salesforce Admin · Act — Propose changes to a report',
+      description:
+        'Change an existing report (salesforce_admin_get_report shows it as it is): rename or ' +
+        're-describe it; add columns or take them off, and set a column’s summaries; replace ' +
+        'its filters (`filters`, all of them, with `filterLogic`) or add to them (`addFilters`); ' +
+        'set its date range — fixed dates, a named interval, or a relative one that rolls ' +
+        'forward with the day the report is run (dateFilter.relative: LAST_N_DAYS:365 is a ' +
+        'rolling year); change its format and groupings, records (scope), sort, and whether ' +
+        'detail rows show. Everything not named stays as it is, its chart and formulas ' +
+        'included: the report deploys whole, read as it is now, and applying is refused if ' +
+        'anyone changed it in the meantime. It stays in its folder under its API name; its ' +
+        'report type cannot change. Column names are the report type’s ' +
+        '(salesforce_admin_list_report_types). Checked by a validation deploy that changes ' +
+        'nothing; the person reviews and applies it from the link this returns.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        report: z.string().min(1).describe('The report’s name or API name.'),
+        folder: z.string().optional().describe('Its folder, by name or API name.'),
+        name: z.string().min(1).max(40).optional().describe('A new name.'),
+        description: z.string().max(255).optional().describe('A new description; "" clears it.'),
+        addColumns: z
+          .array(
+            z.object({
+              field: z.string().min(1),
+              aggregates: z
+                .array(z.enum(REPORT_SUMMARIES))
+                .optional()
+                .describe(
+                  'Summaries of a number, currency or percent column; on a column already shown, these replace its summaries.'
+                ),
+            })
+          )
+          .max(100)
+          .optional(),
+        removeColumns: z.array(z.string().min(1)).max(100).optional(),
+        filters: z
+          .array(filterInput)
+          .max(20)
+          .optional()
+          .describe('All of the report’s filters: these replace the ones it has.'),
+        addFilters: z
+          .array(filterInput)
+          .max(20)
+          .optional()
+          .describe('Filters added to the ones it has, each ANDed with them.'),
+        filterLogic: z.string().optional().describe('Over filter numbers: "1 AND (2 OR 3)".'),
+        dateFilter: dateFilterInput.optional(),
+        format: z.enum(REPORT_FORMATS).optional(),
+        groupingsDown: z
+          .array(groupingInput)
+          .max(3)
+          .optional()
+          .describe('The row groupings, all of them.'),
+        groupingsAcross: z
+          .array(groupingInput)
+          .max(2)
+          .optional()
+          .describe('Matrix only: the column groupings, all of them.'),
+        scope: z.string().optional().describe('Which records, as the report type offers.'),
+        sort: z
+          .object({ column: z.string().min(1), order: z.enum(['Asc', 'Desc']).optional() })
+          .optional(),
+        showDetails: z.boolean().optional(),
+        reason: reasonField,
+        replaces: replacesField,
+      }),
+    },
+    async (args) => {
+      const access = await auth.resolve();
+      if (typeof access === 'string') return errText(access);
+      const refused = await refusesChanges(access);
+      if (refused) return errText(refused);
+      const found = await liveReport(context, access, args.report, args.folder);
+      if (typeof found === 'string') return errText(`Nothing was proposed: ${found}`);
+      const { ref, live } = found;
+      const type = str(live.metadata.reportType);
+      const described = await describeReportType(context, access, type);
+      if (typeof described === 'string') return errText(`Nothing was proposed: ${described}`);
+      const known = await knownColumns(context, access, described);
+      const edited = editReport(
+        live.metadata,
+        args,
+        (name) => known.get(name.toLowerCase()) ?? null
+      );
+      if (!edited.ok) return bullets(edited.errors);
+
+      const members = [{ type: 'Report', member: live.fullName }];
+      const label = `${ref.folder.name} / ${ref.name}`;
+      return proposeAndValidate(context, access, {
+        kind: REPORT_KIND,
+        title: `Change the report ${ref.name} in ${ref.folder.name}`,
+        reason: args.reason,
+        replaces: args.replaces,
+        payload: {
+          files: {
+            'package.xml': packageXml(members),
+            [`reports/${live.fullName}.report`]: metadataFile('Report', edited.metadata),
+          },
+          members,
+          components: [
+            { type: 'Report', name: live.fullName, action: 'update', rows: edited.rows },
+          ],
+          preconditions: [
+            {
+              kind: 'component-unchanged',
+              type: 'Report',
+              object: '',
+              name: live.fullName,
+              fingerprint: live.fingerprint,
+            },
+          ],
+          dataSteps: [],
+        },
+        summary: [
+          `• ${live.fullName} — “${label}”:`,
+          ...edited.rows.map((row) => `  ${row.label}: ${row.value}`),
+          'Everything else in the report stays as it is.',
         ],
       });
     }

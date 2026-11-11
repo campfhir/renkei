@@ -997,8 +997,17 @@ permission set proposals are built; the as-built description is the `salesforce-
   folder and report are still absent on apply. Reads: `salesforce_admin_list_report_types`
   (`/analytics/reportTypes`, and one type's columns and scopes) and
   `salesforce_admin_list_report_folders`. Both proposals stand on the schema capability, so no
-  connection reconnects for them. Changing an existing report, dashboards and folder sharing are
-  not offered yet.
+  connection reconnects for them. Dashboards and folder sharing are not offered yet.
+- **An existing report is changed whole, like a report type.**
+  `salesforce_admin_get_report` shows a report in a report folder as it is built, and
+  `salesforce_admin_propose_report_changes` changes it: name and description, columns added or
+  taken off and their summaries, filters replaced whole or added to, the date range, format and
+  groupings, scope, sort and detail rows (`editReport`). The report is read with the same SOAP
+  `readMetadata` (type `Report`, `Folder/Developer_Name`), only what the proposal names is
+  merged in — its chart, buckets and formulas stay as read — and it deploys under the same
+  name, with a `component-unchanged` precondition on a hash of what was read. A report in a
+  private folder or in Unfiled Public Reports is not reachable; its report type and folder do
+  not change.
 - **A report's date range can roll.** `dateFilter.relative` on `salesforce_admin_propose_report`
   takes a relative date value (`LAST_N_DAYS:365`, `LAST_N_MONTHS:12`, `THIS_YEAR`, or the words
   for one; `relativeDateLiteral`). A report's own time frame holds only fixed dates and

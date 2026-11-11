@@ -8,12 +8,14 @@ import {
   reportFileColumn,
   reportFileColumnsFromLayout,
   mergeReportTypeColumns,
+  editReport,
   editReportType,
   relativeDateLiteral,
   relativeDateWords,
   reportTypeTables,
   type ReportObjectInfo,
 } from './report-metadata';
+import { isRecord } from '@renkei/guards';
 
 const VISIT: ReportObjectInfo = {
   name: 'Site_Visit__c',
@@ -684,6 +686,152 @@ describe('editReportType', () => {
     expect(editReportType(live, { label: 'Referrals', deployed: true })).toEqual({
       ok: false,
       errors: ['Nothing in that changes the report type.'],
+    });
+  });
+});
+
+describe('editReport', () => {
+  const live = {
+    chart: { chartType: 'HorizontalBar' },
+    columns: [{ field: 'Referral$Name' }, { aggregateTypes: 'Sum', field: 'Referral$Age__c' }],
+    filter: {
+      booleanFilter: '1 OR 2',
+      criteriaItems: [
+        { column: 'Referral$Status', operator: 'equals', value: 'Open' },
+        { column: 'Referral$Status', operator: 'equals', value: 'Held' },
+      ],
+    },
+    format: 'Tabular',
+    name: 'Enrollments',
+    reportType: 'Referrals__c',
+    showDetails: 'true',
+    timeFrameFilter: {
+      dateColumn: 'Referral$CreatedDate',
+      interval: 'INTERVAL_CUSTOM',
+      startDate: '2025-11-11',
+    },
+  };
+  const filterOf = (metadata: Record<string, unknown>) => {
+    const filter = isRecord(metadata.filter) ? metadata.filter : {};
+    const items: unknown[] = Array.isArray(filter.criteriaItems) ? filter.criteriaItems : [];
+    return {
+      booleanFilter: filter.booleanFilter,
+      criteriaItems: items.map((item) => (isRecord(item) ? item : {})),
+    };
+  };
+
+  it('adds a column and takes one off, keeping what it does not name', () => {
+    const edited = editReport(live, {
+      addColumns: [{ field: 'Referral$Client_has_Medi_Cal2__c' }],
+      removeColumns: ['referral$age__c'],
+    });
+    expect(edited.ok).toBe(true);
+    if (!edited.ok) return;
+    expect(edited.metadata.columns).toEqual([
+      { field: 'Referral$Name' },
+      { aggregateTypes: null, field: 'Referral$Client_has_Medi_Cal2__c' },
+    ]);
+    expect(edited.metadata.chart).toEqual(live.chart);
+    expect(edited.metadata.filter).toEqual(live.filter);
+    expect(Object.keys(edited.metadata)).toEqual(Object.keys(live));
+    expect(edited.rows).toEqual([
+      { label: 'Columns taken off', value: 'referral$age__c' },
+      { label: 'Columns added', value: 'Referral$Client_has_Medi_Cal2__c' },
+    ]);
+  });
+
+  it('makes a fixed cutoff roll: a filter ANDed with the logic, the time frame gone', () => {
+    const edited = editReport(live, {
+      dateFilter: { column: 'Referral$CreatedDate', relative: 'last 365 days' },
+    });
+    expect(edited.ok).toBe(true);
+    if (!edited.ok) return;
+    expect(filterOf(edited.metadata).booleanFilter).toBe('(1 OR 2) AND 3');
+    expect(filterOf(edited.metadata).criteriaItems[2]).toMatchObject({
+      column: 'Referral$CreatedDate',
+      operator: 'equals',
+      value: 'LAST_N_DAYS:365',
+    });
+    expect(edited.metadata.timeFrameFilter).toBeNull();
+
+    // A second change of the range takes the first one's place.
+    const again = editReport(edited.metadata, {
+      dateFilter: { column: 'Referral$CreatedDate', relative: 'LAST_N_MONTHS:12' },
+    });
+    expect(again.ok).toBe(true);
+    if (!again.ok) return;
+    expect(filterOf(again.metadata).booleanFilter).toBe('(1 OR 2) AND 3');
+    expect(filterOf(again.metadata).criteriaItems.map((item) => item.value)).toEqual([
+      'Open',
+      'Held',
+      'LAST_N_MONTHS:12',
+    ]);
+
+    // And fixed dates put the time frame back, the rolling filter gone.
+    const fixed = editReport(edited.metadata, {
+      dateFilter: { column: 'Referral$CreatedDate', start: '2026-01-01' },
+    });
+    expect(fixed.ok).toBe(true);
+    if (!fixed.ok) return;
+    expect(filterOf(fixed.metadata).booleanFilter).toBe('1 OR 2');
+    expect(filterOf(fixed.metadata).criteriaItems).toHaveLength(2);
+    expect(fixed.metadata.timeFrameFilter).toEqual({
+      dateColumn: 'Referral$CreatedDate',
+      endDate: null,
+      interval: 'INTERVAL_CUSTOM',
+      startDate: '2026-01-01',
+    });
+  });
+
+  it('replaces the filters whole, or adds to them under the logic it has', () => {
+    const replaced = editReport(live, {
+      filters: [{ column: 'Referral$Status', operator: 'equals', value: 'Enrolled' }],
+    });
+    expect(replaced.ok && filterOf(replaced.metadata)).toMatchObject({
+      booleanFilter: null,
+      criteriaItems: [{ value: 'Enrolled' }],
+    });
+    const added = editReport(live, {
+      addFilters: [{ column: 'Referral$Age__c', operator: 'greaterThan', value: '55' }],
+    });
+    expect(added.ok && filterOf(added.metadata).booleanFilter).toBe('(1 OR 2) AND 3');
+  });
+
+  it('renames, groups into a summary, and puts a new element where the schema has it', () => {
+    const edited = editReport(live, {
+      name: 'Enrollments by Status',
+      description: 'Rolling',
+      format: 'Summary',
+      groupingsDown: [{ field: 'Referral$Status' }],
+      sort: { column: 'Referral$Name', order: 'Desc' },
+    });
+    expect(edited.ok).toBe(true);
+    if (!edited.ok) return;
+    const keys = Object.keys(edited.metadata);
+    expect(keys).toEqual([...keys].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())));
+    expect(edited.metadata).toMatchObject({
+      name: 'Enrollments by Status',
+      description: 'Rolling',
+      format: 'Summary',
+      sortColumn: 'Referral$Name',
+      sortOrder: 'Desc',
+    });
+  });
+
+  it('refuses what does not fit: a column not there, groupings on a tabular report, nothing', () => {
+    const absent = editReport(live, { removeColumns: ['Referral$Nope'] });
+    expect(absent.ok === false && absent.errors).toEqual([
+      'Referral$Nope is not a column of the report, so it cannot be taken off.',
+    ]);
+    const grouped = editReport(live, { groupingsDown: [{ field: 'Referral$Status' }] });
+    expect(grouped.ok === false && grouped.errors[0]).toContain(
+      'A tabular report has no groupings'
+    );
+    const unknown = editReport(live, { addColumns: [{ field: 'X' }] }, () => null);
+    expect(unknown.ok === false && unknown.errors).toEqual(['Referrals__c has no column X.']);
+    expect(editReport(live, { name: 'Enrollments' })).toEqual({
+      ok: false,
+      errors: ['Nothing in that changes the report.'],
     });
   });
 });
