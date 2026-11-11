@@ -2,7 +2,7 @@
 
 import {
   useEffect,
-  useReducer,
+  useRef,
   useState,
   type AnchorHTMLAttributes,
   type MouseEvent,
@@ -23,8 +23,7 @@ import { clientLogger } from '@/lib/client-logger';
  * Image", "Save to Files", AirDrop, and an ✕ that drops the person back
  * where they were. iOS only allows `navigator.share` straight from a tap,
  * not after awaiting a fetch, so the bytes are fetched ahead of the tap:
- * as soon as the link renders (an effect with no dependency list, so it
- * retries on every render) and again as the finger goes down. The link is
+ * as soon as the link renders (once per URL, guarded by a ref) and again as the finger goes down. The link is
  * `aria-disabled` and ignores taps until the file is in hand, so a tap never
  * burns the gesture. If the fetch fails, or this iOS can't share files, it
  * falls back to the new window.
@@ -42,8 +41,6 @@ export function isIosStandalone(): boolean {
 const fetched = new Map<string, File>();
 /** Fetches in progress, by URL, so a second ask waits on the first. */
 const inFlight = new Map<string, Promise<boolean>>();
-/** URLs whose fetch failed, so the link stops waiting on them and falls back to a new window. */
-const failed = new Set<string>();
 const KEEP = 8;
 
 /** Whether this browser fetches ahead of a tap at all (iOS home-screen apps that can share files). */
@@ -67,7 +64,6 @@ function prefetchFile(href: string, filename: string | undefined): Promise<boole
   if (running) return running;
   const started = (async () => {
     try {
-      failed.delete(href);
       const response = await fetch(href, { credentials: 'same-origin' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const blob = await response.blob();
@@ -75,10 +71,7 @@ function prefetchFile(href: string, filename: string | undefined): Promise<boole
         filename ||
         decodeURIComponent(new URL(href, location.href).pathname.split('/').pop() ?? 'download');
       const file = new File([blob], name, { type: blob.type });
-      if (!navigator.canShare({ files: [file] })) {
-        failed.add(href);
-        return false;
-      }
+      if (!navigator.canShare({ files: [file] })) return false;
       fetched.set(href, file);
       while (fetched.size > KEEP) {
         const oldest = fetched.keys().next().value;
@@ -90,7 +83,6 @@ function prefetchFile(href: string, filename: string | undefined): Promise<boole
       clientLogger.warn('download', 'could not fetch the file for the share sheet', error, {
         path: href.split('?')[0],
       });
-      failed.add(href);
       return false;
     } finally {
       inFlight.delete(href);
@@ -138,17 +130,20 @@ export default function DownloadLink({
   /** Ignored: every link fetches ahead now. Kept so existing callers still compile. */
   prefetch?: boolean;
 }) {
-  const [, rerender] = useReducer((count: number) => count + 1, 0);
-  // Where the file is fetched ahead, the link is off until it is in hand (or the
-  // fetch failed, when it falls back to a new window).
-  const pending = fetchesAhead() && !fetched.has(href) && !failed.has(href);
+  // The href whose fetch has settled (in hand, or failed and falling back to a
+  // new window), and the href a fetch was last started for. The ref is what keeps
+  // the effect below from fetching again on every render.
+  const [settledHref, setSettledHref] = useState<string | null>(null);
+  const requestedHref = useRef<string | null>(null);
+  // Where the file is fetched ahead, the link is off until that has settled.
+  const pending = fetchesAhead() && settledHref !== href;
 
-  // No dependency list, on purpose: this runs after every render, so a link that
-  // re-rendered with a new href, or whose cached file was evicted, is fetched
-  // again. A file already in hand or in flight costs nothing.
+  // No dependency list, on purpose: it runs after every render, but only the
+  // first render for an href gets past the ref, so each file is fetched once.
   useEffect(() => {
-    if (!fetchesAhead() || fetched.has(href) || failed.has(href)) return;
-    void prefetchFile(href, filename).then(() => rerender());
+    if (!fetchesAhead() || requestedHref.current === href) return;
+    requestedHref.current = href;
+    void prefetchFile(href, filename).then(() => setSettledHref(href));
   });
 
   const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
