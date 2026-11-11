@@ -47,7 +47,7 @@ describe('checkFieldSpec', () => {
   it('refuses a clash, a bad type, an option a type cannot take, and a bad name', () => {
     const clash = checkFieldSpec({ object: 'Account', label: 'Tier', type: 'Text' }, ['Tier__c']);
     expect(clash).toEqual({ ok: false, errors: ['Account already has a field Tier__c.'] });
-    expect(checkFieldSpec({ object: 'Account', label: 'X', type: 'Formula' }, [])).toMatchObject({
+    expect(checkFieldSpec({ object: 'Account', label: 'X', type: 'Rollup' }, [])).toMatchObject({
       ok: false,
     });
     expect(
@@ -148,6 +148,86 @@ describe('XML', () => {
     expect(validationRuleXml(rule.value)).toContain(
       '<errorConditionFormula>AnnualRevenue &lt; 0 &amp;&amp; NOT(ISBLANK(Name))</errorConditionFormula>'
     );
+  });
+
+  it('takes a formula field: its formula and what it calculates', () => {
+    const years = checkFieldSpec(
+      {
+        object: 'Referral__c',
+        label: 'Years Enrolled',
+        type: 'Formula',
+        returnType: 'Number',
+        formula:
+          'IF(ISBLANK(Enrollment_Date__c), null, FLOOR((TODAY() - Enrollment_Date__c) / 365.25))',
+      },
+      []
+    );
+    if (!years.ok) throw new Error(years.errors.join(' '));
+    expect(years.value).toMatchObject({
+      apiName: 'Years_Enrolled__c',
+      type: 'Formula',
+      returnType: 'Number',
+      precision: 18,
+      scale: 0,
+      blanksAs: 'BlankAsBlank',
+    });
+    // Salesforce stores a formula field under the type it calculates.
+    const xml = fieldXml(years.value);
+    expect(xml).toContain(
+      '<formula>IF(ISBLANK(Enrollment_Date__c), null, FLOOR((TODAY() - Enrollment_Date__c) / 365.25))</formula>'
+    );
+    expect(xml).toContain('<formulaTreatBlanksAs>BlankAsBlank</formulaTreatBlanksAs>');
+    expect(xml).toContain('<type>Number</type>');
+    expect(xml).not.toContain('Formula</type>');
+    expect(xml).not.toContain('<required>');
+
+    const text = checkFieldSpec(
+      {
+        object: 'Account',
+        label: 'Tier Label',
+        type: 'Formula',
+        returnType: 'Text',
+        formula: 'IF(Score__c > 5 && Score__c < 9, "Gold", "Silver")',
+      },
+      []
+    );
+    if (!text.ok) throw new Error(text.errors.join(' '));
+    expect(fieldXml(text.value)).toContain('Score__c &gt; 5 &amp;&amp; Score__c &lt; 9');
+    expect(fieldXml(text.value)).not.toContain('<precision>');
+  });
+
+  it('refuses a formula field with no formula or return type, a required one, and a formula on another type', () => {
+    expect(checkFieldSpec({ object: 'Account', label: 'X', type: 'Formula' }, [])).toEqual({
+      ok: false,
+      errors: [
+        'A formula field needs its formula.',
+        'A formula field needs returnType, what it calculates: Text, Number, Currency, Percent, Date, DateTime, Checkbox.',
+      ],
+    });
+    expect(
+      checkFieldSpec(
+        {
+          object: 'Account',
+          label: 'X',
+          type: 'Formula',
+          returnType: 'Date',
+          formula: 'TODAY()',
+          required: true,
+        },
+        []
+      )
+    ).toMatchObject({
+      ok: false,
+      errors: ['A formula field is calculated: it cannot be required or have its history tracked.'],
+    });
+    expect(
+      checkFieldSpec({ object: 'Account', label: 'X', type: 'Number', formula: 'Score__c * 2' }, [])
+    ).toMatchObject({
+      ok: false,
+      errors: [
+        'A Number field takes no formula; for a calculated field use type Formula with returnType Number.',
+      ],
+    });
   });
 
   it('writes a field with exactly its type’s elements', () => {

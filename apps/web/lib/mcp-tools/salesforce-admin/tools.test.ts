@@ -1013,6 +1013,38 @@ describe('salesforce_admin_propose_fields', () => {
     );
   });
 
+  it('proposes a formula field, read only for the permission sets it is given to', async () => {
+    const result = await call('salesforce_admin_propose_fields', {
+      object: 'Site Visit',
+      fields: [
+        {
+          label: 'Days Since Visit',
+          type: 'Formula',
+          returnType: 'Number',
+          formula: 'TODAY() - Visit_Date__c',
+        },
+      ],
+      grantTo: [{ permissionSet: 'Program Staff', edit: true }],
+    });
+    expect(result.isError).toBeUndefined();
+    const { files } = await received();
+    const object = files['objects/Site_Visit__c.object'];
+    expect(object).toContain('<formula>TODAY() - Visit_Date__c</formula>');
+    expect(object).toContain('<type>Number</type>');
+    const stored = store.createChangeRequest.mock.calls[0][0];
+    expect(stored.payload.components[0].rows).toEqual(
+      expect.arrayContaining([
+        { label: 'Type', value: 'Formula (Number)' },
+        { label: 'Formula', value: 'TODAY() - Visit_Date__c' },
+      ])
+    );
+    // Nobody edits a calculated field, whatever the grant asked for.
+    expect(stored.payload.dataSteps).toEqual([
+      expect.objectContaining({ field: 'Days_Since_Visit__c', read: true, edit: false }),
+    ]);
+    expect(text(result)).toContain('Site_Visit__c.Days_Since_Visit__c — Formula (Number)');
+  });
+
   it('refuses a name clash with a field the describe does not show, before anything is stored', async () => {
     const result = await call('salesforce_admin_propose_fields', {
       object: 'Site_Visit__c',
