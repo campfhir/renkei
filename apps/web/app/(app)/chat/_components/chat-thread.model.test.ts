@@ -11,6 +11,7 @@ import type { AttachmentView, ChatMessageView, QueuedSend } from '@/lib/chat/vie
 import {
   connectorsPatch,
   initialModelId,
+  modelPickable,
   initialThreadSend,
   isCompactCommand,
   lastQueueId,
@@ -276,5 +277,13 @@ describe('the app menu', () => {
 
   it('a chat opened while its first reply was already running was listed by that very load', () => {
     expect(menuRefreshOnTurnStart({ messagesBefore: 0, loadedRunning: true })).toBe(false);
+  });
+});
+
+describe('a model at a token limit', () => {
+  it('cannot be picked; any other can', () => {
+    expect(modelPickable({ limitReached: 'Weekly limit for this model reached' })).toBe(false);
+    expect(modelPickable({ limitReached: null })).toBe(true);
+    expect(modelPickable({})).toBe(true);
   });
 });

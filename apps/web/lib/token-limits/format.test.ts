@@ -1,4 +1,11 @@
-import { formatReset, formatTokens, limitProgress, parseTokens, tokensFieldText } from './format';
+import {
+  formatReset,
+  formatTokens,
+  limitProgress,
+  limitReachedNote,
+  parseTokens,
+  tokensFieldText,
+} from './format';
 
 describe('token amounts as written', () => {
   it('writes counts short', () => {
@@ -81,6 +88,23 @@ describe('progress against a limit', () => {
       reached: false,
       label: '1.2K of 1.5K',
     });
+  });
+});
+
+describe('what the model picker says of a model at a limit', () => {
+  it('names the model’s own limit and its reset', () => {
+    expect(
+      limitReachedNote({ period: 'week', llmModelId: 'm', resetsAt: '2026-11-16T00:00:00.000Z' })
+    ).toBe('Weekly limit for this model reached · resets Mon 16 Nov, 00:00 UTC');
+    expect(
+      limitReachedNote({ period: 'month', llmModelId: 'm', resetsAt: '2026-12-01T00:00:00.000Z' })
+    ).toBe('Monthly limit for this model reached · resets Tue 1 Dec, 00:00 UTC');
+  });
+
+  it('says so when it is the person’s overall limit', () => {
+    expect(
+      limitReachedNote({ period: 'week', llmModelId: null, resetsAt: '2026-11-16T00:00:00.000Z' })
+    ).toBe('Your weekly token limit is reached · resets Mon 16 Nov, 00:00 UTC');
   });
 });
 

@@ -6,6 +6,10 @@
  * switch inside it, for models that take one. Switching a model mid-chat
  * is fine — every turn resends the whole conversation anyway — and the
  * menu says as much once there is a history to resend.
+ *
+ * A model the person is at a token limit for (`limitReached`) is listed
+ * but cannot be chosen, with the reason and the reset under its name; when
+ * it is the model already in use, the button itself is marked.
  */
 
 import { useCallback, useRef, useState } from 'react';
@@ -13,6 +17,7 @@ import { Icon, ICONS } from '@/components/icons';
 import { useDismiss } from '@/lib/use-dismiss';
 import type { ModelOption } from '@/lib/chat/views';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import { modelPickable } from './chat-thread.model';
 
 export default function ModelSelect({
   models,
@@ -51,6 +56,14 @@ export default function ModelSelect({
         className="flex max-w-[14rem] min-w-0 items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2 py-1 text-xs hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
       >
         <span className="truncate">{current?.label ?? 'Choose a model'}</span>
+        {current?.limitReached ? (
+          <span
+            title={current.limitReached}
+            className="shrink-0 rounded bg-red-100 px-1 text-[10px] font-medium text-red-700 dark:bg-red-950/60 dark:text-red-300"
+          >
+            Limit reached
+          </span>
+        ) : null}
         {thinkingOn ? (
           <span title="Extended thinking is on" className="flex shrink-0 text-violet-500">
             <Icon path={ICONS.brain} className="h-3.5 w-3.5" />
@@ -71,17 +84,23 @@ export default function ModelSelect({
           </p>
           {models.map((model) => {
             const selected = model.id === current?.id;
+            const pickable = modelPickable(model);
             return (
               <button
                 key={model.id}
                 type="button"
                 role="menuitemradio"
                 aria-checked={selected}
+                disabled={!pickable}
                 onClick={() => {
                   onChange(model.id);
                   if (!model.supportsThinking) setOpen(false);
                 }}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-gray-800"
+                className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left ${
+                  pickable
+                    ? 'hover:bg-gray-100 dark:hover:bg-gray-800'
+                    : 'cursor-not-allowed text-gray-400 dark:text-gray-600'
+                }`}
               >
                 <span className="flex h-4 w-4 shrink-0 items-center justify-center text-blue-600 dark:text-blue-400">
                   {selected ? (
@@ -94,6 +113,11 @@ export default function ModelSelect({
                     {model.provider} · {model.model}
                     {model.isDefault ? ' · default' : ''}
                   </span>
+                  {model.limitReached ? (
+                    <span className="block text-[11px] text-red-600 dark:text-red-400">
+                      {model.limitReached}
+                    </span>
+                  ) : null}
                 </span>
               </button>
             );

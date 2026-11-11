@@ -262,6 +262,11 @@ export function initialModelId(
   return chat.llmModelId ?? models.find((model) => model.isDefault)?.id ?? models[0]?.id ?? null;
 }
 
+/** Whether the picker lets a model be chosen: not one the person is at a token limit for. */
+export function modelPickable(model: Pick<ModelOption, 'limitReached'>): boolean {
+  return !model.limitReached;
+}
+
 /** The chat's tool choice as saved: a list of connectors, or null for "the defaults". */
 export function connectorsPatch(next: string[] | null): {
   toolConfig: { connectors: string[] } | null;

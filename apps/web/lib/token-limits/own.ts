@@ -5,7 +5,14 @@
  */
 
 import { getDataStore } from '@renkei/db';
-import { getTokenLimitStatus, tokenLimitBlock } from '@renkei/settings';
+import {
+  getOrgSettings,
+  getTokenLimitStatus,
+  policyLimitsAnything,
+  tokenLimitBlock,
+  tokenLimitPolicy,
+} from '@renkei/settings';
+import { limitReachedNote } from './format';
 
 export interface OwnPeriodLimit {
   used: number;
@@ -31,6 +38,38 @@ export interface OwnTokenLimits {
   models: OwnModelLimit[];
   /** A limit on everything is reached: no new chat turn or agent run starts. */
   stopped: boolean;
+}
+
+/**
+ * For each of `modelIds`, why `subject` cannot start a turn on it now, for
+ * the model picker; a model they can use has no entry. Empty when the
+ * organization limits nothing, the person is exempt, or the limits could
+ * not be read (the picker then offers everything, and the turn's own check
+ * decides).
+ */
+export async function modelLimitNotes(
+  subject: string,
+  modelIds: readonly string[]
+): Promise<Map<string, string>> {
+  const notes = new Map<string, string>();
+  const settings = await getOrgSettings();
+  if (!settings.ok || !policyLimitsAnything(tokenLimitPolicy(settings.val))) return notes;
+  const status = await getTokenLimitStatus(subject);
+  if (!status.ok) return notes;
+  for (const modelId of modelIds) {
+    const block = tokenLimitBlock(status.val, modelId);
+    if (block) {
+      notes.set(
+        modelId,
+        limitReachedNote({
+          period: block.period,
+          llmModelId: block.llmModelId,
+          resetsAt: block.resetsAt.toISOString(),
+        })
+      );
+    }
+  }
+  return notes;
 }
 
 /** Null when it could not be read; the card is then left out. */

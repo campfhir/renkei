@@ -1,7 +1,8 @@
 /**
  * Token limits end to end: an operator puts a weekly limit on one model on
  * the Token limits page, a chat on that model spends past it, the next
- * message is refused with the reason, My usage shows the limit and the
+ * message is refused with the reason, the model picker marks the model as
+ * unavailable, My usage shows the limit and the
  * progress against it, and making the person unlimited lets them go on. A
  * boost is granted and taken back on the person's row, and the page fits a
  * phone.
@@ -27,6 +28,8 @@ test('a model limit stops new chat turns, shows on My usage, and an operator lif
   page,
   person,
 }, testInfo) => {
+  // Five pages and a chat turn in one walk.
+  test.slow();
   const tag = `${testInfo.project.name.replace('desktop-', '')}-${randomUUID().slice(0, 6)}`;
   const label = `Limited model ${tag}`;
   const modelId = await addStubModel(page.request, tag, { label });
@@ -38,7 +41,13 @@ test('a model limit stops new chat turns, shows on My usage, and an operator lif
     await expect(main.getByRole('heading', { name: 'Token limits' })).toBeVisible(COLD);
     const save = main.getByRole('button', { name: 'Save limits' });
     await expect(save).toBeDisabled();
-    await main.getByRole('textbox', { name: `Weekly limit for ${label}` }).fill('3K');
+    // Typed again until the form answers: a value filled before the page
+    // hydrates is put back to what the server rendered.
+    const weekly = main.getByRole('textbox', { name: `Weekly limit for ${label}` });
+    await expect(async () => {
+      await weekly.fill('3K');
+      await expect(save).toBeEnabled({ timeout: 1_000 });
+    }).toPass();
     const saved = page.waitForResponse(
       (response) =>
         response.url().endsWith('/api/admin/token-limits') && response.request().method() === 'PUT'
@@ -70,8 +79,20 @@ test('a model limit stops new chat turns, shows on My usage, and an operator lif
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     expect((await refused).status()).toBe(429);
     await expect(
-      page.getByText(`reached the weekly token limit for the model ${label} (5K of 3K)`)
+      page
+        .getByRole('alert')
+        .filter({ hasText: `reached the weekly token limit for the model ${label} (5K of 3K)` })
     ).toBeVisible();
+
+    // The picker says so before the model is chosen again: marked on the
+    // button, and in the menu listed with the reason but not selectable.
+    const picker = page.getByRole('button', { name: 'Model', exact: true });
+    await expect(picker).toContainText('Limit reached');
+    await picker.click();
+    const limited = page.getByRole('menuitemradio', { name: new RegExp(label) });
+    await expect(limited).toBeDisabled();
+    await expect(limited).toContainText(/Weekly limit for this model reached · resets .* UTC/);
+    await page.keyboard.press('Escape');
 
     // My usage shows the limit and where the person stands against it.
     await page.goto('/utilization');

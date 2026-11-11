@@ -246,6 +246,7 @@ export const chatClient = {
 
   streamUrl: (chatId: string, turnId: string) => `${base()}/chats/${chatId}/turns/${turnId}/stream`,
 
+  /** The models to pick from, each marked when this person is at a token limit for it. */
   models: () => getJson<{ models: ModelOption[] }>(`${base()}/models`),
 
   connectors: () =>

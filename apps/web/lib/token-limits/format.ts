@@ -82,6 +82,24 @@ export function limitProgress(used: number, limit: number | null, boost = 0): Li
   };
 }
 
+/**
+ * The line a model picker shows under a model no turn can start on: which
+ * limit is reached (the person's own, or this model's) and when it resets.
+ */
+export function limitReachedNote(block: {
+  period: 'week' | 'month';
+  /** Null when it is the person's overall limit, not this model's. */
+  llmModelId: string | null;
+  resetsAt: string;
+}): string {
+  const period = block.period === 'week' ? 'weekly' : 'monthly';
+  const which =
+    block.llmModelId === null
+      ? `Your ${period} token limit is reached`
+      : `${period === 'weekly' ? 'Weekly' : 'Monthly'} limit for this model reached`;
+  return `${which} · resets ${formatReset(block.resetsAt)}`;
+}
+
 /** "Mon 16 Nov, 00:00 UTC": limits reset on the organization's clock, so the zone is always said. */
 export function formatReset(iso: string): string {
   const at = new Date(iso);

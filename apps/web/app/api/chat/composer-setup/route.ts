@@ -11,7 +11,7 @@ import { NextResponse } from 'next/server';
 import { tenantBlobStoreConfigured } from '@renkei/blob-store';
 import { getOrgSettings } from '@renkei/settings';
 import { chatRequestContext } from '@/lib/chat/route-support';
-import { listChatModels } from '@/lib/chat/models';
+import { listChatModelsFor } from '@/lib/chat/models';
 import { loadVoiceAvailability } from '@/lib/voice/availability';
 
 export async function GET(request: NextRequest): Promise<Response> {
@@ -19,7 +19,7 @@ export async function GET(request: NextRequest): Promise<Response> {
   if (!ready.ok) return ready.response;
   const { session } = ready.context;
   const [models, uploadsEnabled, voice, orgSettings] = await Promise.all([
-    listChatModels(),
+    listChatModelsFor(session.subject),
     tenantBlobStoreConfigured(),
     loadVoiceAvailability(session.subject),
     getOrgSettings(),

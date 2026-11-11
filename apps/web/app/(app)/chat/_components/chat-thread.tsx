@@ -187,7 +187,7 @@ function chatWrittenPaths(messages: ChatMessageView[]): Set<string> {
 export default function ChatThread({
   initialChat,
   initialMessages,
-  models,
+  models: initialModels,
   uploadsEnabled,
   massUploadThreshold,
   voice,
@@ -222,6 +222,14 @@ export default function ChatThread({
     manageBusy,
     manageError,
   } = sendState;
+  // The roster, re-read when a turn ends or a send is refused: a turn can
+  // take the person to a token limit, and the picker should say so before
+  // they choose that model again.
+  const [models, setModels] = useState(initialModels);
+  const refreshModels = useCallback(async () => {
+    const fresh = await chatClient.models();
+    if (fresh.data) setModels(fresh.data.models);
+  }, []);
   const [modelId, setModelId] = useState<string | null>(() => initialModelId(initialChat, models));
   const [thinking, setThinking] = useState(initialChat.thinkingEnabled);
   const [autoMode, setAutoMode] = useState(initialChat.autoMode);
@@ -230,6 +238,11 @@ export default function ChatThread({
   );
   const isOwner = chat.role === 'owner';
   const running = activeTurnId !== null;
+  const wasRunning = useRef(running);
+  useEffect(() => {
+    if (wasRunning.current && !running) void refreshModels();
+    wasRunning.current = running;
+  }, [running, refreshModels]);
 
   /*
     Voice, when the org has it: one speech queue for the thread (a reply
@@ -677,6 +690,7 @@ export default function ChatThread({
       setSending(false);
       if (started.error || !started.data) {
         setError(started.error ?? 'The message could not be sent.');
+        void refreshModels();
         return null;
       }
       lastPrompt.current = input;
@@ -1437,7 +1451,10 @@ export default function ChatThread({
               </div>
             ) : null}
             {error ? (
-              <p className="px-4 pb-1 text-sm text-red-600" role="alert">
+              <p
+                role="alert"
+                className="mx-4 mb-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+              >
                 {error}
               </p>
             ) : null}
