@@ -119,6 +119,11 @@ export type AuditAction =
   | 'code.pipelines.run'
   /** A bitbucket-pipelines.yml committed from the page, from a template or edited. */
   | 'code.pipelines.file.committed'
+  /** A GitHub repository's Actions switch, variables or workflow file, changed from a code project's page or its chat (details: keys, never values). */
+  | 'code.actions.enabled'
+  | 'code.actions.disabled'
+  | 'code.actions.variables.replaced'
+  | 'code.actions.file.committed'
   /** A service container started or stopped from a code project's Services page. */
   | 'code.services.started'
   | 'code.services.stopped'

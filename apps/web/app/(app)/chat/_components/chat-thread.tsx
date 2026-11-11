@@ -1055,6 +1055,11 @@ export default function ChatThread({
   }
   if (codeProjectId) {
     overflow.push({ label: 'Environment', icon: ICONS.chip, onSelect: codeTools.openEnvironment });
+    overflow.push({
+      label: 'Pipelines',
+      icon: ICONS.play,
+      onSelect: codeTools.openPipelines,
+    });
     if (isOwner)
       overflow.push({ label: 'Add files', icon: ICONS.upload, onSelect: codeTools.openFiles });
     overflow.push({

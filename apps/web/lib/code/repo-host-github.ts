@@ -61,8 +61,12 @@ function runState(status: string, conclusion: string): HostPipelineState {
   return 'other';
 }
 
-export function githubHostAdapter(context: RepoHostContext): RepoHostAdapter {
-  const auth: GitHubAuth = githubAuthOf(context);
+export function githubHostAdapter(
+  context: RepoHostContext,
+  /** An auth already in hand, for a caller that reads more than runs with it. */
+  given?: GitHubAuth
+): RepoHostAdapter {
+  const auth: GitHubAuth = given ?? githubAuthOf(context);
   const scopes = ['repository'] as const;
 
   return {
@@ -93,7 +97,9 @@ export function githubHostAdapter(context: RepoHostContext): RepoHostAdapter {
         `${repoPath(target.owner, target.repo)}/pulls?state=${state}&sort=updated&direction=desc&per_page=${max}`
       );
       if (!result.ok) return result;
-      const pullRequests = arr(result.body).map((pr) => pullRequestOf(target.owner, target.repo, pr));
+      const pullRequests = arr(result.body).map((pr) =>
+        pullRequestOf(target.owner, target.repo, pr)
+      );
       return { ok: true, pullRequests, hasMore: result.hasMore };
     },
 
@@ -107,7 +113,11 @@ export function githubHostAdapter(context: RepoHostContext): RepoHostAdapter {
       let checksState: string | null = null;
       const headSha = str(rec(pr.head).sha);
       if (headSha) {
-        const status = await ghJson(auth, scopes, `${repoPath(target.owner, target.repo)}/commits/${headSha}/status`);
+        const status = await ghJson(
+          auth,
+          scopes,
+          `${repoPath(target.owner, target.repo)}/commits/${headSha}/status`
+        );
         if (status.ok) checksState = str(rec(status.body).state) || null;
       }
       const pullRequest: HostPullRequestDetail = {

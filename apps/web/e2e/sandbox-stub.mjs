@@ -1246,6 +1246,170 @@ function handlePipelineVariables(request, response, list, uuid) {
   return error(response, 405, 'method_not_allowed');
 }
 
+/**
+ * GitHub Actions per repository, for the Actions page: the switch, the
+ * workflow files, the repository's variables and secret names, one
+ * environment with a variable of its own, and two runs. Keyed by full_name;
+ * the Actions spec seeds a project on a repository of its own per
+ * Playwright project (`acme/actions-demo-*`), so none share a row. A
+ * secret's value is write-only on GitHub, so only names live here.
+ */
+const GITHUB_ACTIONS = new Map();
+
+function actionsOf(fullName) {
+  if (!GITHUB_ACTIONS.has(fullName)) {
+    GITHUB_ACTIONS.set(fullName, {
+      enabled: false,
+      workflows: new Map(),
+      variables: [],
+      secrets: ['DEPLOY_TOKEN'],
+      environments: [{ name: 'production', variables: [], secrets: [] }],
+      runs: [
+        {
+          id: 9002,
+          status: 'completed',
+          conclusion: 'failure',
+          head_branch: 'feature/retry-invoices',
+          run_started_at: '2026-09-22T14:05:00Z',
+        },
+        {
+          id: 9001,
+          status: 'completed',
+          conclusion: 'success',
+          head_branch: 'main',
+          run_started_at: '2026-09-21T09:30:00Z',
+        },
+      ],
+    });
+  }
+  return GITHUB_ACTIONS.get(fullName);
+}
+
+/** The variables endpoints of one set: list, create, change, delete. */
+function handleActionsVariables(request, response, list, name) {
+  if (!name) {
+    if (request.method === 'GET') {
+      return json(response, 200, { total_count: list.length, variables: list });
+    }
+    if (request.method === 'POST') {
+      void readBody(request).then((body) => {
+        if (list.some((variable) => variable.name === body.name)) {
+          return error(response, 409, 'variable_exists', 'Variable already exists');
+        }
+        list.push({ name: body.name, value: body.value ?? '' });
+        json(response, 201, {});
+      });
+      return;
+    }
+    return error(response, 405, 'method_not_allowed');
+  }
+  const index = list.findIndex((variable) => variable.name === decodeURIComponent(name));
+  if (index === -1) return error(response, 404, 'not_found', 'Not Found');
+  if (request.method === 'DELETE') {
+    list.splice(index, 1);
+    response.writeHead(204);
+    return response.end();
+  }
+  if (request.method === 'PATCH') {
+    void readBody(request).then((body) => {
+      list[index] = { name: body.name ?? list[index].name, value: body.value ?? list[index].value };
+      response.writeHead(204);
+      response.end();
+    });
+    return;
+  }
+  return error(response, 405, 'method_not_allowed');
+}
+
+/** GitHub's REST API as far as the Actions page and its chat tools reach. */
+function handleGitHubActions(request, url, response) {
+  const path = url.pathname.slice('/github'.length);
+  const match = /^\/repos\/([^/]+)\/([^/]+)\/(.*)$/.exec(path);
+  if (!match) return error(response, 404, 'not_found', 'Not Found');
+  const state = actionsOf(`${match[1]}/${match[2]}`);
+  const rest = match[3];
+  if (rest === 'actions/permissions') {
+    if (request.method === 'GET') {
+      return json(response, 200, { enabled: state.enabled, allowed_actions: 'all' });
+    }
+    if (request.method === 'PUT') {
+      void readBody(request).then((body) => {
+        state.enabled = body.enabled === true;
+        response.writeHead(204);
+        response.end();
+      });
+      return;
+    }
+  }
+  if (rest === 'actions/runs') {
+    return json(response, 200, { total_count: state.runs.length, workflow_runs: state.runs });
+  }
+  const repoVariables = /^actions\/variables(?:\/([^/]+))?$/.exec(rest);
+  if (repoVariables)
+    return handleActionsVariables(request, response, state.variables, repoVariables[1]);
+  if (rest === 'actions/secrets') {
+    return json(response, 200, {
+      total_count: state.secrets.length,
+      secrets: state.secrets.map((name) => ({ name })),
+    });
+  }
+  if (rest === 'environments') {
+    return json(response, 200, {
+      total_count: state.environments.length,
+      environments: state.environments.map((environment) => ({ name: environment.name })),
+    });
+  }
+  const environment = /^environments\/([^/]+)\/(variables|secrets)(?:\/([^/]+))?$/.exec(rest);
+  if (environment) {
+    const found = state.environments.find(
+      (entry) => entry.name === decodeURIComponent(environment[1])
+    );
+    if (!found) return error(response, 404, 'not_found', 'Not Found');
+    if (environment[2] === 'secrets') {
+      return json(response, 200, {
+        total_count: found.secrets.length,
+        secrets: found.secrets.map((name) => ({ name })),
+      });
+    }
+    return handleActionsVariables(request, response, found.variables, environment[3]);
+  }
+  const workflowDir = /^contents\/\.github\/workflows$/.exec(rest);
+  if (workflowDir) {
+    if (state.workflows.size === 0) return error(response, 404, 'not_found', 'Not Found');
+    return json(
+      response,
+      200,
+      [...state.workflows.keys()].map((name) => ({
+        type: 'file',
+        name,
+        path: `.github/workflows/${name}`,
+      }))
+    );
+  }
+  const workflowFile = /^contents\/\.github\/workflows\/([^/]+)$/.exec(rest);
+  if (workflowFile) {
+    const name = decodeURIComponent(workflowFile[1]);
+    if (request.method === 'GET') {
+      const text = state.workflows.get(name);
+      if (text === undefined) return error(response, 404, 'not_found', 'Not Found');
+      return json(response, 200, {
+        type: 'file',
+        name,
+        sha: `sha-${name}`,
+        content: Buffer.from(text, 'utf8').toString('base64'),
+      });
+    }
+    if (request.method === 'PUT') {
+      void readBody(request).then((body) => {
+        state.workflows.set(name, Buffer.from(body.content ?? '', 'base64').toString('utf8'));
+        json(response, 201, { content: { sha: `sha-${name}` }, commit: { sha: 'c0ffee' } });
+      });
+      return;
+    }
+  }
+  return error(response, 404, 'not_found', 'Not Found');
+}
+
 function handleBitbucket(request, url, response) {
   const path = url.pathname.slice('/bitbucket/2.0'.length);
   const pipelinesConfig = /^\/repositories\/([^/]+)\/([^/]+)\/pipelines_config$/.exec(path);
@@ -2793,7 +2957,8 @@ const server = createServer((request, response) => {
   // GITHUB_API_BASE_URL); the connect flow's token and identity are the
   // in-memory app's own fake OAuth. Only opening a pull request is stood
   // in for — #12, on any repository — so a code chat's milestone card has
-  // a host's answer to show.
+  // a host's answer to show — and the Actions API of the actions-demo
+  // repositories (code-actions.spec.ts).
   if (url.pathname.startsWith('/github/')) {
     if (request.method === 'POST' && /^\/github\/repos\/[^/]+\/[^/]+\/pulls$/.test(url.pathname)) {
       void readBody(request).then((body) =>
@@ -2805,6 +2970,10 @@ const server = createServer((request, response) => {
         })
       );
       return;
+    }
+    // Actions on `acme/actions-demo-*` — see GITHUB_ACTIONS above.
+    if (/^\/github\/repos\/acme\/actions-demo-[^/]+\//.test(url.pathname)) {
+      return handleGitHubActions(request, url, response);
     }
     return error(response, 404, 'not_found');
   }

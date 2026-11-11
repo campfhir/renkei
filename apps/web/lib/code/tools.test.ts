@@ -150,6 +150,8 @@ describe('the set', () => {
       'code_grep',
       'code_ls',
       'code_move_file',
+      'code_pipeline_set_variables',
+      'code_pipeline_variables',
       'code_preview_logs',
       'code_preview_start',
       'code_preview_stop',
@@ -163,6 +165,8 @@ describe('the set', () => {
     expect(set.get('code_previews')!.readOnly).toBe(true);
     expect(set.get('code_git_rebase')!.readOnly).toBeUndefined();
     expect(set.get('code_env_names')!.readOnly).toBe(true);
+    expect(set.get('code_pipeline_variables')!.readOnly).toBe(true);
+    expect(set.get('code_pipeline_set_variables')!.readOnly).toBeUndefined();
     expect(set.get('code_run')!.readOnly).toBeUndefined();
     expect(set.get('code_edit_file')!.readOnly).toBeUndefined();
     expect(set.get('code_delete_file')!.readOnly).toBeUndefined();

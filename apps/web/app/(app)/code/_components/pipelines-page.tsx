@@ -5,25 +5,30 @@
  * — whether Bitbucket runs pipelines for the repository at all, and
  * whether a `bitbucket-pipelines.yml` is on the branch, with an editor
  * that starts one from the org's pipeline templates and commits it, or
- * edits the one there — and the
- * variables the runs get, the repository's and each deployment
- * environment's — each set edited as one text box, `KEY=value` a line,
- * and applied as a difference. Read on open and after every change,
- * with the person's own Bitbucket grant. Its summary card on the project page is
- * pipelines-summary.tsx.
+ * edits the one there — and the variables the runs get, the repository's
+ * and each deployment environment's, each set edited as one text box,
+ * `KEY=value` a line, and applied as a difference. Read on open and after
+ * every change, with the person's own Bitbucket grant. Its summary card
+ * on the project page is pipelines-summary.tsx; its GitHub counterpart,
+ * drawn from the same parts (pipeline-parts.tsx), is actions-page.tsx.
+ *
+ * The same body opens as a modal from a code chat's overflow menu
+ * (`presentation="modal"`, via pipelines-modal.tsx): no back link or page
+ * header, a slim toolbar instead, so a person can look at or change the
+ * setup beside the conversation that is drafting it.
  *
  * A run can be started from here too, on the scope the chat's trigger
- * tool stands on. The switch and the variables, though, are no chat
- * tool, on purpose: a chat can write the YAML (a file, committed like
- * any other) and run or stop a pipeline, but where deploy keys and
- * registry tokens live is set here by a person. A secured value goes to Bitbucket once and
- * is never shown again; Bitbucket itself never sends one back.
+ * tool stands on. A chat can also write the YAML (a file, committed like
+ * any other), stop a run, and read and set the plain variables
+ * (lib/code/pipeline-tools.ts) — but never a secured one, and it cannot
+ * flip the switch: where deploy keys and registry tokens live is set
+ * here by a person. A secured value goes to Bitbucket once and is never
+ * shown again; Bitbucket itself never sends one back.
  *
  * The layout is one column of cards on a phone (where the runs are
  * cards too, not a table) and two on a wide screen, runs beside setup
- * and variables; a GitHub Actions variant would fill the same frame
- * from its own reader. What the page decides — the requests, when they
- * can be sent, what a save takes away, the words after each change — is
+ * and variables. What the page decides — the requests, when they can be
+ * sent, what a save takes away, the words after each change — is
  * pipelines-page.model.ts.
  */
 
@@ -38,7 +43,14 @@ import type {
   VariablesApplied,
 } from '@/lib/code/bitbucket-pipelines';
 import type { PipelineTemplate } from '@/lib/code/pipeline-templates';
-import Pill from './pill';
+import VariableGroup, {
+  RunStatePill,
+  StatusPill,
+  cardClass,
+  inputClass,
+  linkButtonClass,
+  type VariableWords,
+} from './pipeline-parts';
 import {
   branchLabel as labelOfBranch,
   canCommit,
@@ -52,34 +64,35 @@ import {
   fileRequest,
   initialPipelines,
   outcomeFor,
-  outcomeLines,
   outcomeOf,
   pipelinesReducer,
   pipelinesUrl as urlOfPipelines,
   removalQuestion,
   runRequest,
-  runStatePill,
   templateBlankOption,
   templateOptionLabel,
   textRows,
-  variableShown,
-  variablesButtonLabel,
   variablesGoing,
   variablesRequest,
   type Committed,
-  type Draft,
   type Outcome,
   type PipelinesAction,
   type RunDraft,
-  type Scope,
   type Setup,
 } from './pipelines-page.model';
 
-const cardClass = 'rounded-lg border border-gray-200 p-4 dark:border-gray-800';
-const inputClass =
-  'w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
-const linkButtonClass =
-  'text-xs font-medium whitespace-nowrap text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400';
+const BITBUCKET_WORDS: VariableWords = {
+  placeholder: 'API_BASE_URL=https://api.example.test\nsecret DEPLOY_TOKEN=…',
+  help: (
+    <>
+      One <span className="font-mono">KEY=value</span> a line, as a .env; start a line with{' '}
+      <span className="font-mono">secret</span> to secure it — Bitbucket masks it in logs and never
+      shows the value again, so a secured one shows here as{' '}
+      <span className="font-mono">secret KEY=</span> and keeps its value while that line stays. A
+      line taken out removes the variable.
+    </>
+  ),
+};
 
 export default function PipelinesPage({
   projectId,
@@ -87,6 +100,7 @@ export default function PipelinesPage({
   repoFullName,
   branch,
   canEdit,
+  presentation = 'page',
 }: {
   projectId: string;
   projectName: string;
@@ -94,6 +108,8 @@ export default function PipelinesPage({
   /** The project's branch; empty for the repository's default. */
   branch: string;
   canEdit: boolean;
+  /** A page of its own, or the body of a modal (no back link or page header). */
+  presentation?: 'page' | 'modal';
 }) {
   const url = `/api/code/projects/${projectId}/pipelines`;
   const [state, dispatch] = useReducer(pipelinesReducer, initialPipelines);
@@ -230,42 +246,64 @@ export default function PipelinesPage({
   const branchLabel = labelOfBranch(branch);
   const canSetVariables = mayVariables(state, canEdit);
 
-  return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
-        <BackLink href={`/code/${projectId}`} label={projectName} />
-        <div className="min-w-0 flex-1">
-          <h1 className="flex items-center gap-2 text-sm font-semibold">
-            <span className="truncate">Pipelines</span>
-            {setup ? <StatusPill enabled={setup.enabled} /> : null}
-          </h1>
-          <p className="truncate text-xs text-gray-500">
-            {projectName} · <span className="font-mono">{repoFullName}</span>
-          </p>
-        </div>
-        <button
-          type="button"
-          disabled={busy || setup === null}
-          onClick={() => void reload()}
-          className="rounded-md border border-gray-300 px-2.5 py-1 text-xs hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
-        >
-          Refresh
-        </button>
-        {pipelinesUrl ? (
-          <ExternalLink
-            href={pipelinesUrl}
-            className="text-xs font-medium whitespace-nowrap text-blue-600 hover:underline dark:text-blue-400"
-          >
-            Open on Bitbucket
-          </ExternalLink>
-        ) : null}
-      </header>
+  const refreshButton = (
+    <button
+      type="button"
+      disabled={busy || setup === null}
+      onClick={() => void reload()}
+      className="rounded-md border border-gray-300 px-2.5 py-1 text-xs hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
+    >
+      Refresh
+    </button>
+  );
+  const hostLink = pipelinesUrl ? (
+    <ExternalLink
+      href={pipelinesUrl}
+      className="text-xs font-medium whitespace-nowrap text-blue-600 hover:underline dark:text-blue-400"
+    >
+      Open on Bitbucket
+    </ExternalLink>
+  ) : null;
+  const modal = presentation === 'modal';
 
-      <div className="mx-auto max-w-6xl space-y-4 p-4">
+  return (
+    <div className={modal ? '' : 'min-h-0 flex-1 overflow-y-auto'}>
+      {modal ? (
+        <div className="flex items-center gap-2 border-b border-gray-200 px-4 py-2 dark:border-gray-800">
+          <p className="min-w-0 flex-1 truncate text-xs text-gray-500">
+            <span className="font-mono">{repoFullName}</span>
+            {setup ? (
+              <>
+                {' '}
+                <StatusPill enabled={setup.enabled} />
+              </>
+            ) : null}
+          </p>
+          {refreshButton}
+          {hostLink}
+        </div>
+      ) : (
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
+          <BackLink href={`/code/${projectId}`} label={projectName} />
+          <div className="min-w-0 flex-1">
+            <h1 className="flex items-center gap-2 text-sm font-semibold">
+              <span className="truncate">Pipelines</span>
+              {setup ? <StatusPill enabled={setup.enabled} /> : null}
+            </h1>
+            <p className="truncate text-xs text-gray-500">
+              {projectName} · <span className="font-mono">{repoFullName}</span>
+            </p>
+          </div>
+          {refreshButton}
+          {hostLink}
+        </header>
+      )}
+
+      <div className={`mx-auto space-y-4 p-4 ${modal ? 'max-w-none' : 'max-w-6xl'}`}>
         <p className="text-xs text-gray-500">
           How Bitbucket builds and deploys this repository. A chat in the project can write the
-          pipeline file and start or stop runs; the switch and the variables are set here, by you,
-          and chats never see them.
+          pipeline file, start or stop runs, and read and set the plain variables; the switch and
+          secured values are set here, by you, and a chat never sees one.
         </p>
         {loadError ? (
           <p role="alert" className="text-sm text-red-600 dark:text-red-400">
@@ -283,7 +321,7 @@ export default function PipelinesPage({
         {setup ? (
           <div
             aria-busy={busy}
-            className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:items-start"
+            className={`grid grid-cols-[minmax(0,1fr)] gap-4 lg:items-start ${modal ? 'xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]' : 'lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]'}`}
           >
             <div className="space-y-4">
               <RunsCard
@@ -464,14 +502,19 @@ export default function PipelinesPage({
                 hint="Every pipeline run gets these."
                 variables={setup.variables}
                 error={setup.variablesError}
-                scope={{}}
+                scopeId="repository"
                 canEdit={canSetVariables}
                 needs={canEdit ? setup.access.variablesNeeds : null}
                 busy={busy}
                 open={draftFor(state, {})}
                 last={outcomeFor(state, {})}
-                dispatch={dispatch}
-                onSave={saveVariables}
+                words={BITBUCKET_WORDS}
+                onOpen={() =>
+                  dispatch({ type: 'variablesOpened', scope: {}, variables: setup.variables })
+                }
+                onChange={(text) => dispatch({ type: 'variablesChanged', text })}
+                onCancel={() => dispatch({ type: 'variablesCancelled' })}
+                onSave={() => void saveVariables(setup.variables)}
               />
               {setup.environments.map((environment) => (
                 <VariableGroup
@@ -480,14 +523,23 @@ export default function PipelinesPage({
                   hint={environmentHint(environment)}
                   variables={environment.variables}
                   error={environment.error}
-                  scope={{ environmentUuid: environment.uuid }}
+                  scopeId={environment.uuid}
                   canEdit={canSetVariables}
                   needs={null}
                   busy={busy}
                   open={draftFor(state, { environmentUuid: environment.uuid })}
                   last={outcomeFor(state, { environmentUuid: environment.uuid })}
-                  dispatch={dispatch}
-                  onSave={saveVariables}
+                  words={BITBUCKET_WORDS}
+                  onOpen={() =>
+                    dispatch({
+                      type: 'variablesOpened',
+                      scope: { environmentUuid: environment.uuid },
+                      variables: environment.variables,
+                    })
+                  }
+                  onChange={(text) => dispatch({ type: 'variablesChanged', text })}
+                  onCancel={() => dispatch({ type: 'variablesCancelled' })}
+                  onSave={() => void saveVariables(environment.variables)}
                 />
               ))}
               {setup.environmentsError ? (
@@ -716,161 +768,4 @@ function RunsCard({
   );
 }
 
-/** A run's state as a pill: green when it passed, red when it failed, blue while it runs. */
-export function RunStatePill({ state }: { state: string }) {
-  const { tone, label } = runStatePill(state);
-  return <Pill tone={tone}>{label}</Pill>;
-}
-
-/** On, Off, or nothing when the switch could not be read. */
-export function StatusPill({ enabled }: { enabled: boolean | null }) {
-  if (enabled === null) return null;
-  return enabled ? <Pill tone="green">On</Pill> : <Pill tone="gray">Off</Pill>;
-}
-
-function VariableGroup({
-  title,
-  hint,
-  variables,
-  error,
-  scope,
-  canEdit,
-  needs,
-  busy,
-  open,
-  last,
-  dispatch,
-  onSave,
-}: {
-  title: string;
-  hint: string;
-  variables: PipelineVariable[];
-  error: string | null;
-  scope: Scope;
-  canEdit: boolean;
-  /** Why an editor still cannot set variables, shown once on the first group. */
-  needs: string | null;
-  busy: boolean;
-  /** The open box, when it is this set's. */
-  open: Draft | null;
-  /** The last save's outcome, when it was this set's. */
-  last: Outcome | null;
-  dispatch: Dispatch<PipelinesAction>;
-  onSave: (current: PipelineVariable[]) => Promise<void>;
-}) {
-  const groupId = `pipeline-variables-${scope.environmentUuid ?? 'repository'}`;
-  const lines = last ? outcomeLines(last) : null;
-  return (
-    <section className={cardClass} aria-labelledby={groupId}>
-      <div className="flex items-center gap-2">
-        <h2 id={groupId} className="text-sm font-semibold">
-          {title}
-        </h2>
-        {canEdit && !open ? (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => dispatch({ type: 'variablesOpened', scope, variables })}
-            className={`ml-auto ${linkButtonClass}`}
-          >
-            {variablesButtonLabel(variables)}
-          </button>
-        ) : null}
-      </div>
-      <p className="text-xs text-gray-500">{hint}</p>
-      {error ? (
-        <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">{error}</p>
-      ) : open ? null : variables.length === 0 ? (
-        <p className="mt-1 text-sm text-gray-500">No variables.</p>
-      ) : (
-        <ul className="mt-1 divide-y divide-gray-200 text-sm dark:divide-gray-800">
-          {variables.map((variable) => {
-            const shown = variableShown(variable);
-            return (
-              <li key={variable.uuid} className="flex items-center gap-2 py-1.5">
-                <span className="min-w-0 flex-1 truncate">
-                  <span className="font-mono">{variable.key}</span>
-                  {'secured' in shown ? (
-                    <span className="ml-2">
-                      <Pill tone="gray">Secured</Pill>
-                    </span>
-                  ) : (
-                    <span className="ml-2 font-mono text-xs text-gray-500">{shown.value}</span>
-                  )}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      {needs ? <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">{needs}</p> : null}
-      {open ? (
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            void onSave(variables);
-          }}
-          aria-label={`Edit ${title}`}
-          className="mt-2 space-y-2"
-        >
-          <textarea
-            value={open.text}
-            onChange={(event) => dispatch({ type: 'variablesChanged', text: event.target.value })}
-            rows={textRows(open.text, 4, 16)}
-            spellCheck={false}
-            aria-label={`${title} as text`}
-            placeholder={'API_BASE_URL=https://api.example.test\nsecret DEPLOY_TOKEN=…'}
-            className={`font-mono ${inputClass}`}
-          />
-          <p className="text-xs text-gray-500">
-            One <span className="font-mono">KEY=value</span> a line, as a .env; start a line with{' '}
-            <span className="font-mono">secret</span> to secure it — Bitbucket masks it in logs and
-            never shows the value again, so a secured one shows here as{' '}
-            <span className="font-mono">secret KEY=</span> and keeps its value while that line
-            stays. A line taken out removes the variable.
-          </p>
-          <div className="flex items-center justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => dispatch({ type: 'variablesCancelled' })}
-              className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={busy}
-              className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-            >
-              {busy ? 'Saving…' : 'Save'}
-            </button>
-          </div>
-        </form>
-      ) : null}
-      {lines ? (
-        <div className="mt-2 space-y-1 text-xs">
-          {lines.status ? (
-            <p
-              role="status"
-              className={
-                lines.status === 'Nothing changed.'
-                  ? 'text-gray-500'
-                  : 'text-green-700 dark:text-green-400'
-              }
-            >
-              {lines.status}
-            </p>
-          ) : null}
-          {lines.notApplied ? (
-            <p role="alert" className="text-red-600 dark:text-red-400">
-              {lines.notApplied}
-            </p>
-          ) : null}
-          {lines.notRead ? (
-            <p className="text-amber-700 dark:text-amber-400">{lines.notRead}</p>
-          ) : null}
-        </div>
-      ) : null}
-    </section>
-  );
-}
+export { RunStatePill, StatusPill } from './pipeline-parts';

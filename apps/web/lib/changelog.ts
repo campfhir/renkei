@@ -46,6 +46,23 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-11',
+    entries: [
+      {
+        kind: 'added',
+        title: 'GitHub projects get the full Actions page',
+        detail:
+          "A GitHub code project's Actions page now works like Bitbucket's Pipelines: turn Actions on or off, write and commit workflow files (starting from your organization's templates), and read and edit repository and environment variables, with secrets listed by name and added on GitHub. Reconnect GitHub with Configure Actions enabled to use the switch and variables.",
+      },
+      {
+        kind: 'added',
+        title: "A chat can set up a pipeline's variables, and Pipelines opens beside the chat",
+        detail:
+          "In a code project, a chat can now read the variables your pipelines get and add or change the plain ones while it drafts a pipeline, so the workflow arrives with the values it needs. Secured values stay yours: it sees them only by name, cannot change or remove them, and asks you to add any token or key on the Pipelines page. Open Pipelines (Actions on GitHub) from the chat's More menu to see what it wrote and change anything, in the same screen as the project page.",
+      },
+    ],
+  },
+  {
     date: '2026-11-10',
     entries: [
       {

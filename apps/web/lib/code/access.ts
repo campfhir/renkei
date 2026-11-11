@@ -168,3 +168,19 @@ function joinNames(names: string[]): string {
   if (quoted.length <= 1) return quoted.join('');
   return `${quoted.slice(0, -1).join(', ')} and ${quoted[quoted.length - 1]}`;
 }
+
+/** The host a project's pipeline routes and tools are for: Bitbucket's Pipelines, or GitHub's Actions. */
+export type PipelinesHost = typeof ATLASSIAN_BITBUCKET | typeof GITHUB;
+
+/** What the connection lacks for a scope, said as the Connectors page says it; null when it carries it. */
+export function missingScope(
+  scopes: string[] | null,
+  scope: string,
+  host: PipelinesHost = ATLASSIAN_BITBUCKET
+): string | null {
+  const name = host === GITHUB ? 'GitHub' : 'Bitbucket';
+  if (!scopes) return `Connect ${name} on the Connectors page first.`;
+  if (scopes.includes(scope)) return null;
+  const labels = scopeOptionLabels([scope], host);
+  return `Your ${name} connection does not carry “${labels[0] ?? scope}”. Reconnect ${name} on the Connectors page with it enabled.`;
+}

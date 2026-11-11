@@ -11,32 +11,36 @@
 
 import type { NextRequest } from 'next/server';
 import type { NextResponse } from 'next/server';
-import { ATLASSIAN_BITBUCKET } from '@renkei/provider-grants';
+import { ATLASSIAN_BITBUCKET, GITHUB } from '@renkei/provider-grants';
 import { getOrgSettings } from '@renkei/settings';
 import { jsonError } from '@/lib/chat/route-support';
 import type { ProjectRow } from '@/lib/chat/projects';
-import { grantScopes, scopeOptionLabels } from '@/lib/code/access';
+import { grantScopes, missingScope, type PipelinesHost } from '@/lib/code/access';
 import { codeProjectContext } from '@/lib/code/route-access';
 
 export interface PipelinesProjectContext {
   project: ProjectRow & { repo: NonNullable<ProjectRow['repo']> };
   subject: string;
-  /** What the person's Bitbucket connection carries; null when not connected. */
+  /** What the person's connection to the project's host carries; null when not connected. */
   scopes: string[] | null;
 }
 
 export async function pipelinesProjectContext(
   request: NextRequest,
   projectId: string,
-  options: { write?: boolean } = {}
+  options: { write?: boolean; host?: PipelinesHost } = {}
 ): Promise<{ ok: true; context: PipelinesProjectContext } | { ok: false; response: NextResponse }> {
   const ready = await codeProjectContext(request, projectId);
   if (!ready.ok) return ready;
   const { session, access, project } = ready.context;
-  if (!project.repo || project.repo.provider !== ATLASSIAN_BITBUCKET) {
+  const host = options.host ?? ATLASSIAN_BITBUCKET;
+  if (!project.repo || project.repo.provider !== host) {
     return {
       ok: false,
-      response: jsonError(409, 'not-bitbucket', 'Only a Bitbucket repository has Pipelines.'),
+      response:
+        host === GITHUB
+          ? jsonError(409, 'not-github', 'Only a GitHub repository has Actions.')
+          : jsonError(409, 'not-bitbucket', 'Only a Bitbucket repository has Pipelines.'),
     };
   }
   if (options.write) {
@@ -54,17 +58,11 @@ export async function pipelinesProjectContext(
       };
     }
   }
-  const scopes = await grantScopes(session.subject, ATLASSIAN_BITBUCKET);
+  const scopes = await grantScopes(session.subject, host);
   return {
     ok: true,
     context: { project: { ...project, repo: project.repo }, subject: session.subject, scopes },
   };
 }
 
-/** What the connection lacks for a scope, said as the Connectors page says it; null when it carries it. */
-export function missingScope(scopes: string[] | null, scope: string): string | null {
-  if (!scopes) return 'Connect Bitbucket on the Connectors page first.';
-  if (scopes.includes(scope)) return null;
-  const labels = scopeOptionLabels([scope], ATLASSIAN_BITBUCKET);
-  return `Your Bitbucket connection does not carry “${labels[0] ?? scope}”. Reconnect Bitbucket on the Connectors page with it enabled.`;
-}
+export { missingScope };
