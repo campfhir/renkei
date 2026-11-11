@@ -13,6 +13,7 @@
 
 import { useState, useTransition } from 'react';
 import Link from 'next/link';
+import TokenLimitsCard from '@/components/token-limits-card';
 import { signInUrl } from '@/lib/sign-in-url';
 import { getUtilizationReport, type UtilizationReport } from './actions';
 import {
@@ -182,6 +183,8 @@ export default function UtilizationViewer({ initial }: { initial: UtilizationRep
           acting for you. Counts only, never content.
         </p>
       </header>
+
+      {report.limits && <TokenLimitsCard limits={report.limits} />}
 
       {report.error && (
         <p className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">

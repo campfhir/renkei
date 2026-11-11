@@ -53,6 +53,7 @@ import { deviceKeyRequestScenarios } from './device-key-requests/scenarios';
 import { personalAccountScenarios } from './personal-account/scenarios';
 import { activityLogScenarios } from './activity-logs/scenarios';
 import { toolUsageScenarios } from './tool-usage/scenarios';
+import { tokenLimitScenarios } from './token-limits/scenarios';
 import { knowledgeChunkScenarios } from './knowledge-chunks/scenarios';
 import { uploadSlotScenarios } from './upload-slots/scenarios';
 import { chatTurnEngineScenarios } from './chat-threads/engine-scenarios';
@@ -110,6 +111,7 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...scheduleCalendarScenarios,
   ...orgAccessScenarios,
   ...usageScenarios,
+  ...tokenLimitScenarios,
   ...agentScenarios,
   ...agentRunScenarios,
   ...agentUsageScenarios,

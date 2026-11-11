@@ -1601,6 +1601,23 @@ export interface Settings {
   value: Json;
 }
 
+export interface TokenLimitBoosts {
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp;
+  granted_by: string;
+  id: string;
+  note: string | null;
+  period: string;
+  subject: string;
+  tokens: Int8;
+}
+
+export interface TokenLimitExemptions {
+  created_at: Generated<Timestamp>;
+  set_by: string;
+  subject: string;
+}
+
 export interface ToolCalls {
   agent_id: string | null;
   connector: string | null;
@@ -1814,6 +1831,8 @@ export interface DB {
   jira_sites: JiraSites;
   oidc_config: OidcConfig;
   settings: Settings;
+  token_limit_boosts: TokenLimitBoosts;
+  token_limit_exemptions: TokenLimitExemptions;
   tool_calls: ToolCalls;
   image_usage: ImageUsage;
   document_usage: DocumentUsage;

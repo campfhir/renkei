@@ -24,6 +24,7 @@ import { isUuid } from '@/lib/uuid';
 import { resolveChatAccess } from './access';
 import { openBlocks, type ContentCipher } from './content-crypto';
 import { getActiveTurn } from './turns';
+import { checkTokenLimit, tokenLimitMessage } from '@renkei/settings';
 import { startChatTurn, type StartTurnError, type StartedTurn } from './start-turn';
 
 export type ResendError = StartTurnError | 'NOT_PROMPT';
@@ -114,6 +115,14 @@ export async function resendFromMessage(input: ResendInput): Promise<Result<Rese
     ...ownUploads.map((row) => row.id),
     ...(input.extraAttachmentIds ?? []).filter(isUuid),
   ];
+
+  // Asked before anything is removed: a person at their token limit keeps
+  // the thread as it is, instead of losing the reply and getting none back.
+  const block = await checkTokenLimit(
+    input.session.subject,
+    input.llmModelId ?? access.chat.llmModelId ?? null
+  );
+  if (block) return err('TOKEN_LIMIT' as const, { message: tokenLimitMessage(block) });
 
   const removed = await store.chatThreads.truncateFrom(access.chat.id, prompt.seq);
   const removedBlobKeys = removed.map((row) => row.blobKey);

@@ -104,6 +104,7 @@ export type * from './domains/run-tokens';
 export type * from './domains/knowledge-reindex-runs';
 export type * from './domains/oauth-tokens';
 export type * from './domains/phi-access';
+export type * from './domains/token-limits';
 export type * from './domains/mail-bulk-jobs';
 export type * from './domains/webex-sent-messages';
 export type * from './domains/tool-surface';

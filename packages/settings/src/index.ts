@@ -374,6 +374,52 @@ export interface OrgSettings {
    * membership), which authenticate by AuthToken + PRODUCT_NAME.
    */
   admanagerProductName: string;
+  /**
+   * The most tokens one person may spend in a week, their agents' runs
+   * included (the token ledger, llm_calls: input plus output); 0 sets no
+   * weekly limit. Past it no new chat turn or agent run starts for them
+   * until the week resets — what is already running finishes. An operator
+   * can exempt a person or grant a boost (./token-limits.ts).
+   */
+  tokenLimitWeekly: number;
+  /** The same per calendar month, which resets on the 1st at 00:00 UTC; 0 sets none. */
+  tokenLimitMonthly: number;
+  /** The day the week resets on: 0 Sunday … 6 Saturday. Monday by default. */
+  tokenLimitWeekResetDay: number;
+  /** The time of day the week resets at, in minutes after 00:00 UTC. */
+  tokenLimitWeekResetMinute: number;
+  /**
+   * Per-person limits on single models, by model id (llm_model_configs):
+   * for the expensive ones. Each is on top of the limits above — a turn or
+   * run on such a model needs room under both — and 0 sets none.
+   */
+  modelTokenLimits: Record<string, ModelTokenLimit>;
+}
+
+/** A model's own weekly and monthly limit per person; 0 sets none. */
+export interface ModelTokenLimit {
+  weekly: number;
+  monthly: number;
+}
+
+/** A stored map of model limits; entries that are not two whole, non-negative numbers are dropped. */
+export function coerceModelTokenLimits(
+  current: unknown,
+  fallback: Record<string, ModelTokenLimit>
+): Record<string, ModelTokenLimit> {
+  if (typeof current !== 'object' || current === null || Array.isArray(current)) return fallback;
+  const whole = (value: unknown): number | null =>
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : null;
+  const out: Record<string, ModelTokenLimit> = {};
+  for (const [modelId, value] of Object.entries(current)) {
+    if (typeof value !== 'object' || value === null) continue;
+    const weekly = whole('weekly' in value ? value.weekly : 0);
+    const monthly = whole('monthly' in value ? value.monthly : 0);
+    if (weekly === null || monthly === null) continue;
+    if (weekly === 0 && monthly === 0) continue;
+    out[modelId] = { weekly, monthly };
+  }
+  return out;
 }
 
 /** The defaults formerly hardcoded in the environment schema. */
@@ -430,6 +476,11 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   sandboxServicePids: 512,
   sandboxWorkspacesDebug: false,
   admanagerProductName: 'Renkei',
+  tokenLimitWeekly: 0,
+  tokenLimitMonthly: 0,
+  tokenLimitWeekResetDay: 1,
+  tokenLimitWeekResetMinute: 0,
+  modelTokenLimits: {},
 };
 
 /** How long a read of the org's settings is served from memory. */
@@ -624,6 +675,15 @@ export async function getOrgSettings(): Promise<Result<OrgSettings, 'DB_ERROR'>>
       stored.get('admanager_product_name'),
       d.admanagerProductName
     ),
+    tokenLimitWeekly: Number(coerce(stored.get('token_limit_weekly'), d.tokenLimitWeekly)),
+    tokenLimitMonthly: Number(coerce(stored.get('token_limit_monthly'), d.tokenLimitMonthly)),
+    tokenLimitWeekResetDay: Number(
+      coerce(stored.get('token_limit_week_reset_day'), d.tokenLimitWeekResetDay)
+    ),
+    tokenLimitWeekResetMinute: Number(
+      coerce(stored.get('token_limit_week_reset_minute'), d.tokenLimitWeekResetMinute)
+    ),
+    modelTokenLimits: coerceModelTokenLimits(stored.get('model_token_limits'), d.modelTokenLimits),
   };
 
   orgCache = { value: settings, expiresAt: Date.now() + settingsCacheTtlMs() };
@@ -661,7 +721,18 @@ export async function setOrgSettings(
   updates: Partial<OrgSettings>
 ): Promise<Result<void, 'DB_ERROR'>> {
   const pairs: Array<
-    [string, boolean | number | string | string[] | Record<string, string[]> | undefined]
+    [
+      string,
+      (
+        | boolean
+        | number
+        | string
+        | string[]
+        | Record<string, string[]>
+        | Record<string, ModelTokenLimit>
+        | undefined
+      ),
+    ]
   > = [
     ['read_only', updates.readOnly],
     ['disabled_connectors', updates.disabledConnectors],
@@ -712,6 +783,11 @@ export async function setOrgSettings(
     ['sandbox_service_pids', updates.sandboxServicePids],
     ['sandbox_workspaces_debug', updates.sandboxWorkspacesDebug],
     ['admanager_product_name', updates.admanagerProductName],
+    ['token_limit_weekly', updates.tokenLimitWeekly],
+    ['token_limit_monthly', updates.tokenLimitMonthly],
+    ['token_limit_week_reset_day', updates.tokenLimitWeekResetDay],
+    ['token_limit_week_reset_minute', updates.tokenLimitWeekResetMinute],
+    ['model_token_limits', updates.modelTokenLimits],
   ];
 
   for (const [key, value] of pairs) {
@@ -770,3 +846,4 @@ export function invalidateSettingsCache(): void {
 }
 
 export { getEffectiveLogLevel, watchLogLevel } from './log-level-sync';
+export * from './token-limits';

@@ -198,6 +198,7 @@ export const EXPECTED_MIGRATIONS = [
   '172-drop-email-ingest-jobs',
   '173-prompt-library-scope',
   '174-queue-job-indexes',
+  '175-token-limits',
 ];
 
 export interface MigrationStatus {
