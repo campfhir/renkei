@@ -1,6 +1,12 @@
 'use client';
 
-import { useEffect, useState, type AnchorHTMLAttributes, type MouseEvent } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type AnchorHTMLAttributes,
+  type MouseEvent,
+} from 'react';
 import { clientLogger } from '@/lib/client-logger';
 
 /**
@@ -17,9 +23,10 @@ import { clientLogger } from '@/lib/client-logger';
  * Image", "Save to Files", AirDrop, and an ✕ that drops the person back
  * where they were. iOS only allows `navigator.share` straight from a tap,
  * not after awaiting a fetch, so the bytes are fetched ahead of the tap:
- * on mount when `prefetch` is set (a window opened to save one file), and
- * otherwise as the finger goes down. If the file isn't in hand by the
- * click, or this iOS can't share files, it falls back to the new window.
+ * as soon as the link renders (once per URL, guarded by a ref) and again as the finger goes down. The link is
+ * `aria-disabled` and ignores taps until the file is in hand, so a tap never
+ * burns the gesture. If the fetch fails, or this iOS can't share files, it
+ * falls back to the new window.
  *
  * `navigator.standalone` exists only on iOS/iPadOS WebKit, so none of this
  * touches desktop browsers, Safari tabs, or Android installs (whose
@@ -35,6 +42,11 @@ const fetched = new Map<string, File>();
 /** Fetches in progress, by URL, so a second ask waits on the first. */
 const inFlight = new Map<string, Promise<boolean>>();
 const KEEP = 8;
+
+/** Whether this browser fetches ahead of a tap at all (iOS home-screen apps that can share files). */
+function fetchesAhead(): boolean {
+  return isIosStandalone() && canShareFiles();
+}
 
 function canShareFiles(): boolean {
   return typeof navigator.share === 'function' && typeof navigator.canShare === 'function';
@@ -107,7 +119,7 @@ export function useDownloadReady(href: string, filename: string | undefined): 'p
 export default function DownloadLink({
   href,
   filename,
-  prefetch = false,
+  prefetch: _prefetch,
   onClick,
   onPointerDown,
   ...props
@@ -115,14 +127,31 @@ export default function DownloadLink({
   href: string;
   /** The saved file's name; omit to keep the server's Content-Disposition name. */
   filename?: string;
-  /** Fetch the file as soon as this renders on iOS standalone, so the first tap can share it. */
+  /** Ignored: every link fetches ahead now. Kept so existing callers still compile. */
   prefetch?: boolean;
 }) {
+  // The href whose fetch has settled (in hand, or failed and falling back to a
+  // new window), and the href a fetch was last started for. The ref is what keeps
+  // the effect below from fetching again on every render.
+  const [settledHref, setSettledHref] = useState<string | null>(null);
+  const requestedHref = useRef<string | null>(null);
+  // Where the file is fetched ahead, the link is off until that has settled.
+  const pending = fetchesAhead() && settledHref !== href;
+
+  // No dependency list, on purpose: it runs after every render, but only the
+  // first render for an href gets past the ref, so each file is fetched once.
   useEffect(() => {
-    if (prefetch) prefetchFile(href, filename);
-  }, [prefetch, href, filename]);
+    if (!fetchesAhead() || requestedHref.current === href) return;
+    requestedHref.current = href;
+    void prefetchFile(href, filename).then(() => setSettledHref(href));
+  });
 
   const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (pending) {
+      // Not ready: a tap now would fall back to a bare window, so it does nothing.
+      event.preventDefault();
+      return;
+    }
     onClick?.(event);
     if (event.defaultPrevented || !isIosStandalone()) return;
     event.preventDefault();
@@ -144,10 +173,12 @@ export default function DownloadLink({
     <a
       href={href}
       download={filename ?? true}
+      aria-disabled={pending || undefined}
+      data-pending={pending || undefined}
       onClick={handleClick}
       onPointerDown={(event) => {
         onPointerDown?.(event);
-        prefetchFile(href, filename);
+        void prefetchFile(href, filename);
       }}
       {...props}
     />

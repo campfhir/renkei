@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-11',
     entries: [
       {
+        kind: 'fixed',
+        title: 'Export downloads and token limits work better on phones',
+        detail:
+          "Your data's export buttons now open the share sheet in the home-screen app on the first tap, waiting until the file is ready. Token limit fields take a text keyboard so you can type 1M, and a monthly limit below the weekly one is refused.",
+      },
+      {
         kind: 'changed',
         title: "The chat's model picker scrolls and can be searched",
         detail:

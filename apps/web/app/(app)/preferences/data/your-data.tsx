@@ -12,6 +12,7 @@
 
 import { useReducer, useRef } from 'react';
 import Link from 'next/link';
+import DownloadLink from '@/components/download-link';
 import { reportFetchFailure } from '@/lib/fetch-json';
 import {
   canImport,
@@ -36,7 +37,7 @@ const BUTTON =
   'rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50';
 const CARD = 'rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950';
 const LINK_BUTTON =
-  'inline-flex items-center rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900';
+  'inline-flex items-center rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-50 aria-disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900';
 
 export default function YourData() {
   const [state, dispatch] = useReducer(yourDataReducer, undefined, initYourData);
@@ -100,12 +101,12 @@ export default function YourData() {
           summary of you to paste into or upload to ChatGPT, Claude or Gemini.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <a href="/api/account/export" download className={LINK_BUTTON}>
+          <DownloadLink href="/api/account/export" className={LINK_BUTTON}>
             Download all my data (.zip)
-          </a>
-          <a href="/api/account/export/profile" download className={LINK_BUTTON}>
+          </DownloadLink>
+          <DownloadLink href="/api/account/export/profile" className={LINK_BUTTON}>
             Download profile for other assistants (.md)
-          </a>
+          </DownloadLink>
         </div>
       </section>
 
