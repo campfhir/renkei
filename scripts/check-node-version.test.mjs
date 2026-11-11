@@ -131,7 +131,7 @@ test('images on the latest release pass', async () => {
 
 test('a registry failure is an error, not a pass', async () => {
   const fetchFn = async (url) =>
-    String(url).includes('nodejs.org') ? json(INDEX) : json({ errors: [] }, 429);
+    String(url) === 'https://nodejs.org/dist/index.json' ? json(INDEX) : json({ errors: [] }, 429);
   await assert.rejects(check({ dockerfile: DOCKERFILE, fetchFn }), /429/);
 });
 
