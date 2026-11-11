@@ -149,6 +149,8 @@ export interface ProjectPatch {
   repo?: ProjectRepo;
   /** The checkout on the worker: set when a clone starts, cleared when it is dropped. */
   workspaceId?: string | null;
+  /** Leave `updatedAt` (and so the lists' order) as it is: for a change nobody made by hand. */
+  keepUpdatedAt?: boolean;
 }
 
 /**
@@ -190,6 +192,7 @@ export async function updateProject(
         }
       : {}),
     ...(patch.workspaceId !== undefined ? { workspaceId: patch.workspaceId } : {}),
+    ...(patch.keepUpdatedAt ? { keepUpdatedAt: true } : {}),
   });
 }
 

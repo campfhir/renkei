@@ -38,6 +38,8 @@ export interface ProjectListItem {
   updatedAt: string;
   /** A code project's repository (`workspace/repo`); null on a chat project. */
   repoFullName: string | null;
+  /** A code project's description (typed, or filled in from its README); null when it has none. */
+  description: string | null;
 }
 
 /**
@@ -172,6 +174,7 @@ export async function loadChatSidebar(
     role: project.ownerSubject === subject ? 'owner' : 'member',
     updatedAt: project.updatedAt.toISOString(),
     repoFullName: project.repo?.fullName ?? null,
+    description: project.description?.trim() || null,
   });
   return {
     chats: allChats,

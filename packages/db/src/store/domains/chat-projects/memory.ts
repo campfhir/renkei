@@ -83,7 +83,7 @@ export function memoryChatProjects(tables: MemoryTables): ChatProjectStore {
           ...(patch.toolConfig !== undefined
             ? { tool_config: patch.toolConfig == null ? null : toJson(patch.toolConfig) }
             : {}),
-          updated_at: new Date(),
+          ...(patch.keepUpdatedAt ? {} : { updated_at: new Date() }),
         }).length > 0
       );
     },

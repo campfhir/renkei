@@ -130,6 +130,23 @@ export const chatProjectScenarios: Scenario<DataStore>[] = [
     },
   },
   {
+    method: 'chatProjects.update',
+    name: 'keepUpdatedAt leaves the timestamp; a plain update moves it',
+    fixture,
+    run: async (store) => {
+      const before = await store.chatProjects.get(PROJECT.annChat);
+      await store.chatProjects.update(PROJECT.annChat, { description: 'quiet', keepUpdatedAt: true });
+      const quiet = await store.chatProjects.get(PROJECT.annChat);
+      await store.chatProjects.update(PROJECT.annChat, { description: 'loud' });
+      const loud = await store.chatProjects.get(PROJECT.annChat);
+      return {
+        quietDescription: quiet?.description,
+        kept: quiet?.updatedAt.getTime() === before?.updatedAt.getTime(),
+        moved: (loud?.updatedAt.getTime() ?? 0) > (before?.updatedAt.getTime() ?? 0),
+      };
+    },
+  },
+  {
     method: 'chatProjects.delete',
     name: 'owner only; memory goes, chats stay outside',
     fixture,

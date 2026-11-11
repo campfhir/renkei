@@ -46,6 +46,17 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-11',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Search and pages on the Code projects list',
+        detail:
+          'Your code projects and the ones shared with you are now two tables you can search by name, repository, description or owner and page through, ten at a time. Shared projects show their owner, and projects without a description get one from their README.',
+      },
+    ],
+  },
+  {
     date: '2026-11-10',
     entries: [
       {

@@ -33,8 +33,10 @@ export interface NewChatProject {
   repo?: { provider: string; fullName: string; branch: string | null };
 }
 
-/** Absent fields stay; every update bumps `updatedAt`. */
+/** Absent fields stay; every update bumps `updatedAt`, unless `keepUpdatedAt` is set. */
 export interface ChatProjectPatch {
+  /** A change made on the owner's behalf, not by them (a description read from the README): the list order stays. */
+  keepUpdatedAt?: boolean;
   name?: string;
   description?: string | null;
   /** Sealed instructions, or null to clear. */
