@@ -39,6 +39,7 @@ import {
 } from '@renkei/agent-llm';
 import type { LlmCallModel } from '@renkei/agents/runs';
 import type { McpToolResult } from '@renkei/mcp-client';
+import { checkTokenLimit, tokenLimitMessage } from '@renkei/settings';
 import { clipOutput } from '@renkei/connector-sandbox';
 import type { Result } from '@campfhir/safe-functions/types';
 import { errorResult, textResult, type LocalToolContext } from './local-tools';
@@ -224,6 +225,19 @@ export async function pickSubagentLlm(
     };
   }
   if (choice.id === turnLlm.modelConfigId) return { ok: true, llm: turnLlm };
+  // The turn's own model was checked against the person's token limits when
+  // the turn started; a different model picked here has its own limit, and
+  // is held to it before any of its tokens are spent.
+  const block = context.subject ? await checkTokenLimit(context.subject, choice.id) : null;
+  if (block) {
+    return {
+      ok: false,
+      error: errorResult(
+        `${tokenLimitMessage(block, { modelLabel: choice.label })} ` +
+          'Leave model out to use this chat’s own model.'
+      ),
+    };
+  }
   const resolved = await resolve(choice.id);
   // resolveAgentLlm falls back to the org default when the row no longer
   // resolves; that is not what was asked for, so say so.

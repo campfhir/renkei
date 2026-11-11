@@ -152,7 +152,15 @@ export async function createAgentRun(
   const block = await checkTokenLimit(input.ownerSubject, input.llmModelId);
   if (block) {
     return err('TOKEN_LIMIT' as const, {
-      message: tokenLimitMessage(block, { whose: "This agent's owner has" }),
+      // How much the owner has used is the owner's to see: someone else who
+      // started the run (an access grantee, an API caller) is told only that
+      // the limit is reached.
+      message: tokenLimitMessage(block, {
+        whose: "This agent's owner has",
+        showUsage: input.triggeredBySubject
+          ? input.triggeredBySubject === input.ownerSubject
+          : input.triggerKind !== 'api',
+      }),
     });
   }
 
