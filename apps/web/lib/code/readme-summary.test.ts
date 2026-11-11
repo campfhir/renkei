@@ -21,6 +21,12 @@ describe('a description from the README', () => {
     expect(summarizeReadme(text)).toBe('Real words about the project here.');
   });
 
+  it('leaves no markup behind, even when stripping one tag would join another', () => {
+    const joined = summarizeReadme('Hello <scr<script>ipt>alert(1)</scr</script>ipt> world and more words.')!;
+    expect(joined).not.toMatch(/[<>]/);
+    expect(summarizeReadme('A stray < bracket and a > one in the prose here.')).not.toMatch(/[<>]/);
+  });
+
   it('gives nothing for a README with no prose', () => {
     expect(summarizeReadme('# Title\n\n![x](y.png)\n')).toBeNull();
     expect(summarizeReadme('')).toBeNull();

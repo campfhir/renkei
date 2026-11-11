@@ -6,12 +6,24 @@
 
 export const DESCRIPTION_MAX_CHARS = 300;
 
+/** Raw HTML tags, stripped until none are left (removing one can join the pieces around it into another). */
+function withoutTags(text: string): string {
+  let current = text;
+  for (let previous = ''; previous !== current; ) {
+    previous = current;
+    current = current.replace(/<[^<>]*>/g, '');
+  }
+  // What is left is text with no complete tag; a stray bracket is not markup worth keeping.
+  return current.replace(/[<>]/g, '');
+}
+
 const plain = (line: string): string =>
-  line
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/[*_`~]+/g, '')
-    .replace(/<[^>]+>/g, '')
+  withoutTags(
+    line
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/[*_`~]+/g, '')
+  )
     .replace(/\s+/g, ' ')
     .trim();
 
