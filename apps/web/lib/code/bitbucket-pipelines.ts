@@ -1,18 +1,21 @@
 /**
- * A code project's Bitbucket Pipelines, for its Pipelines page and the
- * summary card on the project page: whether Pipelines is switched on for
+ * A code project's Bitbucket Pipelines, for its Pipelines page, the
+ * summary card on the project page and the chat's pipeline-variable tools
+ * (pipeline-tools.ts): whether Pipelines is switched on for
  * the repository, whether a `bitbucket-pipelines.yml` sits on the
  * project's branch, the recent runs (and starting one), and the
  * variables the runs get — the repository's own, and each deployment
  * environment's. Read and written with the signed-in person's own grant.
  *
- * Deliberately NOT MCP tools, and never to be: a pipeline variable is
- * where a deploy key or a registry token lives, and a value the model
- * can set is a value in a transcript. A chat may write the YAML (that is
- * a file in the repository, committed like any other); the switch and
- * the variables are a person's gesture, made on the page. Bitbucket keeps
- * a secured variable's value to itself — its API never returns one —
- * and this module returns exactly what Bitbucket does, nothing kept.
+ * A chat may write the YAML (a file in the repository, committed like any
+ * other) and read and set the plain variables around it, so a drafted
+ * pipeline arrives with the variables it needs (pipeline-tools.ts). It
+ * never sees or sets a secured one: a pipeline variable is also where a
+ * deploy key or a registry token lives, and a value the model can set is a
+ * value in a transcript. Secured values, and the switch, are a person's
+ * gesture, made on the page. Bitbucket keeps a secured variable's value
+ * to itself — its API never returns one — and this module returns exactly
+ * what Bitbucket does, nothing kept.
  */
 
 import { parseDotenv } from '@renkei/connector-sandbox';
@@ -246,7 +249,7 @@ function runOf(fullName: string, raw: Record<string, unknown>): PipelineRun | nu
 }
 
 /** The deployment environments, each with its variables. */
-async function readEnvironments(
+export async function readEnvironments(
   auth: BitbucketAuth,
   base: string
 ): Promise<{ environments: DeploymentEnvironment[]; error: string | null }> {
@@ -647,7 +650,9 @@ export async function applyVariableText(
   fullName: string,
   environmentUuid: string | undefined,
   current: readonly PipelineVariable[],
-  entries: readonly VariableEntry[]
+  entries: readonly VariableEntry[],
+  /** The page's Save takes out what its text no longer names; a chat's write only adds and changes. */
+  options: { prune: boolean } = { prune: true }
 ): Promise<VariablesApplied> {
   const applied: VariablesApplied = { added: [], changed: [], removed: [], errors: [] };
   const existing = new Map(current.map((variable) => [variable.key, variable]));
@@ -672,6 +677,7 @@ export async function applyVariableText(
     if (updated.ok) applied.changed.push(entry.key);
     else applied.errors.push(`${entry.key}: ${updated.error}`);
   }
+  if (!options.prune) return applied;
   for (const variable of current) {
     if (wanted.has(variable.key)) continue;
     const deleted = await deletePipelineVariable(auth, fullName, variable.uuid, environmentUuid);

@@ -7,9 +7,10 @@ import { getProjectRow } from '@/lib/chat/projects';
 import ActionsPage from '../../_components/actions-page';
 
 /**
- * A GitHub code project's recent Actions runs, on a page of its own —
- * GitHub only, the way pipelines/page.tsx (its Bitbucket counterpart)
- * is Bitbucket only.
+ * A GitHub code project's Actions — the runs, the switch, the workflow
+ * files and the variables — on a page of its own. GitHub only, the way
+ * pipelines/page.tsx (its Bitbucket counterpart) is Bitbucket only.
+ * Editors change the setup; viewers read it.
  */
 export default async function CodeProjectActionsPage({
   params,
@@ -29,6 +30,8 @@ export default async function CodeProjectActionsPage({
       projectId={projectId}
       projectName={project.name}
       repoFullName={project.repo.fullName}
+      branch={project.repo.branch}
+      canEdit={access.role !== 'viewer'}
     />
   );
 }

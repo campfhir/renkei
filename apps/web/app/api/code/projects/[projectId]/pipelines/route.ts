@@ -8,11 +8,12 @@
  * the switch (editors). Starting a run is runs/route.ts beside this, and
  * replacing a variable set from its text is variables/route.ts.
  *
- * Deliberately NOT MCP tools: a pipeline variable is where a deploy key
- * or a registry token lives. A chat can commit the YAML; the switch and
- * the variables are set here, by a person, and values go to Bitbucket
- * once and are never echoed. What the connection lacks is said in the
- * Connectors page's own words, before Bitbucket is asked.
+ * Not chat tools, these routes — a person's gesture, on the page. A chat
+ * has its own, narrower path to the variables (lib/code/pipeline-tools.ts):
+ * it can commit the YAML, and read and set the plain variables, but never
+ * sees or changes a secured one and cannot flip the switch. Values go to
+ * Bitbucket once and are never echoed. What the connection lacks is said
+ * in the Connectors page's own words, before Bitbucket is asked.
  */
 
 import type { NextRequest } from 'next/server';
