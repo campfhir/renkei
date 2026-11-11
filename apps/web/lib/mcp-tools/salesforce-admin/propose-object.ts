@@ -149,7 +149,8 @@ export function registerAdminObjectTools(
             object: spec.apiName,
             field: field.apiName,
             read: true,
-            edit,
+            // A formula is calculated: Salesforce refuses edit access to one.
+            edit: edit && field.type !== 'Formula',
           });
         }
       }

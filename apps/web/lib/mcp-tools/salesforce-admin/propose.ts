@@ -68,8 +68,8 @@ export function registerAdminProposalTools(
       title: 'Salesforce Admin · Act — Propose new fields',
       description:
         'Propose up to 20 new custom fields on one object — text, long text, number, currency, ' +
-        'percent, date, date/time, checkbox, email, phone, URL, picklist, multi-select picklist ' +
-        'or lookup — optionally giving named permission sets access to them and placing them on ' +
+        'percent, date, date/time, checkbox, email, phone, URL, picklist, multi-select picklist, ' +
+        'lookup or formula (a calculated field: its formula and what it returns) — optionally giving named permission sets access to them and placing them on ' +
         'named page layouts, in the same change. This stores a change ' +
         'request and has Salesforce validate it (a check-only deploy, which changes nothing); the ' +
         'person reviews and applies it from the link this returns. New fields are invisible to ' +
@@ -173,7 +173,8 @@ export function registerAdminProposalTools(
             object: describe.name,
             field: spec.apiName,
             read: true,
-            edit: grant.edit === true,
+            // A formula is calculated: Salesforce refuses edit access to one.
+            edit: grant.edit === true && spec.type !== 'Formula',
           });
         }
       }
@@ -196,7 +197,7 @@ export function registerAdminProposalTools(
           add: specs.map((spec) => ({
             field: spec.apiName,
             section: placement.section,
-            behavior: spec.required ? 'Required' : 'Edit',
+            behavior: spec.type === 'Formula' ? 'Readonly' : spec.required ? 'Required' : 'Edit',
           })),
         });
         if (typeof part === 'string') return errText(`Nothing was proposed: ${part}`);
@@ -216,7 +217,8 @@ export function registerAdminProposalTools(
         payload: { ...built, components, preconditions, dataSteps: steps },
         summary: [
           ...specs.map(
-            (spec) => `• ${describe.name}.${spec.apiName} — ${spec.type}, “${spec.label}”`
+            (spec) =>
+              `• ${describe.name}.${spec.apiName} — ${spec.type === 'Formula' ? `Formula (${spec.returnType})` : spec.type}, “${spec.label}”`
           ),
           ...(layoutLines.length > 0 ? ['On layouts:', ...layoutLines] : ['On no page layout.']),
           ...(steps.length > 0

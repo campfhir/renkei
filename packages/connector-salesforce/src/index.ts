@@ -85,6 +85,7 @@ export {
 export {
   METADATA_NAMESPACE,
   FIELD_TYPES,
+  FORMULA_RETURN_TYPES,
   isDeveloperName,
   developerNameOf,
   checkFieldSpec,
