@@ -110,7 +110,7 @@ describe('removing a model', () => {
   ];
   const listed = run([{ type: 'loaded', models: roster }]);
   const asked = run([{ type: 'removeAsked', row: roster[0]! }], listed);
-  const usage = { people: 3, preferences: 1, projects: 2, chats: 5, agents: 1 };
+  const usage = { people: 3, names: [], preferences: 1, projects: 2, chats: 5, agents: 1 };
   const counted = run([{ type: 'usageLoaded', usage }], asked);
 
   it('Remove opens a dialog that waits to hear who is on the model', () => {
@@ -135,7 +135,7 @@ describe('removing a model', () => {
       [
         {
           type: 'usageLoaded',
-          usage: { people: 1, preferences: 0, projects: 0, chats: 1, agents: 0 },
+          usage: { people: 1, names: [], preferences: 0, projects: 0, chats: 1, agents: 0 },
         },
       ],
       asked
@@ -144,12 +144,42 @@ describe('removing a model', () => {
     expect(removalView(one)?.confirmLabel).toBe('Remove and notify 1 person');
   });
 
+  it('names the people on it when they are three or fewer', () => {
+    const few = (names: string[]) =>
+      removalView(
+        run([{ type: 'usageLoaded', usage: { ...usage, people: names.length, names } }], asked)
+      )?.summary;
+    expect(few(['Ada'])).toMatch(/^Ada is on this model: /);
+    expect(few(['Ada', 'Bob'])).toMatch(/^Ada and Bob are on this model: /);
+    expect(few(['Ada', 'Bob', 'Cat'])).toMatch(/^Ada, Bob and Cat are on this model: /);
+  });
+
+  it('names three and counts the rest when there are more', () => {
+    const many = (people: number) =>
+      removalView(
+        run(
+          [{ type: 'usageLoaded', usage: { ...usage, people, names: ['Ada', 'Bob', 'Cat'] } }],
+          asked
+        )
+      );
+    expect(many(4)?.summary).toMatch(/^Ada, Bob, Cat and 1 other are on this model: /);
+    expect(many(240)?.summary).toMatch(/^Ada, Bob, Cat and 237 others are on this model: /);
+    expect(many(240)?.confirmLabel).toBe('Remove and notify 240 people');
+  });
+
+  it('someone with no name on record is counted, not named', () => {
+    const view = removalView(
+      run([{ type: 'usageLoaded', usage: { ...usage, people: 2, names: ['Ada'] } }], asked)
+    );
+    expect(view?.summary).toMatch(/^Ada and 1 other are on this model: /);
+  });
+
   it('a model nobody is on is simply removed', () => {
     const unused = run(
       [
         {
           type: 'usageLoaded',
-          usage: { people: 0, preferences: 0, projects: 0, chats: 0, agents: 0 },
+          usage: { people: 0, names: [], preferences: 0, projects: 0, chats: 0, agents: 0 },
         },
       ],
       asked

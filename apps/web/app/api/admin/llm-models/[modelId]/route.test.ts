@@ -347,16 +347,45 @@ describe('DELETE with people still on the model', () => {
   });
 
   it('usage counts who a removal would touch, and what of theirs', async () => {
-    await inUse();
+    const world = await inUse();
+    await world.store.identities.upsert({
+      subject: world.ann,
+      email: 'ann@example.test',
+      displayName: 'Ann Example',
+      idpGroups: [],
+    });
 
     const response = await USAGE(deleteReq(), { params: paramsOf() });
 
+    // bob has no identity on record: counted, not named.
     expect(await response.json()).toEqual({
       people: 2,
+      names: ['Ann Example'],
       preferences: 1,
       projects: 1,
       chats: 2,
       agents: 0,
     });
+  });
+
+  it('usage names at most three of the people on a model', async () => {
+    fakeDb([{ ...baseRow }]);
+    const store = getDataStore();
+    const run = randomUUID();
+    for (const n of [1, 2, 3, 4, 5]) {
+      const subject = `auth0|many-${run}-${n}`;
+      await store.identities.upsert({
+        subject,
+        email: `p${n}@example.test`,
+        displayName: `P${n}`,
+        idpGroups: [],
+      });
+      await patchChatModelPrefs(subject, { modelId: ROW_1 });
+    }
+
+    const body = await (await USAGE(deleteReq(), { params: paramsOf() })).json();
+
+    expect(body.people).toBe(5);
+    expect(body.names).toEqual(['P1', 'P2', 'P3']);
   });
 });

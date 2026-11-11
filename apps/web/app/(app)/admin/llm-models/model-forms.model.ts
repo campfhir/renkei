@@ -122,6 +122,8 @@ export interface ModelFormsState {
 /** Who is still on a model, as the server counts them before it is removed. */
 export interface ModelUsage {
   people: number;
+  /** At most three of them by name; the rest are only counted. */
+  names: string[];
   /** People whose preferred chat model it is. */
   preferences: number;
   projects: number;
@@ -637,12 +639,19 @@ export function removalView(state: ModelFormsState): RemovalView | null {
       ].filter((part) => part !== null)
     : [];
   const people = usage ? counted(usage.people, 'person').replace('persons', 'people') : '';
+  // A few people are named; past three the rest are a number.
+  const named = (usage?.names ?? []).slice(0, 3);
+  const unnamed = (usage?.people ?? 0) - named.length;
+  const who =
+    named.length === 0
+      ? people
+      : listOf([...named, ...(unnamed > 0 ? [`${unnamed} other${unnamed === 1 ? '' : 's'}`] : [])]);
   return {
     title: `Remove “${row.label}”`,
     summary: !usage
       ? null
       : inUse
-        ? `${people} ${usage.people === 1 ? 'is' : 'are'} on this model: ${listOf(what)}.`
+        ? `${who} ${usage.people === 1 ? 'is' : 'are'} on this model: ${listOf(what)}.`
         : 'Nobody is on this model.',
     inUse,
     options: [

@@ -192,7 +192,7 @@ test('admin: removing a model moves the people on it to a replacement and tells 
   await page.getByRole('button', { name: `Remove ${going.label}`, exact: true }).click();
   const dialog = page.getByRole('dialog', { name: `Remove “${going.label}”` });
   await expect(
-    dialog.getByText('1 person is on this model: 1 preferred chat model and 1 chat.')
+    dialog.getByText(`Model User ${tag} is on this model: 1 preferred chat model and 1 chat.`)
   ).toBeVisible();
   await dialog.getByLabel('Replace it with').selectOption(staying.id);
   const removed = page.waitForResponse(
