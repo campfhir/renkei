@@ -199,6 +199,7 @@ export const EXPECTED_MIGRATIONS = [
   '173-prompt-library-scope',
   '174-queue-job-indexes',
   '175-token-limits',
+  '176-chat-project-model',
 ];
 
 export interface MigrationStatus {

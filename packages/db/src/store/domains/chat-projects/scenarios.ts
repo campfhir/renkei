@@ -131,11 +131,46 @@ export const chatProjectScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'chatProjects.update',
+    name: 'a model of its own, set and then cleared',
+    fixture: {
+      ...fixture,
+      llm_model_configs: [
+        {
+          id: uid(901),
+          label: 'opus',
+          provider: 'anthropic',
+          model: 'model-1',
+          base_url: null,
+          settings: {},
+          encrypted_secrets: 'sealed',
+          enabled: true,
+          is_default: true,
+          created_at: at(0),
+          updated_at: at(0),
+        },
+      ],
+    },
+    run: async (store) => {
+      const before = (await store.chatProjects.get(PROJECT.annCode))?.llmModelId;
+      await store.chatProjects.update(PROJECT.annCode, { llmModelId: uid(901) });
+      const set = (await store.chatProjects.get(PROJECT.annCode))?.llmModelId;
+      await store.chatProjects.update(PROJECT.annCode, { name: 'still set' });
+      const kept = (await store.chatProjects.get(PROJECT.annCode))?.llmModelId;
+      await store.chatProjects.update(PROJECT.annCode, { llmModelId: null });
+      const cleared = (await store.chatProjects.get(PROJECT.annCode))?.llmModelId;
+      return { before, set, kept, cleared };
+    },
+  },
+  {
+    method: 'chatProjects.update',
     name: 'keepUpdatedAt leaves the timestamp; a plain update moves it',
     fixture,
     run: async (store) => {
       const before = await store.chatProjects.get(PROJECT.annChat);
-      await store.chatProjects.update(PROJECT.annChat, { description: 'quiet', keepUpdatedAt: true });
+      await store.chatProjects.update(PROJECT.annChat, {
+        description: 'quiet',
+        keepUpdatedAt: true,
+      });
       const quiet = await store.chatProjects.get(PROJECT.annChat);
       await store.chatProjects.update(PROJECT.annChat, { description: 'loud' });
       const loud = await store.chatProjects.get(PROJECT.annChat);

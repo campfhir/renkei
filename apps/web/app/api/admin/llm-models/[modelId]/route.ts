@@ -3,8 +3,10 @@
  *
  * PUT merges a blank apiKey with the stored secret (the embeddings-route
  * rule: settings-only saves must not wipe the key). DELETE is allowed with
- * agents still pointing at the model — their llm_model_id FK sets NULL,
- * which means "use the org default", the least surprising degradation.
+ * people still on the model: the projects, chats and agents set to it, and
+ * the chat model preferences naming it, move to the model named in
+ * `?replaceWith=`, or with none to "no model", which means the org default.
+ * Either way each person it touched is told their model changed.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -15,6 +17,8 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { parseModelPayload } from '@/lib/agents/llm-model-payload';
 import { logger } from '@/lib/logger';
 import { who } from '@/lib/log-actor';
+import { patchChatModelPrefs, subjectsPreferringChatModel } from '@renkei/user-prefs';
+import { modelRemovedUses, notifyModelRemoved } from '@/lib/agents/model-removed-notification';
 
 export async function PUT(
   request: NextRequest,
@@ -88,18 +92,72 @@ export async function PUT(
 }
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ modelId: string }> }
 ): Promise<NextResponse> {
   const { modelId } = await params;
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const session = await checkAccess([ROLE_OPERATOR]);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const models = getDataStore().llmModels;
+  const existing = await models.get(modelId);
+  if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+  // The replacement has to be able to answer a chat: enabled, not an image model.
+  const replaceWith = request.nextUrl.searchParams.get('replaceWith') || null;
+  const replacement = replaceWith ? await models.findEnabledChatModel(replaceWith) : null;
+  if (replaceWith && (!replacement || replacement.id === existing.id)) {
+    return NextResponse.json(
+      { error: 'The replacement must be another enabled chat model.' },
+      { status: 400 }
+    );
   }
 
-  if (!(await getDataStore().llmModels.delete(modelId))) {
+  // Read before the delete: afterwards nothing says who was on it.
+  const preferring = await subjectsPreferringChatModel(modelId);
+  const people = modelRemovedUses(await models.usedBy(modelId), preferring);
+  if (!(await models.delete(modelId, replacement?.id ?? null))) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
-
   invalidateLlmCache();
-  return NextResponse.json({ deleted: true });
+  // The preferences name the model by id in their own documents, which the
+  // delete does not reach: each moves to the replacement, or to none.
+  const moved = await Promise.all(
+    preferring.map((subject) => patchChatModelPrefs(subject, { modelId: replacement?.id ?? null }))
+  );
+  const unmoved = moved.filter((result) => !result.ok).length;
+  if (unmoved > 0) {
+    logger.warn(
+      '{actor} removed the LLM model "{label}", but {unmoved} of the {preferring} chat model preferences naming it could not be rewritten; those people start new chats on the organization default',
+      {
+        component: 'api/admin/llm-models',
+        ...who(session),
+        modelId,
+        label: existing.label,
+        unmoved,
+        preferring: preferring.length,
+      }
+    );
+  }
+
+  logger.info(
+    '{actor} removed the LLM model "{label}"; what {people} people had set to it now uses {replacement}',
+    {
+      component: 'api/admin/llm-models',
+      ...who(session),
+      modelId,
+      label: existing.label,
+      people: people.length,
+      replacement: replacement ? `"${replacement.label}"` : 'the organization default',
+      replacementId: replacement?.id ?? null,
+    }
+  );
+  await notifyModelRemoved({
+    actorSubject: session.subject,
+    label: existing.label,
+    replacementLabel: replacement?.label ?? null,
+    people,
+  });
+
+  return NextResponse.json({ deleted: true, notified: people.length });
 }

@@ -561,6 +561,7 @@ export interface ChatProjects {
   id: Generated<string>;
   instructions: string | null;
   kind: Generated<string>;
+  llm_model_id: string | null;
   name: string;
   owner_subject: string;
   published_to_org: Generated<boolean>;

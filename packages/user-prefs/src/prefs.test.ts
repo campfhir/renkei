@@ -9,6 +9,8 @@ import {
   parseNotificationPatch,
   parseThemePatch,
   parseVoicePatch,
+  parseChatModelPatch,
+  parseChatModelPrefs,
   parseImagePatch,
   parseCoachMarkPatch,
   parseChatArchivePatch,
@@ -600,5 +602,22 @@ describe('the other documents patch the same way', () => {
     });
     expect(parseChatArchivePatch({ afterDays: 2.5 }).ok).toBe(false);
     expect(parseChatArchivePatch({ afterDays: 0 }).ok).toBe(false);
+  });
+});
+
+describe('the chat model preference', () => {
+  const id = '3f2b8c1e-9d4a-4e7b-8a21-5c6d7e8f9a0b';
+
+  it('keeps a model id, and reads anything else as no preference', () => {
+    expect(parseChatModelPrefs({ modelId: id.toUpperCase() })).toEqual({ modelId: id });
+    for (const stored of [undefined, null, 'x', {}, { modelId: 'claude' }]) {
+      expect(parseChatModelPrefs(stored)).toEqual({ modelId: null });
+    }
+  });
+
+  it('a patch names the model or clears it, and nothing else', () => {
+    expect(parseChatModelPatch({ modelId: id })).toEqual({ ok: true, patch: { modelId: id } });
+    expect(parseChatModelPatch({ modelId: null })).toEqual({ ok: true, patch: { modelId: null } });
+    expect(parseChatModelPatch({ model: id }).ok).toBe(false);
   });
 });

@@ -45,6 +45,7 @@ export function projectRow(
     repo_full_name: null,
     repo_branch: null,
     workspace_id: null,
+    llm_model_id: null,
     published_to_org: false,
     created_at: at(0),
     updated_at: at(0),

@@ -32,6 +32,10 @@ import {
   IMAGE_KEY,
   parseImagePrefs,
   type ImagePrefs,
+  CHAT_MODEL_KEY,
+  DEFAULT_CHAT_MODEL_PREFS,
+  parseChatModelPrefs,
+  type ChatModelPrefs,
   CHAT_ARCHIVE_KEY,
   DEFAULT_CHAT_ARCHIVE_PREFS,
   parseChatArchivePrefs,
@@ -278,6 +282,53 @@ export async function patchImagePrefs(
   patch: Partial<ImagePrefs>
 ): Promise<Result<void, 'DB_ERROR'>> {
   return mergePrefs(subject, IMAGE_KEY, patch, imageCache);
+}
+
+const chatModelCache = new Map<string, { value: ChatModelPrefs; expiresAt: number }>();
+
+/**
+ * Which model this person's new chats start on. Same cache and `fresh`
+ * discipline as the image preference: a new chat can live with a minute's
+ * staleness, the preferences page that saves it must pass `fresh`. Never
+ * fails loudly: a database problem reads as "no preference", which is the
+ * organization's default.
+ */
+export async function getChatModelPrefs(
+  subject: string,
+  options: { fresh?: boolean } = {}
+): Promise<ChatModelPrefs> {
+  const key = cacheKey(subject);
+  const cached = chatModelCache.get(key);
+  if (!options.fresh && cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const rowResult = await wrapAsync(
+    () => getDataStore().userPreferences.get(subject, CHAT_MODEL_KEY),
+    'DB_ERROR' as const
+  );
+  if (!rowResult.ok) return DEFAULT_CHAT_MODEL_PREFS;
+
+  const value = parseChatModelPrefs(rowResult.val);
+  chatModelCache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
+  return value;
+}
+
+/** Change this person's chat model preference: the fields given, nothing else (see mergePrefs). */
+export async function patchChatModelPrefs(
+  subject: string,
+  patch: Partial<ChatModelPrefs>
+): Promise<Result<void, 'DB_ERROR'>> {
+  return mergePrefs(subject, CHAT_MODEL_KEY, patch, chatModelCache);
+}
+
+/**
+ * Everyone whose preferred chat model is this one, by subject: who a
+ * model's removal leaves without their pick.
+ */
+export async function subjectsPreferringChatModel(modelId: string): Promise<string[]> {
+  const rows = await getDataStore().userPreferences.listByKey(CHAT_MODEL_KEY);
+  return rows
+    .filter((row) => parseChatModelPrefs(row.value).modelId === modelId.toLowerCase())
+    .map((row) => row.subject);
 }
 
 const coachMarkCache = new Map<string, { value: CoachMarkPrefs; expiresAt: number }>();

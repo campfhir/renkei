@@ -5,8 +5,8 @@
  * here, so a change the model makes on the person's word passes the same
  * checks as one made on the Preferences page.
  *
- * `notifications`, `theme`, `voice`, `image`, `coachMarks` and `chatArchive`
- * are independent documents. A patch changes some fields of any of them —
+ * `notifications`, `theme`, `voice`, `image`, `chatModel`, `coachMarks` and
+ * `chatArchive` are independent documents. A patch changes some fields of any —
  * `{ theme: { mode: 'dark' } }` changes the mode and nothing else — merged
  * into what is stored in one atomic write per document. Every patch is read
  * and checked before anything is written, so a refused field leaves every
@@ -16,18 +16,21 @@
 import { getOrgSettings } from '@renkei/settings';
 import {
   getChatArchivePrefs,
+  getChatModelPrefs,
   getCoachMarkPrefs,
   getImagePrefs,
   getNotificationPrefs,
   getThemePrefs,
   getVoicePrefs,
   parseChatArchivePatch,
+  parseChatModelPatch,
   parseCoachMarkPatch,
   parseImagePatch,
   parseNotificationPatch,
   parseThemePatch,
   parseVoicePatch,
   patchChatArchivePrefs,
+  patchChatModelPrefs,
   patchCoachMarkPrefs,
   patchImagePrefs,
   patchNotificationPrefs,
@@ -38,15 +41,16 @@ import {
 import { isRecord } from '@renkei/guards';
 
 export async function readAllPreferences(subject: string) {
-  const [notifications, theme, voice, image, coachMarks, chatArchive] = await Promise.all([
+  const [notifications, theme, voice, image, chatModel, coachMarks, chatArchive] = await Promise.all([
     getNotificationPrefs(subject, { fresh: true }),
     getThemePrefs(subject, { fresh: true }),
     getVoicePrefs(subject, { fresh: true }),
     getImagePrefs(subject, { fresh: true }),
+    getChatModelPrefs(subject, { fresh: true }),
     getCoachMarkPrefs(subject, { fresh: true }),
     getChatArchivePrefs(subject, { fresh: true }),
   ]);
-  return { notifications, theme, voice, image, coachMarks, chatArchive };
+  return { notifications, theme, voice, image, chatModel, coachMarks, chatArchive };
 }
 
 export type AllPreferences = Awaited<ReturnType<typeof readAllPreferences>>;
@@ -75,6 +79,7 @@ const DOCUMENTS: Record<string, (raw: unknown) => Prepared> = {
   theme: document(parseThemePatch, patchThemePrefs),
   voice: document(parseVoicePatch, patchVoicePrefs),
   image: document(parseImagePatch, patchImagePrefs),
+  chatModel: document(parseChatModelPatch, patchChatModelPrefs),
   coachMarks: document(parseCoachMarkPatch, patchCoachMarkPrefs),
   chatArchive: document(parseChatArchivePatch, patchChatArchivePrefs),
 };

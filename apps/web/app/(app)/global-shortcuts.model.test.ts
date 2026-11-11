@@ -414,6 +414,17 @@ describe('quick chat', () => {
     expect(fold([{ type: 'ready', chatId: 'c1', setup: setup(models) }]).modelId).toBe('b');
   });
 
+  it("starts on the person's preferred model when the chat was made on one", () => {
+    const models = [
+      { id: 'a', isDefault: false },
+      { id: 'b', isDefault: true },
+    ];
+    const ready = { type: 'ready', chatId: 'c1', setup: setup(models) } as const;
+    expect(fold([{ ...ready, modelId: 'a' }]).modelId).toBe('a');
+    // One the roster does not offer is passed over for the default.
+    expect(fold([{ ...ready, modelId: 'gone' }]).modelId).toBe('b');
+  });
+
   it('starts on the first model when none is the default, and on none with an empty roster', () => {
     expect(
       defaultModelId([

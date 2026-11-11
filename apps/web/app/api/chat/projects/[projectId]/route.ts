@@ -1,9 +1,12 @@
 /**
  * One project: read (any member), settings (editor+; publishing is the
- * owner's), delete (owner).
+ * owner's), delete (owner). A chat project and a code project alike: the
+ * model their new chats start on is set here for both.
  */
 
 import type { NextRequest } from 'next/server';
+import { getDataStore } from '@renkei/db';
+import { isUuid } from '@/lib/uuid';
 import { NextResponse } from 'next/server';
 import {
   chatRequestContext,
@@ -65,6 +68,15 @@ export async function PATCH(
     const parsed = parseToolConfig(body.toolConfig);
     if (!parsed) return jsonError(400, 'invalid', 'Invalid tool configuration');
     patch.toolConfig = parsed;
+  }
+  if (body.llmModelId === null) patch.llmModelId = null;
+  else if (body.llmModelId !== undefined) {
+    const model =
+      typeof body.llmModelId === 'string' && isUuid(body.llmModelId)
+        ? await getDataStore().llmModels.findEnabledChatModel(body.llmModelId)
+        : null;
+    if (!model) return jsonError(400, 'invalid', 'That model is not on offer');
+    patch.llmModelId = model.id;
   }
   const updated = await updateProject(projectId, patch, access.cipher);
   if (!updated) return jsonError(404, 'not-found', 'No such project');

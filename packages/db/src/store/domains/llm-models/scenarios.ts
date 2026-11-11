@@ -33,6 +33,63 @@ const surfaceFixture = {
   ],
 };
 
+const chat = (n: number, owner: string, model: number | null) => ({
+  id: id(100 + n),
+  owner_subject: owner,
+  llm_model_id: model === null ? null : id(model),
+  created_at: new Date('2026-01-01T00:00:00.000Z'),
+  updated_at: new Date('2026-01-01T00:00:00.000Z'),
+});
+
+const agent = (n: number, owner: string, model: number | null) => ({
+  id: id(200 + n),
+  owner_subject: owner,
+  name: `agent ${n}`,
+  instructions: 'do',
+  tools: [],
+  llm_model_id: model === null ? null : id(model),
+  created_at: new Date('2026-01-01T00:00:00.000Z'),
+  updated_at: new Date('2026-01-01T00:00:00.000Z'),
+});
+
+const project = (n: number, owner: string, model: number | null) => ({
+  id: id(300 + n),
+  owner_subject: owner,
+  name: `project ${n}`,
+  llm_model_id: model === null ? null : id(model),
+  created_at: new Date('2026-01-01T00:00:00.000Z'),
+  updated_at: new Date('2026-01-01T00:00:00.000Z'),
+});
+
+/** ann: a project, two chats and an agent on haiku; bob: an agent; cat: a chat; eve: a project; dan: elsewhere. */
+const usedFixture = {
+  ...fixture,
+  chat_projects: [project(1, 'ann', 2), project(2, 'eve', 2), project(3, 'dan', 1)],
+  chats: [
+    chat(1, 'ann', 2),
+    chat(2, 'ann', 2),
+    chat(3, 'cat', 2),
+    chat(4, 'dan', 1),
+    chat(5, 'dan', null),
+  ],
+  agents: [agent(1, 'ann', 2), agent(2, 'bob', 2), agent(3, 'dan', 4)],
+};
+
+/** Which model each project, chat and agent names, by id. */
+const pointers = async (store: DataStore) => [
+  await Promise.all(
+    usedFixture.chat_projects.map(
+      async (row) => (await store.chatProjects.get(row.id))?.llmModelId ?? null
+    )
+  ),
+  await Promise.all(
+    usedFixture.chats.map(async (row) => (await store.chats.get(row.id))?.llmModelId ?? null)
+  ),
+  await Promise.all(
+    usedFixture.agents.map(async (row) => (await store.agents.find(row.id))?.llmModelId ?? null)
+  ),
+];
+
 const input = (label: string, isDefault: boolean) => ({
   label,
   provider: 'openai',
@@ -99,6 +156,29 @@ export const llmModelScenarios: Scenario<DataStore>[] = [
       await store.llmModels.delete(id(1)),
       await store.llmModels.delete(id(1)),
       await shape(store),
+    ],
+  },
+  {
+    method: 'llmModels.delete',
+    name: 'projects, chats and agents on it move to the replacement, or to no model without one',
+    fixture: usedFixture,
+    run: async (store) => [
+      await store.llmModels.delete(id(2), id(4)),
+      await pointers(store),
+      await store.llmModels.delete(id(4)),
+      await pointers(store),
+      await store.llmModels.delete(id(9), id(1)),
+      await pointers(store),
+    ],
+  },
+  {
+    method: 'llmModels.usedBy',
+    name: 'each owner with their projects, chats and agents on it, by subject; nobody for an unused one',
+    fixture: usedFixture,
+    run: async (store) => [
+      await store.llmModels.usedBy(id(2)),
+      await store.llmModels.usedBy(id(4)),
+      await store.llmModels.usedBy(id(3)),
     ],
   },
   {
