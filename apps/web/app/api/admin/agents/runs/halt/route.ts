@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isRecord } from '@renkei/guards';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { MAX_ORG_HALT, haltAllMatching, haltRunsAsOperator } from '@/lib/agents/org-queue';
 
 const LIVE = ['queued', 'running', 'waiting'];
@@ -38,9 +39,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         { status: 400 }
       );
     }
-    return NextResponse.json(
-      await haltAllMatching(typeof status === 'string' ? [status] : undefined, session.subject)
+    const outcome = await haltAllMatching(
+      typeof status === 'string' ? [status] : undefined,
+      session.subject
     );
+    // An operator ending other people's runs in bulk: who, which sweep, and what it did.
+    recordAuditEvent({
+      actorSubject: session.subject,
+      action: 'agent.runs_halted',
+      targetKind: 'agent_run',
+      targetLabel: typeof status === 'string' ? `every ${status} run` : 'every live run',
+      details: { scope: 'all', status: typeof status === 'string' ? status : null, outcome },
+    });
+    return NextResponse.json(outcome);
   }
 
   const list = isRecord(body) ? body.runs : undefined;
@@ -61,5 +72,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     runs.push({ agentId: entry.agentId, runId: entry.runId });
   }
 
-  return NextResponse.json(await haltRunsAsOperator(runs, session.subject));
+  const outcome = await haltRunsAsOperator(runs, session.subject);
+  recordAuditEvent({
+    actorSubject: session.subject,
+    action: 'agent.runs_halted',
+    targetKind: 'agent_run',
+    targetLabel: `${runs.length} selected run(s)`,
+    details: { scope: 'selected', runIds: runs.map((run) => run.runId), outcome },
+  });
+  return NextResponse.json(outcome);
 }

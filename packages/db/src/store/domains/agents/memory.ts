@@ -524,7 +524,8 @@ export function memoryAgents(tables: MemoryTables): AgentStore {
         )
         .flatMap((t) => {
           const agent = tables.first('agents', (a) => a.id === t.agent_id && a.enabled);
-          return agent
+          const caller = tables.first('agents', (a) => a.id === callerAgentId);
+          return agent && caller && caller.owner_subject === agent.owner_subject
             ? [
                 {
                   triggerId: t.id,

@@ -9,6 +9,7 @@ const fixture = {
       subject: 'ann@example.test',
       roles: ['renkei-user', 'renkei-operator'],
       expires_at: new Date('2030-01-01T00:00:00.000Z'),
+      created_at: new Date('2029-11-30T00:00:00.000Z'),
       last_used_at: new Date('2029-12-01T00:00:00.000Z'),
     },
   ],
@@ -84,7 +85,7 @@ export const sessionScenarios: Scenario<DataStore>[] = [
       };
       await store.sessions.create(session);
       const found = await store.sessions.find(ID);
-      return { found: found && { ...found, lastUsedAt: undefined } };
+      return { found: found && { ...found, createdAt: undefined, lastUsedAt: undefined } };
     },
   },
   {

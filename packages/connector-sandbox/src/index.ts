@@ -234,6 +234,7 @@ export {
   previewEnvPrefix,
   previewNeighbourEnvironment,
   stripHopByHop,
+  upstreamRequestHeaders,
   stripCookies,
   proxyResponseHeaders,
   previewProxyPath,

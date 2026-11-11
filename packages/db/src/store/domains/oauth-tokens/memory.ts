@@ -1,7 +1,7 @@
 import { orderBy } from '../../memory/order';
 import type { MemoryTables } from '../../memory/tables';
 import { accessTokenFromRow } from './postgres';
-import type { OAuthTokenStore } from './types';
+import { withoutOperator, type OAuthTokenStore } from './types';
 
 /** The rotation is synchronous here, so it is atomic without a lock. */
 export function memoryOAuthTokens(tables: MemoryTables): OAuthTokenStore {
@@ -72,7 +72,7 @@ export function memoryOAuthTokens(tables: MemoryTables): OAuthTokenStore {
         [(s) => s.created_at, 'desc'],
         [(s) => s.id, 'desc']
       );
-      const roles = live ? live.roles : (token.roles ?? []);
+      const roles = live ? live.roles : withoutOperator(token.roles ?? []);
 
       tables.insert('oauth_refresh_tokens', {
         token_id: next.tokenId,
@@ -103,6 +103,16 @@ export function memoryOAuthTokens(tables: MemoryTables): OAuthTokenStore {
         rotated_at: now,
       });
       return { outcome: 'rotated', subject: token.subject, scope: token.scope, roles };
+    },
+    async revokeClientTokens(clientId, subject) {
+      tables.delete(
+        'oauth_refresh_tokens',
+        (r) => r.client_id === clientId && r.subject === subject
+      );
+      tables.delete(
+        'oauth_access_tokens',
+        (r) => r.client_id === clientId && r.subject === subject
+      );
     },
   };
 }

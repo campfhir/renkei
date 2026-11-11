@@ -1,4 +1,5 @@
-import { encrypt, decrypt, loadKeyring } from '@renkei/crypto';
+import { AAD_PURPOSE, aadFor, decryptBoundValue, encrypt, loadKeyring } from '@renkei/crypto';
+import type { Keyring } from '@renkei/crypto';
 import { randomUUID } from 'crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
@@ -47,6 +48,13 @@ function configInput(oidc: TenantOidc, sealedSecret: string): OidcConfigInput {
   };
 }
 
+/** The OIDC client secret is sealed bound to its purpose (audit R-04); a row sealed before opens as legacy. */
+const OIDC_SECRET_AAD = aadFor(AAD_PURPOSE.oidcClientSecret);
+
+function sealClientSecret(secret: string, key: Keyring): string {
+  return encrypt(secret, key, OIDC_SECRET_AAD);
+}
+
 /**
  * Configure the identity provider only if there is none.
  *
@@ -63,7 +71,7 @@ export async function createTenantOidcIfAbsent(
 ): Promise<Result<boolean, 'DB_ERROR' | 'INVALID_ENCRYPTION_KEY'>> {
   const encryptionKeyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!encryptionKeyResult.ok) return err('INVALID_ENCRYPTION_KEY' as const);
-  const input = configInput(oidc, encrypt(oidc.clientSecret, encryptionKeyResult.val));
+  const input = configInput(oidc, sealClientSecret(oidc.clientSecret, encryptionKeyResult.val));
   return wrapAsync(() => getDataStore().oidcConfig.createIfAbsent(input), 'DB_ERROR' as const);
 }
 
@@ -72,7 +80,7 @@ export async function setTenantOidc(
 ): Promise<Result<void, 'DB_ERROR' | 'INVALID_ENCRYPTION_KEY'>> {
   const encryptionKeyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!encryptionKeyResult.ok) return err('INVALID_ENCRYPTION_KEY' as const);
-  const input = configInput(oidc, encrypt(oidc.clientSecret, encryptionKeyResult.val));
+  const input = configInput(oidc, sealClientSecret(oidc.clientSecret, encryptionKeyResult.val));
   const result = await wrapAsync(() => getDataStore().oidcConfig.save(input), 'DB_ERROR' as const);
   if (!result.ok) return result;
   return ok();
@@ -123,7 +131,7 @@ export async function getTenantOidc(): Promise<
   const row = rowResult.val;
   if (!row) return ok(null);
 
-  const decryptedSecretResult = decrypt(row.clientSecret, encryptionKey);
+  const decryptedSecretResult = decryptBoundValue(row.clientSecret, encryptionKey, OIDC_SECRET_AAD);
   if (!decryptedSecretResult.ok) return err('DECRYPTION_ERROR' as const);
 
   return ok({

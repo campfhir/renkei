@@ -599,6 +599,7 @@ describe('git', () => {
         subject: 'auth0|alice',
         origin: 'https://r.example',
         provider: 'atlassian-bitbucket',
+        repo: 'acme/demo',
       },
       { write: true }
     );

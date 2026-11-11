@@ -36,6 +36,7 @@ describe('rewrap under the current key of the ring', () => {
   const rings: RewrapRings = { token: newRing.val, content: newRing.val, sandbox: newRing.val };
   const modelId = randomUUID();
   const ruleIds: string[] = [];
+  let mcpServerId = '';
 
   beforeAll(async () => {
     registerDataStore(createMemoryDataStore());
@@ -82,6 +83,25 @@ describe('rewrap under the current key of the ring', () => {
       sealed: `env1.${encrypt('npm-token', oldBare.val)}`,
       updatedAt: new Date(),
     });
+    // The two columns a rotation once skipped: a remote MCP server's client
+    // secret and the delegate's signing key, both under the old key.
+    const server = await store.mcpServers.create({
+      slug: `rewrap-${randomUUID().slice(0, 6)}`,
+      name: 'rewrap test',
+      url: 'https://mcp.rewrap.test/mcp',
+      transport: 'streamable-http',
+      authMode: 'oauth',
+      context: 'org',
+      scopes: null,
+      clientId: 'client',
+      encryptedClientSecret: encrypt('mcp-client-secret', oldBare.val),
+      enabled: true,
+    });
+    mcpServerId = server.id;
+    await store.delegateSigningKeys.insertIfAbsent({
+      publicKey: 'public',
+      sealedPrivateKey: encrypt('signing-private', oldBare.val),
+    });
     for (const [pattern, sealed] of [
       ['rewrap.test/old/*', `reg1.${encrypt('pull-token', oldRing.val)}`],
       ['rewrap.test/stranger/*', `reg1.${encrypt('lost', stranger.val)}`],
@@ -107,7 +127,10 @@ describe('rewrap under the current key of the ring', () => {
     const [env] = await store.sandboxEnvSecrets.listSealed('alice');
     if (!env) throw new Error('fixture env secret missing');
     const rules = await store.codeServiceImageRules.listForMatching();
-    return { oidc, model, connectors, env, rules };
+    const server = await store.mcpServers.get(mcpServerId);
+    const signing = await store.delegateSigningKeys.find();
+    if (!server || !signing) throw new Error('fixture rows missing');
+    return { oidc, model, connectors, env, rules, server, signing };
   }
 
   it('a dry run counts and changes nothing', async () => {
@@ -117,6 +140,8 @@ describe('rewrap under the current key of the ring', () => {
     expect(report.targets['llm_model_configs.encrypted_secrets']?.rewrapped).toBe(1);
     expect(report.targets['connector_configs.encrypted_secrets']?.rewrapped).toBe(1);
     expect(report.targets['sandbox_env_secrets.sealed']?.rewrapped).toBe(1);
+    expect(report.targets['mcp_servers.encrypted_client_secret']?.rewrapped).toBe(1);
+    expect(report.targets['delegate_signing_keys.sealed_private_key']?.rewrapped).toBe(1);
     expect(report.targets['code_service_image_rules.registry_sealed']).toMatchObject({
       rewrapped: 1,
       skipped: 1,
@@ -148,6 +173,16 @@ describe('rewrap under the current key of the ring', () => {
       current,
       current,
     ]);
+    expect(decrypt(after.server.encryptedClientSecret ?? '', newRing.val)).toEqual({
+      ok: true,
+      val: 'mcp-client-secret',
+    });
+    expect(envelopeKeyId(after.server.encryptedClientSecret ?? '')).toBe(current);
+    expect(decrypt(after.signing.sealedPrivateKey, newRing.val)).toEqual({
+      ok: true,
+      val: 'signing-private',
+    });
+    expect(envelopeKeyId(after.signing.sealedPrivateKey)).toBe(current);
     expect(after.env.sealed.startsWith('env1.v2.')).toBe(true);
     expect(decrypt(after.env.sealed.slice('env1.'.length), newRing.val)).toEqual({
       ok: true,

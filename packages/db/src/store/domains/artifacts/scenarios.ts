@@ -701,4 +701,29 @@ export const artifactScenarios: Scenario<DataStore>[] = [
       await store.artifacts.listBlobsInChats([]),
     ],
   },
+  {
+    method: 'artifacts.listKeptInChats',
+    name: 'referenced, shared or foreign-owned rows of the listed chats only, by id',
+    fixture: writeFixture,
+    run: async (store) => [
+      await store.artifacts.listKeptInChats([CHAT.annA]),
+      await store.artifacts.listKeptInChats([CHAT.bobShared, CHAT.catPrivate]),
+      await store.artifacts.listKeptInChats([]),
+    ],
+  },
+  {
+    method: 'artifacts.detachFromChats',
+    name: 'chat_id cleared on the named rows only; the rest, and an empty list, untouched',
+    fixture: writeFixture,
+    run: async (store) => [
+      await store.artifacts.detachFromChats([A.annUpload, W.ocrBob, uid(1)]),
+      await store.artifacts.detachFromChats([]),
+      (await store.artifacts.get(A.annUpload))?.chatId,
+      (await store.artifacts.get(A.annUpload))?.keyRef,
+      (await store.artifacts.get(W.ocrBob))?.chatId,
+      (await store.artifacts.get(A.annModel))?.chatId,
+      await store.artifacts.listKeptInChats([CHAT.annA]),
+      await store.artifacts.listBlobsInChats([CHAT.annA]).then((rows) => rows.length),
+    ],
+  },
 ];

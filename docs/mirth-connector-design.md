@@ -32,7 +32,7 @@ Two shapes were on the table:
    authentication plugin), so delegating authorization to it is exactly
    RENKEI.md Decision #2: the provider decides what the account may do.
    If a compromise happens, it is bounded by one person's own Mirth
-   account, which the Mirth admins already audit.
+   account, which the Mirth admins already audit. _(As built: sealed by the delegate under the person's own key, a `uenc1:` envelope, not under `TOKEN_ENCRYPTION_KEY`; see `docs/delegate-key-design.md`.)_
 
 A shared "renkei" Mirth account is still possible — an org can hand the
 same credentials to several people — but that is the org's choice, not a

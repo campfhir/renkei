@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDataStore } from '@renkei/db';
 import { setTenantOidc, createTenantOidcIfAbsent } from '@/lib/tenant-operations';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import type { Session } from '@/lib/session';
 import { logger } from '@/lib/logger';
@@ -13,6 +14,13 @@ import {
   identityProviderConfigured,
   verifySetupSecret,
 } from '@/lib/setup-secret';
+
+/**
+ * How recent the operator's sign-in must be to replace the identity
+ * provider: whoever controls it controls who becomes an operator, so a
+ * cookie that has been lying around is not enough.
+ */
+const RECENT_SIGN_IN_MS = 15 * 60 * 1000;
 
 /** The caller's session when they are an operator, else null. */
 async function requireOperator(): Promise<Session | null> {
@@ -69,6 +77,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             component: 'auth/oidc',
             status: denied.status,
           }
+        );
+        return denied;
+      }
+      if (!operator.createdAt || Date.now() - operator.createdAt.getTime() > RECENT_SIGN_IN_MS) {
+        const denied = NextResponse.json(
+          {
+            error:
+              'Changing the identity provider needs a recent sign-in. Sign out, sign in again and retry.',
+            code: 'reauthentication_required',
+          },
+          { status: 403 }
+        );
+        logger.warn(
+          '{actor} tried to change the identity provider on a sign-in older than 15 minutes; refused, nothing was changed',
+          { component: 'auth/oidc', ...who(operator), status: denied.status }
         );
         return denied;
       }
@@ -218,6 +241,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         changedBy,
         issuer,
         clientId: body.clientId,
+      });
+      // Whoever controls this record controls who becomes an operator, so a
+      // replacement leaves a row naming who made it and where it now points.
+      recordAuditEvent({
+        actorSubject: operator?.subject ?? 'unknown',
+        action: 'oidc.provider_replaced',
+        targetKind: 'settings',
+        targetLabel: 'identity provider',
+        details: { issuer },
       });
       return NextResponse.json({ success: true });
     }

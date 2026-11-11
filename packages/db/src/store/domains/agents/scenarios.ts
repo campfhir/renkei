@@ -784,13 +784,14 @@ export const agentScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'agents.listChainTargets',
-    name: 'enabled agent triggers naming the caller, on enabled agents of any owner, by trigger id',
+    name: "enabled agent triggers naming the caller, on enabled agents of the caller's owner only, by trigger id",
     fixture: {
       agents: [
         agent(1, 'ann', 'Caller', 1),
-        { ...agent(2, 'bob', 'Bob chained', 2), enabled: true, llm_model_id: null },
-        agent(3, 'carol', 'Carol chained', 3),
-        { ...agent(4, 'dan', 'disabled agent', 4), enabled: false },
+        { ...agent(2, 'ann', 'Ann chained', 2), enabled: true, llm_model_id: null },
+        agent(3, 'ann', 'Ann second chained', 3),
+        { ...agent(4, 'ann', 'disabled agent', 4), enabled: false },
+        agent(5, 'bob', 'Bob foreign chain', 5),
       ],
       agent_triggers: [
         {
@@ -823,6 +824,12 @@ export const agentScenarios: Scenario<DataStore>[] = [
           agent_id: id(3),
           kind: 'agent',
           config: { callerAgentId: id(2) },
+        },
+        {
+          id: id(18),
+          agent_id: id(5),
+          kind: 'agent',
+          config: { callerAgentId: id(1) },
         },
         {
           id: id(17),

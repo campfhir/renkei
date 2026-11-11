@@ -5,7 +5,9 @@ import {
   mcpProvider,
   namespacedToolName,
   parseAuthServerMetadata,
+  MAX_TOOL_DESCRIPTION_CHARS,
   parseListedTool,
+  parseStoredTool,
   parseStoredTools,
   protectedResourceMetadataUrls,
   resourceMetadataFromChallenge,
@@ -93,6 +95,18 @@ describe('discovery', () => {
     expect(tokenClientAuth([], false)).toBe('none');
     expect(tokenClientAuth([], true)).toBe('basic');
     expect(tokenClientAuth(['client_secret_post'], true)).toBe('body');
+  });
+});
+
+describe('tool descriptions are bounded', () => {
+  it('clips a description a server wrote past the cap, listed or cached', () => {
+    const long = 'x'.repeat(MAX_TOOL_DESCRIPTION_CHARS * 3);
+    expect(parseListedTool({ name: 'a', description: long })?.description).toHaveLength(
+      MAX_TOOL_DESCRIPTION_CHARS
+    );
+    expect(parseStoredTool({ name: 'a', description: long })?.description).toHaveLength(
+      MAX_TOOL_DESCRIPTION_CHARS
+    );
   });
 });
 

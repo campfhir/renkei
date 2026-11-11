@@ -376,6 +376,15 @@ export interface OrgSettings {
    */
   admanagerProductName: string;
   /**
+   * The host name code-project previews are served on, e.g.
+   * `preview.example.com`: a separate origin from the app's, so a preview's
+   * own HTML and script never run where the app's session is. The
+   * operator's reverse proxy forwards that host to the app's
+   * `/api/code/preview-host/` prefix. Empty serves previews on the app's
+   * own origin, as before the setting existed.
+   */
+  codePreviewHost: string;
+  /**
    * The most tokens one person may spend in a week, their agents' runs
    * included (the token ledger, llm_calls: input plus output); 0 sets no
    * weekly limit. Past it no new chat turn or agent run starts for them
@@ -447,7 +456,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   rateLimitPerUserPerMinute: 60,
   accessTokenTtlMinutes: 60,
   authorizationCodeTtlSeconds: 60,
-  refreshTokenTtlDays: 30,
+  refreshTokenTtlDays: 7,
   sessionIdleTimeoutMinutes: 720,
   redactionEnabled: true,
   redactionDetectors: ['ssn', 'card', 'mrn', 'dob'],
@@ -483,6 +492,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   sandboxServicePids: 512,
   sandboxWorkspacesDebug: false,
   admanagerProductName: 'Renkei',
+  codePreviewHost: '',
   tokenLimitWeekly: 0,
   tokenLimitMonthly: 0,
   tokenLimitWeekResetDay: 1,
@@ -683,6 +693,7 @@ export async function getOrgSettings(): Promise<Result<OrgSettings, 'DB_ERROR'>>
       stored.get('admanager_product_name'),
       d.admanagerProductName
     ),
+    codePreviewHost: coerceString(stored.get('code_preview_host'), d.codePreviewHost).toLowerCase(),
     tokenLimitWeekly: Number(coerce(stored.get('token_limit_weekly'), d.tokenLimitWeekly)),
     tokenLimitMonthly: Number(coerce(stored.get('token_limit_monthly'), d.tokenLimitMonthly)),
     tokenLimitWeekResetDay: Number(
@@ -794,6 +805,7 @@ export async function setOrgSettings(
     ['sandbox_service_pids', updates.sandboxServicePids],
     ['sandbox_workspaces_debug', updates.sandboxWorkspacesDebug],
     ['admanager_product_name', updates.admanagerProductName],
+    ['code_preview_host', updates.codePreviewHost],
     ['token_limit_weekly', updates.tokenLimitWeekly],
     ['token_limit_monthly', updates.tokenLimitMonthly],
     ['token_limit_week_reset_day', updates.tokenLimitWeekResetDay],
@@ -837,8 +849,9 @@ export async function getWorkspaceLimitBytes(subject: string): Promise<Result<nu
 
 /**
  * The deployment's public base URL from PUBLIC_BASE_URL, or null when unset —
- * web callers then fall back to trusted proxy headers and finally the request
- * URL (see web's getOrigin).
+ * outside production, web callers then fall back to the request's own
+ * origin (see web's getOrigin); a production web boot refuses to start
+ * without it (publicBaseUrlRefusal).
  *
  * Deliberately NOT a platform_settings row, and an exception to Decision #19's
  * policy-is-data rule: this value gates the OIDC redirect_uri, so it must be
@@ -850,6 +863,24 @@ export async function getWorkspaceLimitBytes(subject: string): Promise<Result<nu
 export function getPublicBaseUrl(): string | null {
   const fromEnv = process.env.PUBLIC_BASE_URL?.trim();
   return fromEnv ? fromEnv.replace(/\/+$/, '') : null;
+}
+
+/**
+ * Why a production web boot must stop for want of a declared origin, or null.
+ * Without PUBLIC_BASE_URL the origin is read off request headers, which any
+ * client can set; it gates the OIDC redirect_uri, the MCP issuer and every
+ * connector callback, so production does not guess it.
+ */
+export function publicBaseUrlRefusal(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (env.NODE_ENV !== 'production') return null;
+  const value = env.PUBLIC_BASE_URL?.trim();
+  if (!value) {
+    return 'PUBLIC_BASE_URL is not set: production needs the https address people reach this app at (it is the address registered with the identity provider and every connector)';
+  }
+  if (!/^https?:\/\/[^/\s]+/i.test(value)) {
+    return `PUBLIC_BASE_URL must be an absolute http(s) URL, got "${value}"`;
+  }
+  return null;
 }
 
 /** Test hook. */

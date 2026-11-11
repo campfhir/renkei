@@ -20,6 +20,8 @@ jest.mock('./checkout', () => ({
 }));
 jest.mock('@/lib/chat/store', () => ({ getChatRow: jest.fn() }));
 jest.mock('@/lib/chat/projects', () => ({ getProjectRow: jest.fn() }));
+// Previews on the app's own origin: no preview host is set here.
+jest.mock('./preview-host-server', () => ({ codePreviewHost: jest.fn(async () => '') }));
 jest.mock('./tools', () => ({
   codeTools: jest.fn(() => [{ def: { name: 'code_ls' }, execute: jest.fn() }]),
 }));
@@ -117,6 +119,25 @@ const treeOf = (extra: Record<string, unknown> = {}) =>
   workspace('ready', { id: 'wt-1', parentId: 'ws-1', branch: 'renkei/c1234567', ...extra });
 
 describe('codeProjectContext', () => {
+  it('gives a project viewer the tools that read and none that change anything', async () => {
+    const both = [
+      { def: { name: 'code_read' }, readOnly: true, execute: jest.fn() },
+      { def: { name: 'code_write' }, execute: jest.fn() },
+      { def: { name: 'code_pipeline_set_variables' }, execute: jest.fn() },
+    ];
+    for (const projectRole of ['viewer', 'editor', 'owner'] as const) {
+      (codeTools as jest.Mock).mockReturnValueOnce(both);
+      get.mockResolvedValueOnce({ ok: true, val: workspace('ready') });
+      get.mockResolvedValueOnce({ ok: true, val: treeOf() });
+      const context = await codeProjectContext(project('ws-1'), { ...actor('wt-1'), projectRole });
+      expect(context?.tools.map((tool) => tool.def.name)).toEqual(
+        projectRole === 'viewer'
+          ? ['code_read']
+          : ['code_read', 'code_write', 'code_pipeline_set_variables']
+      );
+    }
+  });
+
   it('binds a ready chat worktree at once, with no step', async () => {
     get.mockResolvedValueOnce({ ok: true, val: workspace('ready') });
     get.mockResolvedValueOnce({ ok: true, val: treeOf() });

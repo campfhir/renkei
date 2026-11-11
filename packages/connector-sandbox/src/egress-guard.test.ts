@@ -41,6 +41,31 @@ describe('isBlockedIP', () => {
   });
 });
 
+describe('IPv6 spellings of private IPv4 and transitional forms', () => {
+  it.each([
+    '::ffff:a9fe:a9fe',
+    '::ffff:7f00:1',
+    '::ffff:0a00:1',
+    '0:0:0:0:0:ffff:a9fe:a9fe',
+    '::a9fe:a9fe',
+    '64:ff9b::a9fe:a9fe',
+    '64:ff9b::169.254.169.254',
+    '2002:a9fe:a9fe::1',
+    'fec0::1',
+    'ff02::1',
+  ])('blocks %s', (ip) => {
+    expect(isBlockedIP(ip)).toBe(true);
+  });
+
+  it.each(['2606:4700:4700::1111', '::ffff:0808:0808', '2002:0808:0808::1'])('allows %s', (ip) => {
+    expect(isBlockedIP(ip)).toBe(false);
+  });
+
+  it('refuses the hex-normalised metadata URL', () => {
+    expect(() => assertSafeHttpsUrl('https://[::ffff:169.254.169.254]/')).toThrow(BlockedUrlError);
+  });
+});
+
 describe('assertSafeHttpsUrl', () => {
   it('accepts a normal https URL', () => {
     expect(assertSafeHttpsUrl('https://example.com/reports/q4.pdf').hostname).toBe('example.com');

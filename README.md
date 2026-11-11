@@ -11,7 +11,7 @@ Renkei (連携 — "linkage, cooperation") is a permission-aware knowledge and a
 - **MCP endpoint:** `/api/mcp/{transport}` (streamable HTTP, JSON-RPC via `mcp-handler`). Beyond the Jira tools, `search_knowledge` searches what Renkei has indexed from connected tools — every result is verified against the source system for the calling user's access before disclosure, and withheld results are reported as a count. `web_search` reaches the public web through the org's Azure OpenAI deployment and its built-in `web_search` tool (Grounding with Bing), returning a cited answer — configured org-wide by an admin, off until then.
 - **Auth, layer 1:** the server is an OAuth 2.1 authorization server toward MCP clients — authorize/register/token endpoints with PKCE and RFC 8414/9728 discovery. Users sign in through the organization's own OIDC provider.
 - **Auth, layer 2:** each signed-in user links their own Atlassian account (OAuth 2.0 3LO). The grant is bound to the user's OIDC subject and encrypted at rest; tool calls hit `api.atlassian.com` with that user's token.
-- **Storage:** PostgreSQL 16 via Kysely. Migrations live in `lib/migrations/`; `/api/health` returns 503 while migrations are pending, which gates deployments.
+- **Storage:** PostgreSQL 16 via Kysely. Migrations live in `packages/db/src/migrations/`; `/api/health` returns 503 while migrations are pending, which gates a deployment only if your orchestrator or proxy checks it.
 
 ## Getting started
 
@@ -82,4 +82,4 @@ scripts/           docker build/push and ngrok helpers (CI publishes images to D
 
 ## Deployment
 
-`docker-compose.yaml` (production) runs prebuilt images with a `migrate` service behind the `tools` profile, so `up` never migrates as a side effect. The worker ships as two services off one image — `worker` (the `events` queue) and `embeddings-worker` (the `embedding_jobs` queue), both horizontally scalable (Decision #20) — which must be deployed together with migration 030. See [DEPLOYMENT.md](./DEPLOYMENT.md) for the full guide.
+`docker-compose.yaml` (production) runs prebuilt images with a `migrate` service behind the `tools` profile, so `up` never migrates as a side effect. The stack is nine first-party images run as thirteen services (Postgres, the migration job, the web app, the `worker` and `embeddings-worker` queue consumers — both horizontally scalable, Decision #20 — the agents and batch-jobs workers, four connector workers, the delegate and the sandbox). See [DEPLOYMENT.md](./DEPLOYMENT.md) for the full guide.

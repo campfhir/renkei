@@ -5,6 +5,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
+import { encrypt, isBoundEnvelope, revealContent } from '@renkei/crypto';
 import {
   createMemoryDataStore,
   registerDataStore,
@@ -71,7 +72,7 @@ describe('connector config store', () => {
       store.tables.first('connector_configs', (r) => r.connector === 'webex')?.encrypted_secrets
     );
     expect(stored).not.toContain('super-secret-token');
-    expect(stored.startsWith('v1.')).toBe(true);
+    expect(stored.startsWith('v3.')).toBe(true);
   });
 
   it('returns null for an unconfigured connector', async () => {
@@ -130,5 +131,48 @@ describe('connector config store', () => {
     } finally {
       delete process.env.RENKEI_CONFIG_CACHE_TTL_MS;
     }
+  });
+});
+
+describe('connector secrets are bound to their connector (audit R-04)', () => {
+  it('seals as an AAD-bound envelope', async () => {
+    await setConnectorConfig('github', { enabled: true, settings: {}, secrets: { s: '1' } }, KEY);
+    const row = await store.connectorConfigs.get('github');
+    expect(isBoundEnvelope(row?.encryptedSecrets ?? '')).toBe(true);
+  });
+
+  it('a blob copied to another connector row does not decrypt there', async () => {
+    await setConnectorConfig('github', { enabled: true, settings: {}, secrets: { s: '1' } }, KEY);
+    const row = await store.connectorConfigs.get('github');
+    await store.connectorConfigs.upsert({
+      connector: 'jira',
+      enabled: true,
+      settings: {},
+      encryptedSecrets: row?.encryptedSecrets ?? '',
+    });
+    expect((await getConnectorConfig('jira', KEY)).ok).toBe(false);
+    expect((await getConnectorConfig('github', KEY)).ok).toBe(true);
+  });
+
+  it('a legacy (no AAD) row still reads', async () => {
+    await store.connectorConfigs.upsert({
+      connector: 'webex',
+      enabled: true,
+      settings: {},
+      encryptedSecrets: encrypt(JSON.stringify({ botToken: 'old' }), KEY),
+    });
+    const read = await getConnectorConfig('webex', KEY);
+    expect(read.ok && read.val?.secrets).toEqual({ botToken: 'old' });
+  });
+
+  it('the knowledge reader refuses the sealed secrets copied into a chunk', async () => {
+    await setConnectorConfig(
+      'github',
+      { enabled: true, settings: {}, secrets: { s: 'hush' } },
+      KEY
+    );
+    const row = await store.connectorConfigs.get('github');
+    const shown = revealContent(`renc1:${row?.encryptedSecrets ?? ''}`, KEY);
+    expect(shown).toBe('[content unavailable: decryption failed]');
   });
 });

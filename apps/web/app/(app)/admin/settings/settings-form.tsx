@@ -644,6 +644,26 @@ export function SettingsForm({ initial }: { initial: EditableSettings }) {
         </Row>
       </Section>
 
+      <Section title="Code previews">
+        <Row
+          label="Preview host"
+          hint="A host name of its own for code-project previews, such as preview.example.com, so a preview's pages never run on this app's address. Point your reverse proxy for that host at this app's /api/code/preview-host/ path (keep the rest of the path, and send the original host as X-Forwarded-Host). Leave empty to serve previews on this app's own address."
+        >
+          <input
+            type="text"
+            aria-label="Code preview host"
+            placeholder="preview.example.com"
+            maxLength={260}
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            value={values.codePreviewHost}
+            onChange={(event) => set('codePreviewHost', event.target.value)}
+            className="w-64 rounded border border-gray-300 bg-white px-2 py-1 text-base sm:text-sm dark:border-gray-700 dark:bg-gray-900"
+          />
+        </Row>
+      </Section>
+
       <div className="flex items-center gap-3">
         <button
           {...saveAnchor}

@@ -9,7 +9,10 @@
  * right when the deployment is https) and a reviewer can find the whole
  * policy in one place.
  *
- * Content-Security-Policy is REPORT-ONLY for now. The App Router hydrates
+ * Content-Security-Policy is REPORT-ONLY for now, with one exception: the
+ * directives that need no nonce (`object-src`, `base-uri`, `frame-ancestors`)
+ * are ENFORCED in a second header beside it. Reports go to
+ * /api/csp-report, so the report-only phase produces the data it exists for. The App Router hydrates
  * through inline `<script>` tags and Tailwind/next-font emit inline styles,
  * so an enforcing policy needs per-request nonces (dynamic rendering of
  * every page, through the proxy) before it could drop `'unsafe-inline'`;
@@ -81,8 +84,32 @@ export function contentSecurityPolicy(options: {
     "base-uri 'self'",
     "form-action 'self'",
     `frame-ancestors ${options.frameAncestors}`,
+    // Violations go somewhere: `report-uri` for browsers that read it,
+    // `report-to` (the Reporting-Endpoints entry below) for those that don't.
+    `report-uri ${CSP_REPORT_PATH}`,
+    'report-to csp',
   ];
   return directives.join('; ');
+}
+
+/** Where CSP violation reports are sent (app/api/csp-report/route.ts). */
+export const CSP_REPORT_PATH = '/api/csp-report';
+
+/**
+ * The directives that hold without a nonce and are enforced today. Kept
+ * apart from the report-only policy so tightening script/style later does
+ * not touch what is already enforced.
+ */
+export function enforcedContentSecurityPolicy(options: {
+  frameAncestors: "'none'" | "'self'";
+}): string {
+  // No `form-action`: the MCP consent form posts to this app, which answers
+  // with a redirect to the client's own callback, and browsers hold a
+  // redirect after a form post to `form-action` too. It stays in the
+  // report-only policy.
+  return ["object-src 'none'", "base-uri 'self'", `frame-ancestors ${options.frameAncestors}`].join(
+    '; '
+  );
 }
 
 export interface SecurityHeaderEnv {
@@ -97,12 +124,24 @@ export function servesHttps(publicBaseUrl: string | undefined): boolean {
   return typeof publicBaseUrl === 'string' && /^https:\/\//i.test(publicBaseUrl.trim());
 }
 
+/**
+ * A header `source` matching every path except the framed routes (path-to-regexp
+ * with a negative lookahead, which Next's `headers()` accepts).
+ */
+function notFramedSource(): string {
+  const framed = FRAMED_ROUTES.map(
+    (route) => `${route.replace(/^\//, '').replace(/:[A-Za-z]+/g, '[^/]+')}(?:/|$)`
+  );
+  return `/:path((?!${framed.join('|')}).*)`;
+}
+
 export function securityHeaderRules(env: SecurityHeaderEnv): HeaderRule[] {
   const isDevelopment = env.nodeEnv === 'development';
   const common = [
     { key: 'X-Content-Type-Options', value: 'nosniff' },
     { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
     { key: 'Permissions-Policy', value: PERMISSIONS_POLICY },
+    { key: 'Reporting-Endpoints', value: `csp="${CSP_REPORT_PATH}"` },
     ...(servesHttps(env.publicBaseUrl)
       ? [{ key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' }]
       : []),
@@ -118,6 +157,19 @@ export function securityHeaderRules(env: SecurityHeaderEnv): HeaderRule[] {
       },
     ],
   };
+  // The enforced directives go on every route EXCEPT the framed ones: those
+  // documents (widget and mockup HTML) set a Content-Security-Policy of
+  // their own — the mockup route's carries its `sandbox` — and a header from
+  // here would replace it rather than add to it.
+  const enforced: HeaderRule = {
+    source: notFramedSource(),
+    headers: [
+      {
+        key: 'Content-Security-Policy',
+        value: enforcedContentSecurityPolicy({ frameAncestors: "'none'" }),
+      },
+    ],
+  };
   // Later rules override earlier ones for the same header key, so these
   // only need to restate what differs for a framed route.
   const framed: HeaderRule[] = FRAMED_ROUTES.map((source) => ({
@@ -130,5 +182,5 @@ export function securityHeaderRules(env: SecurityHeaderEnv): HeaderRule[] {
       },
     ],
   }));
-  return [everywhere, ...framed];
+  return [everywhere, enforced, ...framed];
 }

@@ -24,6 +24,8 @@ export interface WorkspaceGitAccess {
 
 type GitContext = Pick<MCPToolContext, 'subject' | 'origin'> & {
   provider: string;
+  /** `owner/repo` (or `workspace/repo`): the one repository the ticket reaches. */
+  repo: string;
   bitbucketScopes?: string[];
   githubScopes?: string[];
 };
@@ -72,6 +74,7 @@ async function resolveHostGitAccess(
       provider: context.provider,
       subject: context.subject,
       write: options.write,
+      repo: context.repo,
     }),
     grants.describe({
       provider: context.provider,

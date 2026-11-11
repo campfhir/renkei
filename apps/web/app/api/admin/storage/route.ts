@@ -5,6 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { parseStorageInput, readStorage, saveStorage } from '@/lib/storage-admin';
 import { logger } from '@/lib/logger';
@@ -46,5 +47,13 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     }
     return NextResponse.json({ error: saved }, { status: saved.startsWith('The ') ? 400 : 500 });
   }
+  recordAuditEvent({
+    actorSubject: access.subject,
+    action: 'storage.configured',
+    targetKind: 'settings',
+    targetLabel: 'blob storage',
+    // Where it points, never the key.
+    details: { account: input.account, container: input.container, endpoint: input.endpoint },
+  });
   return NextResponse.json(saved);
 }

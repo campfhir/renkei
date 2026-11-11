@@ -16,6 +16,7 @@ jest.mock('@renkei/queue', () => ({ agentJobsQueue: jest.fn(() => ({ producer: {
 
 import { NextRequest } from 'next/server';
 import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
+import { resetInboundLimits } from '@/lib/inbound-rate-limit';
 import { POST } from './route';
 
 const { getSessionFromRequest: mockGetSession } = jest.requireMock<{
@@ -57,6 +58,7 @@ afterEach(() => resetDataStore());
 
 beforeEach(async () => {
   jest.clearAllMocks();
+  resetInboundLimits();
   await seedStore();
   mockGetSession.mockResolvedValue({ subject: 'alice' });
   mockCreateAgentRun.mockResolvedValue({ ok: true, val: { runId: 'new-run' } });
@@ -89,5 +91,25 @@ describe('POST invoke — manual concurrency guard', () => {
     expect(response.status).toBe(202);
     expect(mockCreateAgentRun).toHaveBeenCalledTimes(1);
     expect(mockFindInProgressRun).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST invoke — burst brake', () => {
+  it('is per caller: one subject at the limit does not stop another', async () => {
+    mockGetSession.mockResolvedValue({ subject: 'alice' });
+    for (let i = 0; i < 30; i++) {
+      expect((await POST(request({ confirm: true }), params())).status).toBe(202);
+    }
+    const blocked = await POST(request({ confirm: true }), params());
+    expect(blocked.status).toBe(429);
+    expect(Number(blocked.headers.get('Retry-After'))).toBeGreaterThan(0);
+
+    // Someone holding a grant on the agent, as a different subject.
+    const { hasActiveGrant } = jest.requireMock<{ hasActiveGrant: jest.Mock }>(
+      '@/lib/agents/access-grants'
+    );
+    hasActiveGrant.mockResolvedValueOnce(true);
+    mockGetSession.mockResolvedValue({ subject: 'bob' });
+    expect((await POST(request({ confirm: true }), params())).status).toBe(202);
   });
 });

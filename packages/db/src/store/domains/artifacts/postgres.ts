@@ -566,5 +566,48 @@ export function postgresArtifacts(db: () => Kysely<DB>): ArtifactStore {
         .execute();
       return rows.map((row) => ({ id: row.id, chatId: row.chat_id, blobKey: row.blob_key }));
     },
+    async listKeptInChats(chatIds) {
+      if (chatIds.length === 0) return [];
+      const rows = await db()
+        .selectFrom('artifacts as a')
+        .innerJoin('chats as c', 'c.id', 'a.chat_id')
+        .select(['a.id', 'a.chat_id', 'a.owner_subject', 'a.key_kind'])
+        .where('a.chat_id', 'in', [...chatIds])
+        .where((eb) =>
+          eb.or([
+            eb('a.owner_subject', '!=', eb.ref('c.owner_subject')),
+            eb.exists(
+              eb
+                .selectFrom('artifact_references as r')
+                .select('r.id')
+                .whereRef('r.artifact_id', '=', 'a.id')
+            ),
+            eb.exists(
+              eb
+                .selectFrom('resource_access_grants as g')
+                .select('g.id')
+                .where('g.resource_kind', '=', 'artifact')
+                .whereRef('g.resource_id', '=', 'a.id')
+            ),
+          ])
+        )
+        .orderBy('a.id')
+        .execute();
+      return rows.map((row) => ({
+        id: row.id,
+        chatId: row.chat_id ?? '',
+        ownerSubject: row.owner_subject,
+        keyKind: row.key_kind,
+      }));
+    },
+    async detachFromChats(artifactIds) {
+      if (artifactIds.length === 0) return 0;
+      const result = await db()
+        .updateTable('artifacts')
+        .set({ chat_id: null })
+        .where('id', 'in', [...artifactIds])
+        .executeTakeFirst();
+      return Number(result.numUpdatedRows);
+    },
   };
 }

@@ -251,6 +251,22 @@ export interface ArtifactStore {
   removeReference(input: { artifactId: string; projectId: string }): Promise<boolean>;
   /** The stored objects of every attachment in these chats, by id; an empty list reads none. */
   listBlobsInChats(chatIds: readonly string[]): Promise<ArtifactBlobRecord[]>;
+  /**
+   * The artifacts in these chats that must outlive them, by id: a project
+   * holds one, a person is shared it, or someone other than the chat's
+   * owner owns it. An empty list reads none.
+   */
+  listKeptInChats(chatIds: readonly string[]): Promise<ArtifactKeptRecord[]>;
+  /** Clears `chat_id` on these rows, leaving everything else; returns how many. */
+  detachFromChats(artifactIds: readonly string[]): Promise<number>;
+}
+
+/** An artifact a chat's delete must not take with it. */
+export interface ArtifactKeptRecord {
+  id: string;
+  chatId: string;
+  ownerSubject: string;
+  keyKind: string;
 }
 
 /** Where one chat attachment's bytes live. */

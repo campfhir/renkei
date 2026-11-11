@@ -43,6 +43,11 @@ export default [
       // its test, outside every tsconfig project — same category as above.
       'scripts/changelog.mjs',
       'scripts/changelog.test.mjs',
+      // The compose and Node-version guards: plain Node ESM run directly in
+      // CI, and the latter's test — same category as the changelog guard.
+      'scripts/check-compose-secrets.mjs',
+      'scripts/check-node-version.mjs',
+      'scripts/check-node-version.test.mjs',
       // The local ESLint rules themselves — plain ESM consumed by this config,
       // outside every tsconfig project, same category as the scripts above.
       'scripts/eslint-rules/**',

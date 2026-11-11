@@ -18,7 +18,13 @@ import {
   type ValidationIssue,
 } from '@renkei/agents';
 import { listAvailableTools } from '@/lib/mcp-tools/tool-catalog';
-import { createAgent, getAgent, updateAgent, type SaveAgentInput } from '@/lib/agents/store';
+import {
+  createAgent,
+  getAgent,
+  listAgentNames,
+  updateAgent,
+  type SaveAgentInput,
+} from '@/lib/agents/store';
 import { generateAgentDescription } from '@/lib/agents/describe';
 import { notifyAgentEdited } from '@/lib/agents/edit-notification';
 import { recordAuditEvent } from '@/lib/audit-events';
@@ -73,6 +79,23 @@ export async function saveAgent(
   const tools = await listAvailableTools(owner);
   const issues = validateAgentDraft(normalized, tools);
   if (issues.length > 0) return { outcome: 'invalid', issues };
+
+  // A chained trigger hands the source agent's run output to this agent, so
+  // the source must belong to the agent's owner — the source's owner never
+  // consents to anyone else receiving it.
+  const ownIds = new Set((await listAgentNames(owner)).map((a) => a.id));
+  const foreign = normalized.triggers.flatMap((trigger, index) =>
+    trigger.kind === 'agent' && !ownIds.has(trigger.callerAgentId) ? [index] : []
+  );
+  if (foreign.length > 0) {
+    return {
+      outcome: 'invalid',
+      issues: foreign.map((index) => ({
+        path: `triggers.${index}`,
+        message: 'Choose one of your own agents to trigger this one.',
+      })),
+    };
+  }
 
   if (options.dryRun) {
     if (options.agentId !== undefined) {
@@ -129,6 +152,25 @@ export async function saveAgent(
   const agentId = options.agentId;
   const existing = await getAgent(owner, agentId);
   if (!existing) return { outcome: 'not-found' };
+  // An API trigger mints a bearer key that runs the agent on the owner's
+  // accounts and outlives any access grant, so only the owner adds one. A
+  // grantee may keep, edit or remove the ones that exist.
+  if (owner !== subject) {
+    const apiCount = (triggers: { kind: string }[]) =>
+      triggers.filter((trigger) => trigger.kind === 'api').length;
+    if (apiCount(normalized.triggers) > apiCount(existing.triggers.map((t) => t.draft))) {
+      return {
+        outcome: 'invalid',
+        issues: [
+          {
+            path: 'triggers',
+            message:
+              'Only the agent’s owner can add an API trigger: its key keeps working after access is removed.',
+          },
+        ],
+      };
+    }
+  }
   // Compared NORMALIZED-to-normalized: a round-tripped save that changed
   // nothing the author can see must not read as a content change — the
   // list's on/off toggle sends the whole definition back.

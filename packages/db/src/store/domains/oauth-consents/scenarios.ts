@@ -226,4 +226,29 @@ export const oauthConsentScenarios: Scenario<DataStore>[] = [
       (await store.oauthConsents.getAuthorizationCode('c2'))?.code ?? null,
     ],
   },
+  {
+    method: 'oauthConsents.takeAuthorizationCode',
+    name: 'returned once; a second take finds nothing, other codes kept',
+    fixture: {
+      ...fixture,
+      oauth_authorization_codes: ['c1', 'c2'].map((code) => ({
+        code,
+        client_id: 'cli-a',
+        subject: 'ann',
+        scope: 'openid',
+        redirect_uri: 'http://127.0.0.1:3000/cb',
+        code_challenge: 'x',
+        code_challenge_method: 'S256',
+        roles: ['renkei-user'],
+        expires_at: at(5),
+      })),
+    },
+    run: async (store) => [
+      await store.oauthConsents.takeAuthorizationCode('c1'),
+      await store.oauthConsents.takeAuthorizationCode('c1'),
+      await store.oauthConsents.takeAuthorizationCode('nope'),
+      await store.oauthConsents.getAuthorizationCode('c1'),
+      (await store.oauthConsents.getAuthorizationCode('c2'))?.code ?? null,
+    ],
+  },
 ];

@@ -101,10 +101,10 @@ export default function YourData() {
           summary of you to paste into or upload to ChatGPT, Claude or Gemini.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <DownloadLink href="/api/account/export" className={LINK_BUTTON}>
+          <DownloadLink href="/api/account/export" reportTaken className={LINK_BUTTON}>
             Download all my data (.zip)
           </DownloadLink>
-          <DownloadLink href="/api/account/export/profile" className={LINK_BUTTON}>
+          <DownloadLink href="/api/account/export/profile" reportTaken className={LINK_BUTTON}>
             Download profile for other assistants (.md)
           </DownloadLink>
         </div>

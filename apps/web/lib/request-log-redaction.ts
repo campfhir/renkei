@@ -27,6 +27,8 @@ export const REDACTED_QUERY_PARAMETERS: ReadonlySet<string> = new Set([
   'access_token',
   'refresh_token',
   'id_token',
+  // The preview host's sign-in handoff (lib/code/preview-host.ts).
+  'ticket',
 ]);
 
 export const REDACTED_VALUE = '[redacted]';

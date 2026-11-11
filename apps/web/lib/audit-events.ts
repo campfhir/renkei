@@ -26,6 +26,13 @@ export type AuditAction =
   | 'user.sessions_revoked'
   /** A person downloaded their own data (details: format — zip or profile — and counts). */
   | 'user.data_exported'
+  /**
+   * A person's export was fetched ahead of a tap (the share sheet in a
+   * home-screen app): it reached their device, and they may or may not have
+   * kept it. A `user.data_exported` with `via: 'share-sheet'` follows when
+   * they did (details: format and counts).
+   */
+  | 'user.data_export_prepared'
   /** A person imported chats or memories from another assistant (details: sources and counts). */
   | 'user.data_imported'
   | 'connector.connected'
@@ -38,12 +45,21 @@ export type AuditAction =
   | 'agent.enabled'
   | 'agent.disabled'
   | 'agent.deleted'
+  /** An operator halted runs from the org-wide queue (details: scope, status or runIds, outcome). */
+  | 'agent.runs_halted'
   | 'agent.shared'
   | 'agent.unshared'
   | 'agent.access_granted'
   | 'agent.access_revoked'
   | 'agent.copied'
   | 'settings.updated'
+  /** An operator saved an LLM model config (details: modelId, provider, model, baseUrl, keyReplaced). */
+  | 'llm_model.configured'
+  | 'llm_model.deleted'
+  /** An operator pointed chat attachment storage somewhere (details: account, container, endpoint — never the key). */
+  | 'storage.configured'
+  /** An operator replaced the identity provider (details: issuer). */
+  | 'oidc.provider_replaced'
   /** An operator changed the token limits: the weekly or monthly limit, the weekly reset, a model's limit (details: changed). */
   | 'token_limits.updated'
   /** An operator exempted a person from the token limits, or put them back under them (details: subject, exempt). */

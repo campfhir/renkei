@@ -17,7 +17,10 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { decrypt, encrypt, type Keyring } from '@renkei/crypto';
+import { AAD_PURPOSE, aadFor, decryptBoundValue, encrypt, type Keyring } from '@renkei/crypto';
+
+/** The same binding the web app seals and opens the client secret under (lib/tenant-operations.ts). */
+const OIDC_SECRET_AAD = aadFor(AAD_PURPOSE.oidcClientSecret);
 import type { DataStore, OidcConfigRecord } from '@renkei/db';
 
 /** The fields a `set` may name. Absent means "leave as stored". */
@@ -157,7 +160,7 @@ export async function showIdp(store: DataStore, keyring: Keyring): Promise<IdpSu
   const { clientSecret, ...rest } = record;
   return {
     ...rest,
-    clientSecret: decrypt(clientSecret, keyring).ok
+    clientSecret: decryptBoundValue(clientSecret, keyring, OIDC_SECRET_AAD).ok
       ? 'stored'
       : 'stored, but this TOKEN_ENCRYPTION_KEY does not open it',
   };
@@ -212,7 +215,7 @@ export async function applyChange(
       // The stored ciphertext goes back as it is when the secret is not changing.
       clientSecret:
         change.clientSecret !== undefined
-          ? encrypt(change.clientSecret, keyring)
+          ? encrypt(change.clientSecret, keyring, OIDC_SECRET_AAD)
           : existing.clientSecret,
       operatorIdpValue: existing.operatorIdpValue,
       userIdpValue: existing.userIdpValue,

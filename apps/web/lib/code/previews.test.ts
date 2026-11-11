@@ -89,6 +89,33 @@ describe('previewRelay', () => {
     expect(await response.text()).toBe('<h1>hi</h1>');
   });
 
+  it('neither sends the preview the app’s own cookies nor lets it set them', async () => {
+    const upstream = new Headers({ 'content-type': 'text/html' });
+    upstream.append('set-cookie', 'renkei_session=forged; Path=/');
+    upstream.append('set-cookie', 'oidc_state=forged; Path=/');
+    upstream.append('set-cookie', 'connect_state_x=forged; Path=/');
+    upstream.append('set-cookie', 'app=1; Path=/');
+    const fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('ok', { status: 200, headers: upstream }));
+    const request = new NextRequest(
+      'https://r.example/api/code/projects/p1/chats/c1/previews/web/app/',
+      {
+        headers: {
+          cookie: 'renkei_session=secret; oidc_state=s; connect_state_x=c; theme=dark',
+        },
+      }
+    );
+    const response = await previewRelay(
+      request,
+      { subject: 'code-project:p1', name: 'web' },
+      { prefix: '/api/code/projects/p1/chats/c1/previews/web/app/', path: [] }
+    );
+    const [, init] = fetchSpy.mock.calls[0]!;
+    expect(new Headers(init?.headers).get('cookie')).toBe('theme=dark');
+    expect(response.headers.getSetCookie()).toEqual(['app=1; Path=/']);
+  });
+
   it('drops a cookie header that held only the session, and sends no body on a GET', async () => {
     const fetchSpy = jest
       .spyOn(globalThis, 'fetch')
@@ -234,5 +261,30 @@ describe('the start payload and the addresses', () => {
         ports: [{ name: 'app', token: null }],
       }).url
     ).toBe('https://r.example/api/code/projects/p1/previews/web/app/');
+  });
+});
+
+describe('addresses on the organization’s preview host', () => {
+  it('are on that host, by its own layout, and nothing is addressed on the app', () => {
+    const addresses = previewAddresses(
+      'https://app.example.com',
+      {
+        projectId: 'p1',
+        chatId: 'c1',
+        name: 'web',
+        ports: [
+          { name: 'app', token: 'tok-a' },
+          { name: 'api', token: null },
+        ],
+      },
+      'preview.example.com'
+    );
+    expect(addresses.url).toBe('https://preview.example.com/p/p1/c/c1/web/app/');
+    expect(addresses.publicUrl).toBe('https://preview.example.com/t/tok-a/');
+    expect(addresses.ports[1]).toMatchObject({
+      url: 'https://preview.example.com/p/p1/c/c1/web/ports/api/',
+      publicUrl: null,
+    });
+    expect(JSON.stringify(addresses)).not.toContain('app.example.com');
   });
 });

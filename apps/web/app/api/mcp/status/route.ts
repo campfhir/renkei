@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDataStore } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
@@ -51,9 +52,13 @@ export const GET = async (request: NextRequest): Promise<NextResponse> => {
       siteUrl: typeof metadata.siteUrl === 'string' ? metadata.siteUrl : null,
     });
   } catch (error) {
+    // The text of the failure stays in the log; the client gets a fixed
+    // string and an id to quote.
+    const correlationId = randomUUID();
     logger.error(
       '{actor} opened the MCP setup page, but whether they have connected Jira could not be read; the page showed an error: {error}',
       {
+        correlationId,
         component: 'api/mcp/status',
         ...who(session),
         error: error instanceof Error ? error.message : String(error),
@@ -63,7 +68,7 @@ export const GET = async (request: NextRequest): Promise<NextResponse> => {
     return NextResponse.json(
       {
         connected: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: `Status check failed (ref ${correlationId})`,
       },
       { status: 500 }
     );

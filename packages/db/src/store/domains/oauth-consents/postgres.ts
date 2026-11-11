@@ -83,5 +83,13 @@ export function postgresOAuthConsents(db: () => Kysely<DB>): OAuthConsentStore {
         .executeTakeFirst();
       return Number(result.numDeletedRows ?? 0);
     },
+    async takeAuthorizationCode(code) {
+      const row = await db()
+        .deleteFrom('oauth_authorization_codes')
+        .where('code', '=', code)
+        .returningAll()
+        .executeTakeFirst();
+      return row ? authorizationCodeFromRow(row) : null;
+    },
   };
 }

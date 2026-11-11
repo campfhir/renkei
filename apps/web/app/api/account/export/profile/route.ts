@@ -11,6 +11,7 @@ import { collectExportData } from '@/lib/data-portability/collect';
 import { renderProfileMarkdown } from '@/lib/data-portability/profile-markdown';
 import { attachmentDisposition } from '@/lib/data-portability/http';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { isDownloadPrefetch } from '@/lib/download-prefetch';
 
 export const maxDuration = 300;
 
@@ -20,9 +21,10 @@ export async function GET(request: NextRequest): Promise<Response> {
   const { session } = ready.context;
   const data = await collectExportData(session.subject, new Date());
   const text = renderProfileMarkdown(data);
+  // A fetch ahead of a tap is audited as prepared, not exported (see ../route.ts).
   recordAuditEvent({
     actorSubject: session.subject,
-    action: 'user.data_exported',
+    action: isDownloadPrefetch(request) ? 'user.data_export_prepared' : 'user.data_exported',
     details: { format: 'profile', memoryEntries: data.memory.entries.length },
   });
   return new Response(text, {
@@ -35,4 +37,16 @@ export async function GET(request: NextRequest): Promise<Response> {
       'cache-control': 'no-store',
     },
   });
+}
+
+/** The tap that took a profile fetched ahead of it (lib/download-prefetch.ts): the audit event, nothing else. */
+export async function POST(request: NextRequest): Promise<Response> {
+  const ready = await chatRequestContext(request);
+  if (!ready.ok) return ready.response;
+  recordAuditEvent({
+    actorSubject: ready.context.session.subject,
+    action: 'user.data_exported',
+    details: { format: 'profile', via: 'share-sheet' },
+  });
+  return new Response(null, { status: 204 });
 }

@@ -10,7 +10,12 @@
 jest.mock('@renkei/crypto', () => ({
   loadKeyring: jest.fn(() => ({ ok: true, val: 'keyring' })),
   encrypt: jest.fn((value: string) => `sealed:${value}`),
-  decrypt: jest.fn((value: string) => ({ ok: true, val: value.replace(/^sealed:/, '') })),
+  decryptBoundValue: jest.fn((value: string) => ({
+    ok: true,
+    val: value.replace(/^sealed:/, ''),
+  })),
+  aadFor: jest.fn((purpose: string) => purpose),
+  AAD_PURPOSE: { oidcClientSecret: 'oidc-client-secret' },
 }));
 
 import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';

@@ -70,7 +70,7 @@ export const identityScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'identities.findByEmail',
-    name: 'exact email, ties by subject',
+    name: 'exact email; an email two subjects share finds nobody',
     fixture: {
       identities: [
         { subject: 'zed', email: 'same@example.test', display_name: 'Z' },

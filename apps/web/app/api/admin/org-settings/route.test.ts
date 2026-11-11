@@ -90,6 +90,37 @@ describe('GET/PUT /api/admin/org-settings', () => {
     expect((await put('not json')).status).toBe(400);
   });
 
+  describe('the code preview host', () => {
+    const before = process.env.PUBLIC_BASE_URL;
+    beforeEach(() => {
+      process.env.PUBLIC_BASE_URL = 'https://app.example.com';
+    });
+    afterEach(() => {
+      if (before === undefined) delete process.env.PUBLIC_BASE_URL;
+      else process.env.PUBLIC_BASE_URL = before;
+    });
+
+    it('is off on a fresh organization, stores a host name lower-cased, and is audited', async () => {
+      expect((await stored()).codePreviewHost).toBe('');
+      const settings = await answered(await put({ codePreviewHost: ' Preview.Example.com ' }));
+      expect(settings.codePreviewHost).toBe('preview.example.com');
+      expect(mockAudit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'settings.updated',
+          details: { changed: { codePreviewHost: { from: '', to: 'preview.example.com' } } },
+        })
+      );
+      expect((await answered(await put({ codePreviewHost: '' }))).codePreviewHost).toBe('');
+    });
+
+    it('refuses a URL, and the app’s own host, and keeps what it had', async () => {
+      await put({ codePreviewHost: 'preview.example.com' });
+      expect((await put({ codePreviewHost: 'https://preview.example.com/x' })).status).toBe(400);
+      expect((await put({ codePreviewHost: 'app.example.com' })).status).toBe(400);
+      expect((await stored()).codePreviewHost).toBe('preview.example.com');
+    });
+  });
+
   describe('the organization’s names', () => {
     it('stores the name trimmed, and answers it', async () => {
       const settings = await answered(await put({ organizationName: '  Acme Health  ' }));

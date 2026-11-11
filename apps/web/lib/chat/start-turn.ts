@@ -48,7 +48,7 @@ import { logger } from '@/lib/logger';
 import { who, whoIs } from '@/lib/log-actor';
 import { getIdentityDisplay } from '@/lib/identity';
 import { isUuid } from '@/lib/uuid';
-import { resolveChatAccess } from './access';
+import { resolveChatAccess, resolveResourceAccess } from './access';
 import type { ContentCipher } from './content-crypto';
 import { projectCipherById } from './chat-keys';
 import {
@@ -170,12 +170,21 @@ function chunkedUserBlocks(text: string, extraBlocks: LlmContentBlock[]): LlmCon
 const THINKING_SHARE = 0.6;
 const THINKING_MAX = 16_000;
 
+/**
+ * Replies one person may have running at once, across their chats: one per
+ * chat is already the rule, and each holds a model call and an SSE stream,
+ * so a script opening chats in a loop cannot drain the model budget or the
+ * server's connections. Several parallel chats stay well inside it.
+ */
+export const MAX_RUNNING_TURNS_PER_SUBJECT = 8;
+
 export type StartTurnError =
   | 'NOT_FOUND'
   | 'FORBIDDEN'
   | 'EMPTY'
   | 'TOO_LONG'
   | 'ALREADY_RUNNING'
+  | 'TOO_MANY_RUNNING'
   | 'NO_MODEL'
   | 'MODEL_ERROR'
   /** The person is at their token limit, or at this model's; the message says which. */
@@ -311,6 +320,14 @@ export async function startChatTurn(
   const access = await resolveChatAccess(input.session.subject, input.chatId);
   if (!access) return err('NOT_FOUND' as const);
   if (access.role !== 'owner') return err('FORBIDDEN' as const);
+  if (
+    (await getDataStore().chatThreads.countRunningForOwner(input.session.subject)) >=
+    MAX_RUNNING_TURNS_PER_SUBJECT
+  ) {
+    return err('TOO_MANY_RUNNING' as const, {
+      message: 'Several of your replies are still running; wait for one to finish.',
+    });
+  }
   const chat = access.chat;
   // The prompt's files, excerpted under the chat's key.
   const extraBlocks = [
@@ -718,6 +735,11 @@ async function executeTurnBody(
             subject: input.session.subject,
             roles: input.session.roles,
             chat: { id: input.chat.id, workspaceId: input.chat.workspaceId },
+            // Someone the project is no longer shared with reads as a viewer:
+            // their chat keeps its history, not the tools that change things.
+            projectRole:
+              (await resolveResourceAccess(input.session.subject, 'chat_project', project.id))
+                ?.role ?? 'viewer',
             // Auto mode's sub-agents run long (delegate.ts).
             auto: input.chat.autoMode && !readOnly,
           })

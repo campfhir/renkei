@@ -162,7 +162,7 @@ maybe('refresh-token rotation', () => {
     expect((await accessToken(next.body.access_token))?.roles).toEqual(['renkei-user']);
   });
 
-  it('keeps the frozen roles when the subject holds no live session', async () => {
+  it('keeps the frozen roles, minus the operator role, when the subject holds no live session', async () => {
     const { token } = await issueRefreshToken({ roles: ['renkei-user', 'renkei-operator'] });
     // An expired session does not count.
     await signIn(new Date(Date.now() - 1000));
@@ -170,9 +170,8 @@ maybe('refresh-token rotation', () => {
     const result = await refresh(token);
 
     expect(result.status).toBe(200);
-    expect((await accessToken(result.body.access_token))?.roles).toEqual([
-      'renkei-user',
-      'renkei-operator',
-    ]);
+    // The operator role was frozen at consent and the identity provider has
+    // not been asked since: it comes back with the next sign-in.
+    expect((await accessToken(result.body.access_token))?.roles).toEqual(['renkei-user']);
   });
 });

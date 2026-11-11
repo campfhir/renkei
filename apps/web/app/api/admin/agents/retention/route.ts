@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getOrgSettings, setOrgSettings } from '@renkei/settings';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { logger } from '@/lib/logger';
 import { who } from '@/lib/log-actor';
@@ -58,5 +59,12 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     );
     return NextResponse.json({ error: 'Could not save' }, { status: 500 });
   }
+  recordAuditEvent({
+    actorSubject: session.subject,
+    action: 'settings.updated',
+    targetKind: 'settings',
+    targetLabel: 'agent run retention',
+    details: { changed: { agentRunRetentionDays: days } },
+  });
   return NextResponse.json({ agentRunRetentionDays: days });
 }

@@ -14,7 +14,9 @@ export type SealedEnvelopeTable =
   | 'oidc_config'
   | 'knowledge_chunks'
   | 'sandbox_env_secrets'
-  | 'code_service_image_rules';
+  | 'code_service_image_rules'
+  | 'mcp_servers'
+  | 'delegate_signing_keys';
 
 /** One sealed column: its table, the columns that identify a row (in walk order), the column. */
 export interface SealedEnvelopeColumn {

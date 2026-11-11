@@ -14,6 +14,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getOrgSettings, setOrgSettings } from '@renkei/settings';
 import { knownDetectors, describeFormatProblem } from '@renkei/redaction';
@@ -114,5 +115,12 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     );
     return NextResponse.json({ error: 'Could not save settings' }, { status: 500 });
   }
+  recordAuditEvent({
+    actorSubject: session.subject,
+    action: 'settings.updated',
+    targetKind: 'settings',
+    targetLabel: 'redaction',
+    details: { changed: updates },
+  });
   return NextResponse.json({ ok: true });
 }

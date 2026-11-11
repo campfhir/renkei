@@ -63,6 +63,8 @@ export interface Session {
    * cache, never from the cookie.
    */
   actor: Actor;
+  /** When this browser session began, i.e. the sign-in it came from; absent only on a hand-built one. */
+  createdAt?: Date;
 }
 
 export function sessionCookieOptions(maxAgeSeconds: number) {
@@ -81,7 +83,8 @@ export async function createSession(
   ttlSeconds: number
 ): Promise<Result<Session, 'SESSION_ERROR'>> {
   const id = randomUUID();
-  const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
+  const createdAt = new Date();
+  const expiresAt = new Date(createdAt.getTime() + ttlSeconds * 1000);
 
   const actor = await describeActor(subject);
   try {
@@ -102,7 +105,7 @@ export async function createSession(
     roles,
     expiresAt: expiresAt.toISOString(),
   });
-  return ok({ id, subject, roles, expiresAt, actor });
+  return ok({ id, subject, roles, expiresAt, actor, createdAt });
 }
 
 /**
@@ -153,6 +156,7 @@ export async function getSessionById(sessionId: string): Promise<Session | null>
     roles: row.roles,
     expiresAt: row.expiresAt,
     actor: await describeActor(row.subject),
+    createdAt: row.createdAt,
   };
 }
 

@@ -13,12 +13,16 @@ import type { NextRequest } from 'next/server';
 import { isPreviewToken, publicPreviewPath } from '@renkei/connector-sandbox';
 import { jsonError } from '@/lib/chat/route-support';
 import { previewRelay } from '@/lib/code/previews';
+import { hostTokenPath } from '@/lib/code/preview-host';
+import { movedToPreviewHost } from '@/lib/code/preview-host-server';
 
 type Params = Promise<{ token: string; path?: string[] }>;
 
 async function relay(request: NextRequest, { params }: { params: Params }): Promise<Response> {
   const { token, path } = await params;
   if (!isPreviewToken(token)) return jsonError(404, 'not-found', 'No such preview');
+  const moved = await movedToPreviewHost(request, hostTokenPath(token), path);
+  if (moved) return moved;
   return previewRelay(request, { token }, { prefix: publicPreviewPath(token), path });
 }
 

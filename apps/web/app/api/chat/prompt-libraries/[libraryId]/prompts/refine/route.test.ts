@@ -5,6 +5,7 @@
  */
 
 jest.mock('@/lib/session', () => ({ getSessionFromRequest: jest.fn() }));
+jest.mock('@/lib/token-limits/refusal', () => ({ tokenLimitRefusal: jest.fn(async () => null) }));
 jest.mock('@renkei/agent-llm', () => ({
   ...jest.requireActual('@renkei/agent-llm'),
   resolveAgentLlm: jest.fn(),
@@ -19,6 +20,10 @@ import { createMemoryDataStore, getDataStore, registerDataStore, resetDataStore 
 import { createLibrary, createPrompt, listPrompts } from '@/lib/chat/prompts';
 import { REFINE_PROMPT_TOOL } from '@/lib/chat/refine-prompt';
 import { POST } from './route';
+
+const { tokenLimitRefusal: mockRefusal } = jest.requireMock<{ tokenLimitRefusal: jest.Mock }>(
+  '@/lib/token-limits/refusal'
+);
 
 const { getSessionFromRequest: mockGetSession } = jest.requireMock<{
   getSessionFromRequest: jest.Mock;
@@ -163,5 +168,14 @@ describe('POST /api/chat/prompt-libraries/:id/prompts/refine', () => {
     expect(response.status).toBe(502);
     expect((await response.json()).error).toMatch(/could not refine/);
     expect(mockRecord).not.toHaveBeenCalled();
+  });
+
+  it('is refused for a person at their token limit, without asking the model', async () => {
+    const id = await newLibrary();
+    mockRefusal.mockResolvedValueOnce('You have reached the weekly token limit.');
+    const response = await ask(id, { body: 'Review the file.' });
+    expect(response.status).toBe(429);
+    expect(await response.json()).toMatchObject({ code: 'token-limit' });
+    expect(complete).not.toHaveBeenCalled();
   });
 });

@@ -29,8 +29,8 @@ import { cipherFor } from '@/lib/chat/chat-keys';
 import { insertMessage } from '@/lib/chat/messages';
 import { createProject } from '@/lib/chat/projects';
 import { appendUserMemory } from '@/lib/chat/user-memory';
-import { GET } from './route';
-import { GET as profileGET } from './profile/route';
+import { GET, POST } from './route';
+import { GET as profileGET, POST as profilePOST } from './profile/route';
 
 const { getSessionFromRequest: mockGetSession } = jest.requireMock<{
   getSessionFromRequest: jest.Mock;
@@ -164,6 +164,49 @@ describe('the data export zip', () => {
   it('is refused when signed out', async () => {
     mockGetSession.mockResolvedValueOnce(null);
     expect((await GET(new NextRequest('http://test.local/api/account/export'))).status).toBe(401);
+  });
+});
+
+describe('an export fetched ahead of a tap (the share sheet in a home-screen app)', () => {
+  const ahead = (path: string) =>
+    new NextRequest(`http://test.local${path}`, { headers: { 'x-renkei-prefetch': '1' } });
+
+  it('hands over the file and is audited as prepared, not as exported', async () => {
+    const zip = await GET(ahead('/api/account/export'));
+    const profile = await profileGET(ahead('/api/account/export/profile'));
+    expect(zip.status).toBe(200);
+    expect(profile.status).toBe(200);
+    expect(mockAudit.mock.calls.map(([event]) => [event.action, event.details.format])).toEqual([
+      ['user.data_export_prepared', 'zip'],
+      ['user.data_export_prepared', 'profile'],
+    ]);
+  });
+
+  it('is audited when the tap that takes it is reported', async () => {
+    const taken = (path: string) => new NextRequest(`http://test.local${path}`, { method: 'POST' });
+    expect((await POST(taken('/api/account/export'))).status).toBe(204);
+    expect((await profilePOST(taken('/api/account/export/profile'))).status).toBe(204);
+    expect(mockAudit.mock.calls.map(([event]) => event)).toEqual([
+      {
+        actorSubject: me,
+        action: 'user.data_exported',
+        details: { format: 'zip', via: 'share-sheet' },
+      },
+      {
+        actorSubject: me,
+        action: 'user.data_exported',
+        details: { format: 'profile', via: 'share-sheet' },
+      },
+    ]);
+  });
+
+  it('refuses the report when signed out', async () => {
+    mockGetSession.mockResolvedValueOnce(null);
+    const response = await POST(
+      new NextRequest('http://test.local/api/account/export', { method: 'POST' })
+    );
+    expect(response.status).toBe(401);
+    expect(mockAudit).not.toHaveBeenCalled();
   });
 });
 

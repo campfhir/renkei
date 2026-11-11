@@ -13,7 +13,7 @@
  */
 
 import { configCacheTtlMs, getDataStore, type LlmModelConfigRecord } from '@renkei/db';
-import { decrypt, loadKeyring } from '@renkei/crypto';
+import { AAD_PURPOSE, aadFor, decryptBoundValue, loadKeyring } from '@renkei/crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { LlmProvider } from './contract';
@@ -169,7 +169,11 @@ function apiKeyOf(row: ModelRow): Result<string, ResolveLlmError> {
   if (!row.encrypted_secrets) {
     return err('CONFIG_ERROR' as const, { message: 'The model has no API key stored.' });
   }
-  const secretsResult = decrypt(row.encrypted_secrets, keyResult.val);
+  const secretsResult = decryptBoundValue(
+    row.encrypted_secrets,
+    keyResult.val,
+    aadFor(AAD_PURPOSE.llmModelKey)
+  );
   if (!secretsResult.ok) {
     return err('CONFIG_ERROR' as const, { message: 'The stored API key cannot be decrypted.' });
   }

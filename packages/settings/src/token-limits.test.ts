@@ -147,6 +147,24 @@ describe('resets told in the organization’s time zone', () => {
     expect(isTimeZone('')).toBe(false);
   });
 
+  it('a refusal shown to someone else leaves the figures out', () => {
+    const block = {
+      period: 'week' as const,
+      llmModelId: null,
+      limit: 1000,
+      used: 1000,
+      resetsAt: utc('2026-11-16T05:00:00'),
+      timeZone: NEW_YORK,
+    };
+    const message = tokenLimitMessage(block, {
+      whose: "This agent's owner has",
+      showUsage: false,
+    });
+    expect(message).toContain("This agent's owner has reached the weekly token limit. It resets");
+    expect(message).not.toMatch(/\d+(\.\d+)?[kKmM]? of /);
+    expect(tokenLimitMessage(block)).toMatch(/ of /);
+  });
+
   it('a refusal names the reset in that zone', () => {
     expect(
       tokenLimitMessage({

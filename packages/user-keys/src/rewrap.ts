@@ -3,7 +3,8 @@
  * TOKEN_ENCRYPTION_KEY"): every value the deployment keys seal — connector
  * secrets, model API keys, OIDC client secrets, the VAPID private key,
  * knowledge chunks, a code project's environment secrets and registry
- * credentials — is re-encrypted under the CURRENT key of its ring. A ring
+ * credentials, a remote MCP server's client secret and the delegate's
+ * signing key — is re-encrypted under the CURRENT key of its ring. A ring
  * is `<current>,<previous>,...` (`TOKEN_ENCRYPTION_KEYS` and the like,
  * packages/crypto secretbox.ts): the previous key opens what is still
  * under it, the current key seals the result as a `v2` envelope naming
@@ -16,6 +17,18 @@
  * it is — that is a key that was dropped too early, and the fix is to put
  * it back behind the current one, not to lose the row.
  *
+ * `--aad` mode (audit R-04, "secretbox envelopes carry no associated data"):
+ * the same walk, but every row of a target that has a purpose
+ * (`RewrapTarget.aad`) is re-sealed as a `v3` envelope BOUND to that purpose
+ * (and its row where the writer binds one), whatever it was before: legacy
+ * `v1`/`v2`, or `v3` under an older key. It is the operator step that makes
+ * rows sealed before the AAD release relocation-proof; run it once after
+ * every service runs the AAD release (older readers cannot open `v3`), then
+ * optionally set RENKEI_REQUIRE_AAD=1. Targets without a purpose
+ * (sandbox secrets, registry credentials, VAPID) are left alone in this
+ * mode. A plain rotation keeps whatever binding a row has: a `v3` row is
+ * opened and re-sealed under its own AAD, a legacy row stays legacy.
+ *
  * The transient sealed files the sandbox worker keeps on its own disk
  * (unlocked secret keys, browser sessions — each under a key derived from
  * the root for one owner, for a window of hours) are not here: they expire
@@ -27,10 +40,13 @@
 
 import { getDataStore, type SealedEnvelopeTable } from '@renkei/db';
 import {
+  AAD_PURPOSE,
+  aadFor,
   contentEncryptionKey,
   decrypt,
   encrypt,
   envelopeKeyId,
+  isBoundEnvelope,
   keyId,
   loadKeyring,
   type Keyring,
@@ -59,6 +75,11 @@ export interface RewrapTarget {
   /** What precedes the secretbox envelope in the stored value (`renc1:`, `env1.`, ...). */
   prefix: string;
   ring: RingName;
+  /**
+   * The associated data this column's writer binds, from the row's id
+   * columns; absent for columns that still seal without it.
+   */
+  aad?: (id: readonly string[]) => string;
 }
 
 /** Every column the deployment keys seal, by the `encrypt(` callers that write it. */
@@ -71,6 +92,7 @@ export const REWRAP_TARGETS: readonly RewrapTarget[] = [
     column: 'encrypted_secrets',
     prefix: '',
     ring: 'token',
+    aad: (id) => aadFor(AAD_PURPOSE.connectorConfig, id[0]),
   },
   // apps/web/app/api/admin/llm-models: a model's API key.
   {
@@ -79,9 +101,18 @@ export const REWRAP_TARGETS: readonly RewrapTarget[] = [
     column: 'encrypted_secrets',
     prefix: '',
     ring: 'token',
+    // Purpose only: the create route may copy a sibling row's blob.
+    aad: () => aadFor(AAD_PURPOSE.llmModelKey),
   },
   // apps/web/lib/tenant-operations.ts: the OIDC client secret.
-  { table: 'oidc_config', idColumns: ['id'], column: 'client_secret', prefix: '', ring: 'token' },
+  {
+    table: 'oidc_config',
+    idColumns: ['id'],
+    column: 'client_secret',
+    prefix: '',
+    ring: 'token',
+    aad: () => aadFor(AAD_PURPOSE.oidcClientSecret),
+  },
   // packages/knowledge: chunk bodies, `renc1:` + envelope (packages/crypto content.ts).
   {
     table: 'knowledge_chunks',
@@ -89,6 +120,8 @@ export const REWRAP_TARGETS: readonly RewrapTarget[] = [
     column: 'content',
     prefix: 'renc1:',
     ring: 'content',
+    // Purpose only: the chunk id is assigned after sealing.
+    aad: () => aadFor(AAD_PURPOSE.knowledgeChunk),
   },
   // apps/worker-sandbox/src/env-secrets.ts: a code project's environment values.
   {
@@ -105,6 +138,25 @@ export const REWRAP_TARGETS: readonly RewrapTarget[] = [
     column: 'registry_sealed',
     prefix: 'reg1.',
     ring: 'sandbox',
+  },
+  // apps/web/app/api/admin/mcp-servers and the delegate's dynamic client
+  // registration (apps/worker-delegate/src/mcp.ts): a remote MCP server's
+  // OAuth client secret, read by the delegate on every token refresh.
+  {
+    table: 'mcp_servers',
+    idColumns: ['id'],
+    column: 'encrypted_client_secret',
+    prefix: '',
+    ring: 'token',
+  },
+  // apps/worker-delegate/src/signing.ts: the private half of the instance
+  // list's signing key; unreadable, the delegate cannot sign the list.
+  {
+    table: 'delegate_signing_keys',
+    idColumns: ['id'],
+    column: 'sealed_private_key',
+    prefix: '',
+    ring: 'token',
   },
 ];
 
@@ -124,6 +176,8 @@ export interface RewrapReport {
 
 export interface RewrapOptions {
   dryRun?: boolean;
+  /** Re-seal every row of a target that has a purpose as a `v3` envelope bound to it (see the header). */
+  aad?: boolean;
   log?: (line: string) => void;
 }
 
@@ -148,18 +202,45 @@ export function rewrapRingsFromEnv(
   return { ok: true, val: { token: token.val, content: content.val, sandbox: sandbox.val } };
 }
 
-/** Whether a stored value is already under the ring's current key. */
-export function isCurrent(stored: string, prefix: string, ring: Keyring): boolean {
+/**
+ * Whether a stored value is already as the run wants it: under the ring's
+ * current key and, in `--aad` mode, bound (`v3`).
+ */
+export function isCurrent(
+  stored: string,
+  prefix: string,
+  ring: Keyring,
+  options: { aad?: boolean } = {}
+): boolean {
   if (!stored.startsWith(prefix)) return false;
-  return envelopeKeyId(stored.slice(prefix.length)) === keyId(ring);
+  const envelope = stored.slice(prefix.length);
+  if (envelopeKeyId(envelope) !== keyId(ring)) return false;
+  return options.aad ? isBoundEnvelope(envelope) : true;
 }
 
-/** The value under the current key, or null when no key of the ring opens it. */
-export function rewrapValue(stored: string, prefix: string, ring: Keyring): string | null {
+/**
+ * The value under the current key, or null when no key of the ring opens it.
+ * `aad` is the associated data of the row's purpose, when it has one:
+ * a `v3` value opens only under it and is sealed again under it; a legacy
+ * value is sealed legacy unless `bind` asks for it to be bound.
+ */
+export function rewrapValue(
+  stored: string,
+  prefix: string,
+  ring: Keyring,
+  aad?: string,
+  bind = false
+): string | null {
   if (!stored.startsWith(prefix)) return null;
-  const opened = decrypt(stored.slice(prefix.length), ring);
+  const envelope = stored.slice(prefix.length);
+  if (isBoundEnvelope(envelope)) {
+    if (aad === undefined) return null;
+    const opened = decrypt(envelope, ring, aad);
+    return opened.ok ? prefix + encrypt(opened.val, ring, aad) : null;
+  }
+  const opened = decrypt(envelope, ring);
   if (!opened.ok) return null;
-  return prefix + encrypt(opened.val, ring);
+  return prefix + encrypt(opened.val, ring, bind ? aad : undefined);
 }
 
 /** One target, walked in key order in batches of REWRAP_BATCH; only rows not yet under the current key are read. */
@@ -171,7 +252,11 @@ export async function rewrapTarget(
   const counts: RewrapCounts = { rewrapped: 0, skipped: 0, unreadable: [] };
   const log = options.log ?? (() => undefined);
   const store = getDataStore().sealedEnvelopes;
-  const notCurrent = `${target.prefix}v2.${keyId(ring)}.%`;
+  if (options.aad && !target.aad) return counts;
+  // In --aad mode a row is done only once it is a v3 under the current key;
+  // otherwise v2 under it is done, and a v3 under it (whose bound form the
+  // pattern cannot exclude) is skipped below.
+  const notCurrent = `${target.prefix}${options.aad ? 'v3' : 'v2'}.${keyId(ring)}.%`;
   let last: string[] | null = null;
   for (;;) {
     const page = await store.pageNotLike(target, notCurrent, last, REWRAP_BATCH);
@@ -180,7 +265,9 @@ export async function rewrapTarget(
       const stored = row.value;
       last = row.id;
       const idOf = row.id.join(':');
-      const next = rewrapValue(stored, target.prefix, ring);
+      if (!options.aad && isCurrent(stored, target.prefix, ring)) continue;
+      const aad = target.aad?.(row.id);
+      const next = rewrapValue(stored, target.prefix, ring, aad, options.aad === true);
       if (next === null) {
         counts.skipped += 1;
         counts.unreadable.push(idOf);
@@ -250,6 +337,11 @@ export async function rewrapAll(
   };
   for (const target of REWRAP_TARGETS) {
     const name = `${target.table}.${target.column}`;
+    if (options.aad && !target.aad) {
+      log(`${name}: no associated-data purpose, left as is`);
+      report.targets[name] = { rewrapped: 0, skipped: 0, unreadable: [] };
+      continue;
+    }
     log(`${name} (${target.ring} ring, current key ${keyId(rings[target.ring])})`);
     const counts = await rewrapTarget(target, rings[target.ring], options);
     report.targets[name] = counts;
@@ -258,7 +350,9 @@ export async function rewrapAll(
     );
   }
   log(`platform_settings.vapid_keys (token ring)`);
-  report.vapid = await rewrapVapid(rings.token, options);
+  report.vapid = options.aad
+    ? { rewrapped: 0, skipped: 0, unreadable: [] }
+    : await rewrapVapid(rings.token, options);
   log(
     `  ${options.dryRun ? 'would rewrap' : 'rewrapped'} ${report.vapid.rewrapped}, unreadable ${report.vapid.skipped}`
   );

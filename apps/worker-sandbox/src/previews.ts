@@ -38,6 +38,7 @@ import {
   previewNeighbourEnvironment,
   previewPortPool,
   stripHopByHop,
+  upstreamRequestHeaders,
   type PreviewPortBinding,
   type PreviewPortRange,
   type PreviewStatus,
@@ -468,7 +469,7 @@ export class PreviewManager {
     path: string
   ): void {
     this.touch(preview.id);
-    const headers = stripHopByHop(request.headers);
+    const headers = upstreamRequestHeaders(request.headers);
     headers.host = `127.0.0.1:${port}`;
     // A reverse proxy is the feature: the host is this worker's own
     // loopback and the port one the pool handed the preview — neither is

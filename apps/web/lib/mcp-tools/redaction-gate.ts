@@ -52,9 +52,15 @@ function isTextBlock(block: unknown): block is { type: 'text'; text: string } {
   );
 }
 
+const MAX_DEPTH = 64;
+
 /**
- * Rewrite the text blocks of a tool result, leaving everything else — shape,
- * ordering, isError, unknown block types — exactly as the tool produced it.
+ * Rewrite a tool result: the text blocks of `content`, and every string
+ * inside `structuredContent` and `_meta` — the two other places a result
+ * carries data a client can read, which card-bearing tools fill with the
+ * real rows (a terse text summary beside the full records). Shape,
+ * ordering, isError, object keys and unknown block types are left exactly
+ * as the tool produced them.
  *
  * Non-text blocks pass through untouched because there is nothing honest to do
  * with them: an identifier inside an image or a binary resource is not
@@ -64,28 +70,50 @@ function isTextBlock(block: unknown): block is { type: 'text'; text: string } {
  * "unfiltered" rather than "mangled".
  */
 function redactResult(result: unknown, context: RedactionContext): unknown {
-  if (typeof result !== 'object' || result === null || !('content' in result)) return result;
-  const { content } = result;
-  if (!Array.isArray(content)) return result;
+  if (typeof result !== 'object' || result === null) return result;
 
   const counts: Record<string, number> = {};
   let changed = false;
 
-  const rewritten = content.map((block: unknown) => {
-    if (!isTextBlock(block)) return block;
-    const outcome = redactText(block.text, {
+  const redactString = (text: string): string => {
+    const outcome = redactText(text, {
       policy: context.policy,
       pseudonymizer: context.pseudonymizer,
       detectors: context.detectors,
       mrnFormats: context.mrnFormats,
     });
-    if (outcome.text === block.text) return block;
+    if (outcome.text === text) return text;
     changed = true;
     for (const label of Object.keys(outcome.counts)) {
       counts[label] = (counts[label] ?? 0) + (outcome.counts[label] ?? 0);
     }
-    return { ...block, text: outcome.text };
-  });
+    return outcome.text;
+  };
+
+  /** Every string leaf of a JSON value; a value too deep to walk is withheld, not passed. */
+  const redactValue = (value: unknown, depth: number): unknown => {
+    if (typeof value === 'string') return redactString(value);
+    if (typeof value !== 'object' || value === null) return value;
+    if (depth > MAX_DEPTH) throw new Error('result is nested too deeply to filter');
+    if (Array.isArray(value)) return value.map((item: unknown) => redactValue(item, depth + 1));
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, redactValue(item, depth + 1)])
+    );
+  };
+
+  const rewritten: Record<string, unknown> = { ...result };
+
+  if ('content' in result && Array.isArray(result.content)) {
+    rewritten.content = result.content.map((block: unknown) => {
+      if (!isTextBlock(block)) return block;
+      const text = redactString(block.text);
+      return text === block.text ? block : { ...block, text };
+    });
+  }
+  for (const field of ['structuredContent', '_meta']) {
+    const value = rewritten[field];
+    if (value !== undefined) rewritten[field] = redactValue(value, 0);
+  }
 
   if (!changed) return result;
   // Counts only — the labels and how many, never a value. A log line naming
@@ -97,7 +125,7 @@ function redactResult(result: unknown, context: RedactionContext): unknown {
       .map(([label, n]) => `${label}=${n}`)
       .join(' '),
   });
-  return { ...result, content: rewritten };
+  return rewritten;
 }
 
 export function withRedaction(server: McpServer, context: RedactionContext): McpServer {

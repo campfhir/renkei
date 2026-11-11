@@ -14,6 +14,8 @@
  *   - depth: chains stop at the org's agentMaxChainDepth.
  *   - daily cap: runs created in the last 24h stop at agentMaxRunsPerDay —
  *     the brake on a runaway trigger, priced per org.
+ *   - per-owner and per-trigger ceilings beside it, as fractions of the org
+ *     cap, so one member or one leaked API key cannot spend everyone's day.
  *   - token limit: the owner's weekly or monthly token limit, or the run's
  *     model's own (@renkei/settings' token-limits). Checked here, when the
  *     run is made, and not again: a run already queued or going finishes.
@@ -67,6 +69,24 @@ export type CreateAgentRunError =
   | 'DB_ERROR'
   | 'QUEUE_ERROR';
 
+/** Share of the org's daily cap one owner's runs may take, and the least that allows. */
+export const OWNER_RUN_SHARE = 0.5;
+export const OWNER_RUN_FLOOR = 20;
+/**
+ * The same for one event or API trigger. Schedules (bounded by their own
+ * cadence) and manual runs (a person) are not held to it.
+ */
+export const TRIGGER_RUN_SHARE = 0.25;
+export const TRIGGER_RUN_FLOOR = 10;
+
+export function ownerDailyRunCap(orgCap: number): number {
+  return Math.max(OWNER_RUN_FLOOR, Math.ceil(orgCap * OWNER_RUN_SHARE));
+}
+
+export function triggerDailyRunCap(orgCap: number): number {
+  return Math.max(TRIGGER_RUN_FLOOR, Math.ceil(orgCap * TRIGGER_RUN_SHARE));
+}
+
 export async function createAgentRun(
   producer: QueueProducer,
   input: CreateAgentRunInput,
@@ -102,12 +122,45 @@ export async function createAgentRun(
     });
   }
 
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const ownerCap = ownerDailyRunCap(settings.agentMaxRunsPerDay);
+  const ownerCount = await wrapAsync(
+    () => runs.countCreatedSince(since, { ownerSubject: input.ownerSubject }),
+    'DB_ERROR' as const
+  );
+  if (!ownerCount.ok) return ownerCount;
+  if (ownerCount.val >= ownerCap) {
+    return err('DAILY_RUN_CAP' as const, {
+      message: `Runs owned by this account have reached ${ownerCap} per day.`,
+    });
+  }
+  if (input.triggerId && (input.triggerKind === 'event' || input.triggerKind === 'api')) {
+    const triggerCap = triggerDailyRunCap(settings.agentMaxRunsPerDay);
+    const triggerCount = await wrapAsync(
+      () => runs.countCreatedSince(since, { triggerId: input.triggerId ?? undefined }),
+      'DB_ERROR' as const
+    );
+    if (!triggerCount.ok) return triggerCount;
+    if (triggerCount.val >= triggerCap) {
+      return err('DAILY_RUN_CAP' as const, {
+        message: `This trigger has reached ${triggerCap} runs per day.`,
+      });
+    }
+  }
   // The owner's spend, whoever or whatever asked: an agent's tokens are its
   // owner's (llm_calls.subject), so the owner's limit is the one it runs under.
   const block = await checkTokenLimit(input.ownerSubject, input.llmModelId);
   if (block) {
     return err('TOKEN_LIMIT' as const, {
-      message: tokenLimitMessage(block, { whose: "This agent's owner has" }),
+      // How much the owner has used is the owner's to see: someone else who
+      // started the run (an access grantee, an API caller) is told only that
+      // the limit is reached.
+      message: tokenLimitMessage(block, {
+        whose: "This agent's owner has",
+        showUsage: input.triggeredBySubject
+          ? input.triggeredBySubject === input.ownerSubject
+          : input.triggerKind !== 'api',
+      }),
     });
   }
 

@@ -112,6 +112,8 @@ export interface CodeToolBinding {
   repoProvider: string;
   /** The deployment's origin, for the host's app reader when a token needs refreshing. */
   origin: string;
+  /** The organization's preview host, when previews are served on one (preview-host.ts). */
+  previewHost?: string;
   /**
    * Bring the checkout back when the worker says it is gone (lib/code/turn.ts):
    * clone it again, or adopt one another turn already cloned. Absent, a
@@ -571,7 +573,12 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
   /** Who a commit made here is by: the person chatting, as their git host knows them. */
   const authorOf = async (context: LocalToolContext) => {
     const credential = await resolveWorkspaceGitAccess(
-      { subject: context.subject, origin: binding.origin, provider: binding.repoProvider },
+      {
+        subject: context.subject,
+        origin: binding.origin,
+        provider: binding.repoProvider,
+        repo: binding.repoFullName,
+      },
       { write: false }
     );
     const username = typeof credential === 'string' ? '' : credential.username;
@@ -1121,6 +1128,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
             subject: context.subject,
             origin: binding.origin,
             provider: binding.repoProvider,
+            repo: binding.repoFullName,
           },
           { write: true }
         );
@@ -1164,6 +1172,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
             subject: context.subject,
             origin: binding.origin,
             provider: binding.repoProvider,
+            repo: binding.repoFullName,
           },
           { write: false }
         );
@@ -1205,9 +1214,16 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       ref,
       origin: binding.origin,
       repoProvider: binding.repoProvider,
+      repoFullName: binding.repoFullName,
       failed,
     }),
-    ...previewTools({ target, ref, origin: binding.origin, failed }),
+    ...previewTools({
+      target,
+      ref,
+      origin: binding.origin,
+      ...(binding.previewHost ? { previewHost: binding.previewHost } : {}),
+      failed,
+    }),
     ...pipelineVariableTools({
       repoProvider: binding.repoProvider,
       repoFullName: binding.repoFullName,

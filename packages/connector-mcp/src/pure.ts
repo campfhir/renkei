@@ -241,6 +241,20 @@ export interface McpListedTool {
   readOnly: boolean;
 }
 
+/**
+ * A remote server writes its own tool descriptions, and a description goes
+ * into every model's context that can see the tool: bounded, so a hostile or
+ * careless server cannot spend the window or bury an instruction in a wall
+ * of text.
+ */
+export const MAX_TOOL_DESCRIPTION_CHARS = 2_000;
+
+function clipDescription(text: string): string {
+  return text.length > MAX_TOOL_DESCRIPTION_CHARS
+    ? `${text.slice(0, MAX_TOOL_DESCRIPTION_CHARS - 1)}…`
+    : text;
+}
+
 export function parseListedTool(value: unknown): McpListedTool | null {
   if (!isRecord(value) || typeof value.name !== 'string' || !value.name) return null;
   const schema = isRecord(value.inputSchema) ? value.inputSchema : { type: 'object' };
@@ -249,7 +263,7 @@ export function parseListedTool(value: unknown): McpListedTool | null {
   const description = typeof value.description === 'string' ? value.description : title;
   return {
     name: value.name,
-    description,
+    description: clipDescription(description),
     inputSchema: schema,
     readOnly: annotations.readOnlyHint === true,
   };
@@ -264,7 +278,7 @@ export function parseStoredTool(value: unknown): McpListedTool | null {
   if (!isRecord(value) || typeof value.name !== 'string' || !value.name) return null;
   return {
     name: value.name,
-    description: typeof value.description === 'string' ? value.description : '',
+    description: typeof value.description === 'string' ? clipDescription(value.description) : '',
     inputSchema: isRecord(value.inputSchema) ? value.inputSchema : { type: 'object' },
     readOnly: value.readOnly === true,
   };

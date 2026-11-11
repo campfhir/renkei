@@ -13,6 +13,7 @@ import { collectExportData } from '@/lib/data-portability/collect';
 import { exportFileName, exportFiles } from '@/lib/data-portability/export-bundle';
 import { attachmentDisposition } from '@/lib/data-portability/http';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { isDownloadPrefetch } from '@/lib/download-prefetch';
 
 export const maxDuration = 300;
 
@@ -28,9 +29,13 @@ export async function GET(request: NextRequest): Promise<Response> {
     compression: 'DEFLATE',
     compressionOptions: { level: 6 },
   });
+  // A fetch ahead of a tap (the share sheet in a home-screen app) is audited
+  // as what it is: the export left the server and reached this person's
+  // device, and whether they kept it is not known until the tap's POST
+  // below. A plain download is the export itself.
   recordAuditEvent({
     actorSubject: session.subject,
-    action: 'user.data_exported',
+    action: isDownloadPrefetch(request) ? 'user.data_export_prepared' : 'user.data_exported',
     details: {
       format: 'zip',
       chats: data.chats.length,
@@ -47,4 +52,16 @@ export async function GET(request: NextRequest): Promise<Response> {
       'cache-control': 'no-store',
     },
   });
+}
+
+/** The tap that took an export fetched ahead of it (lib/download-prefetch.ts): the audit event, nothing else. */
+export async function POST(request: NextRequest): Promise<Response> {
+  const ready = await chatRequestContext(request);
+  if (!ready.ok) return ready.response;
+  recordAuditEvent({
+    actorSubject: ready.context.session.subject,
+    action: 'user.data_exported',
+    details: { format: 'zip', via: 'share-sheet' },
+  });
+  return new Response(null, { status: 204 });
 }

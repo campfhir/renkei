@@ -200,6 +200,7 @@ export const EXPECTED_MIGRATIONS = [
   '174-queue-job-indexes',
   '175-token-limits',
   '176-chat-project-model',
+  '177-audit-events-append-only',
 ];
 
 export interface MigrationStatus {

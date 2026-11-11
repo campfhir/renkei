@@ -51,7 +51,9 @@ updates:
       prefix: docker
 
   # The images both compose files pull (postgres, azurite, the socket
-  # proxy), likewise pinned to digests.
+  # proxy), likewise pinned to digests. Directory / covers
+  # docker-compose.yaml and docker-compose.yml; a first-party image pinned
+  # as name:tag@sha256:… would be bumped here too.
   - package-ecosystem: docker-compose
     directory: /
     schedule:

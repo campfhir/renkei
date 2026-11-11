@@ -297,17 +297,25 @@ export function formatResetAt(at: Date, timeZone = 'UTC'): string {
  */
 export function tokenLimitMessage(
   block: TokenLimitBlock,
-  options: { modelLabel?: string | null; whose?: string } = {}
+  options: {
+    modelLabel?: string | null;
+    whose?: string;
+    /** False leaves the figures out: for a reader who is not the person whose limit it is. */
+    showUsage?: boolean;
+  } = {}
 ): string {
   const whose = options.whose ?? 'You have';
   const period = block.period === 'week' ? 'weekly' : 'monthly';
-  const used = `${formatTokenCount(block.used)} of ${formatTokenCount(block.limit)}`;
+  const used =
+    options.showUsage === false
+      ? ''
+      : ` (${formatTokenCount(block.used)} of ${formatTokenCount(block.limit)})`;
   const reset = `It resets ${formatResetAt(block.resetsAt, block.timeZone)}.`;
   if (block.llmModelId !== null) {
     const model = options.modelLabel ? `the model ${options.modelLabel}` : 'this model';
-    return `${whose} reached the ${period} token limit for ${model} (${used}). ${reset} Another model can still be used.`;
+    return `${whose} reached the ${period} token limit for ${model}${used}. ${reset} Another model can still be used.`;
   }
-  return `${whose} reached the ${period} token limit (${used}). ${reset} An operator can grant a boost.`;
+  return `${whose} reached the ${period} token limit${used}. ${reset} An operator can grant a boost.`;
 }
 
 async function readPolicy(): Promise<Result<TokenLimitPolicy, 'DB_ERROR'>> {

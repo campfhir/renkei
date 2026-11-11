@@ -17,9 +17,15 @@ export async function PUT(
   { params }: { params: Promise<{ subject: string }> }
 ): Promise<NextResponse> {
   const { subject: encoded } = await params;
-  const subject = decodeURIComponent(encoded);
   const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  // After the guard, and never a throw: a malformed escape is "no such person".
+  let subject: string;
+  try {
+    subject = decodeURIComponent(encoded);
+  } catch {
+    return NextResponse.json({ error: 'No such person' }, { status: 404 });
+  }
 
   const body: unknown = await request.json().catch(() => null);
   if (!isRecord(body) || typeof body.exempt !== 'boolean') {

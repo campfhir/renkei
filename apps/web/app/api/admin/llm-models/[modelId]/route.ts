@@ -11,10 +11,12 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDataStore } from '@renkei/db';
-import { decrypt, encrypt, loadKeyring } from '@renkei/crypto';
+import { AAD_PURPOSE, aadFor, decryptBoundValue, encrypt, loadKeyring } from '@renkei/crypto';
 import { invalidateLlmCache } from '@renkei/agent-llm';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { parseModelPayload } from '@/lib/agents/llm-model-payload';
+import { checkServiceEndpoint } from '@/lib/service-endpoint';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
 import { who } from '@/lib/log-actor';
 import { patchChatModelPrefs, subjectsPreferringChatModel } from '@renkei/user-prefs';
@@ -31,6 +33,12 @@ export async function PUT(
   const body: unknown = await request.json().catch(() => null);
   const parsed = parseModelPayload(body);
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
+  if (parsed.baseUrl) {
+    const endpointVerdict = await checkServiceEndpoint(parsed.baseUrl);
+    if (!endpointVerdict.ok) {
+      return NextResponse.json({ error: endpointVerdict.error }, { status: 400 });
+    }
+  }
 
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
@@ -58,7 +66,11 @@ export async function PUT(
   // rows sharing one connection can be re-pointed without retyping it.
   let encryptedSecrets = existing.encryptedSecrets;
   if (parsed.apiKey) {
-    encryptedSecrets = encrypt(JSON.stringify({ apiKey: parsed.apiKey }), keyResult.val);
+    encryptedSecrets = encrypt(
+      JSON.stringify({ apiKey: parsed.apiKey }),
+      keyResult.val,
+      aadFor(AAD_PURPOSE.llmModelKey)
+    );
   } else if (parsed.apiKeyFromId && parsed.apiKeyFromId !== modelId) {
     const source = await models.get(parsed.apiKeyFromId);
     if (!source?.encryptedSecrets) {
@@ -68,7 +80,10 @@ export async function PUT(
       );
     }
     encryptedSecrets = source.encryptedSecrets;
-  } else if (!encryptedSecrets || !decrypt(encryptedSecrets, keyResult.val).ok) {
+  } else if (
+    !encryptedSecrets ||
+    !decryptBoundValue(encryptedSecrets, keyResult.val, aadFor(AAD_PURPOSE.llmModelKey)).ok
+  ) {
     return NextResponse.json({ error: 'apiKey is required (none stored yet)' }, { status: 400 });
   }
 
@@ -88,6 +103,21 @@ export async function PUT(
   }
 
   invalidateLlmCache();
+  recordAuditEvent({
+    actorSubject: session.subject,
+    action: 'llm_model.configured',
+    targetKind: 'llm_model',
+    targetLabel: parsed.label,
+    details: {
+      modelId,
+      provider: parsed.provider,
+      model: parsed.model,
+      baseUrl: parsed.baseUrl,
+      keyReplaced: Boolean(parsed.apiKey || parsed.apiKeyFromId),
+      isDefault: parsed.isDefault,
+      enabled: parsed.enabled,
+    },
+  });
   return NextResponse.json({ id: modelId });
 }
 
@@ -159,5 +189,12 @@ export async function DELETE(
     people,
   });
 
+  recordAuditEvent({
+    actorSubject: session.subject,
+    action: 'llm_model.deleted',
+    targetKind: 'llm_model',
+    targetLabel: existing.label,
+    details: { modelId, replacementId: replacement?.id ?? null },
+  });
   return NextResponse.json({ deleted: true, notified: people.length });
 }

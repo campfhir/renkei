@@ -38,6 +38,7 @@ import {
   type Outgoing,
   type ToolResultBlock,
 } from './widget-card.model';
+import { openableWidgetLink } from '@/lib/widget-link';
 
 export default function WidgetCard({
   chatId,
@@ -122,9 +123,12 @@ export default function WidgetCard({
             effect.state
           );
           return;
-        case 'open-link':
-          window.open(effect.url, '_blank', 'noopener');
+        case 'open-link': {
+          // Only schemes a card has a reason to open (lib/widget-link.ts).
+          const url = openableWidgetLink(effect.url);
+          if (url) window.open(url, '_blank', 'noopener');
           return;
+        }
         case 'model-context':
           // Best-effort, same as the card's own bridge treats it: a note
           // the server could not write at all is simply lost.

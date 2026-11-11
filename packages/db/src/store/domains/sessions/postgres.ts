@@ -13,7 +13,7 @@ export function postgresSessions(db: () => Kysely<DB>): SessionStore {
     async find(id) {
       const row = await db()
         .selectFrom('sessions')
-        .select(['id', 'subject', 'roles', 'expires_at', 'last_used_at'])
+        .select(['id', 'subject', 'roles', 'expires_at', 'created_at', 'last_used_at'])
         .where('id', '=', id)
         .executeTakeFirst();
       if (!row) return null;
@@ -22,6 +22,7 @@ export function postgresSessions(db: () => Kysely<DB>): SessionStore {
         subject: row.subject,
         roles: row.roles,
         expiresAt: new Date(row.expires_at),
+        createdAt: new Date(row.created_at),
         lastUsedAt: new Date(row.last_used_at),
       };
     },

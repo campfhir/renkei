@@ -16,12 +16,14 @@ import {
   setOrgSettings,
   isActApprovalPolicy,
   isLogLevel,
+  getPublicBaseUrl,
   ACT_APPROVAL_POLICIES,
   LOG_LEVELS,
   type ActApprovalPolicy,
   type OrgSettings,
   type LogLevel,
 } from '@renkei/settings';
+import { parsePreviewHost } from '@/lib/code/preview-host';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { logger } from '@/lib/logger';
@@ -142,7 +144,8 @@ type EditableKey =
   | 'logLevel'
   | 'agentActStepsRequireApproval'
   | 'organizationName'
-  | 'admanagerProductName';
+  | 'admanagerProductName'
+  | 'codePreviewHost';
 type EditableValue = boolean | number | string | LogLevel | ActApprovalPolicy;
 
 function editable(settings: OrgSettings): Record<EditableKey, EditableValue> {
@@ -190,6 +193,7 @@ function editable(settings: OrgSettings): Record<EditableKey, EditableValue> {
     sandboxServicePids: settings.sandboxServicePids,
     sandboxWorkspacesDebug: settings.sandboxWorkspacesDebug,
     admanagerProductName: settings.admanagerProductName,
+    codePreviewHost: settings.codePreviewHost,
   };
 }
 
@@ -287,6 +291,20 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     if (trimmed !== before.admanagerProductName) {
       updates.admanagerProductName = trimmed;
       changed.admanagerProductName = { from: before.admanagerProductName, to: trimmed };
+    }
+  }
+
+  if ('codePreviewHost' in submitted) {
+    const value = submitted.codePreviewHost;
+    if (typeof value !== 'string') {
+      return NextResponse.json({ error: 'codePreviewHost must be a host name' }, { status: 400 });
+    }
+    // Empty turns it off; otherwise a host name that is not the app's own.
+    const parsed = parsePreviewHost(value, getPublicBaseUrl());
+    if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
+    if (parsed.host !== before.codePreviewHost) {
+      updates.codePreviewHost = parsed.host;
+      changed.codePreviewHost = { from: before.codePreviewHost, to: parsed.host };
     }
   }
 

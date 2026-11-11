@@ -478,7 +478,10 @@ export async function searchKnowledge(
       ? options.maxDistance
       : null;
 
-  let weak = 0;
+  // Rows the vector proposed beyond the relevance cutoff. They are counted
+  // only after the access gate, so the figure never includes a document the
+  // reader may not see.
+  const weakRows: (typeof rowsResult.val)[number][] = [];
   const seenDocuments = new Set<string>();
   const candidates = rowsResult.val.filter((row) => {
     if (
@@ -492,7 +495,7 @@ export async function searchKnowledge(
     // match vouches for a row whatever its distance — that IS the case
     // the lexical arm exists for.
     if (maxDistance !== null && row.lexicalHit !== true && row.distance > maxDistance) {
-      weak += 1;
+      weakRows.push(row);
       return false;
     }
     if (options.perDocument) {
@@ -511,6 +514,18 @@ export async function searchKnowledge(
     (row) => ({ provider: row.provider, refId: row.refId }),
     { budgetMs: options.budgetMs ?? 3_000, log: options.log }
   );
+  const weak =
+    weakRows.length === 0
+      ? 0
+      : (
+          await verifyCandidates(
+            options.verifiers,
+            options.userEmail,
+            weakRows,
+            (row) => ({ provider: row.provider, refId: row.refId }),
+            { budgetMs: options.budgetMs ?? 3_000, log: options.log }
+          )
+        ).allowed.length;
   const verifyMs = Date.now() - verifyStarted;
 
   const contentKey = contentKeyOrNull();

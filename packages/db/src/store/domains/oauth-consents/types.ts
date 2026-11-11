@@ -73,6 +73,8 @@ export interface OAuthConsentStore {
   getAuthorizationCode(code: string): Promise<AuthorizationCodeRecord | null>;
   /** Spend a code; returns how many rows went (0 or 1). */
   deleteAuthorizationCode(code: string): Promise<number>;
+  /** Spend a code and return it, in one statement: of two callers, one gets it and the other null. */
+  takeAuthorizationCode(code: string): Promise<AuthorizationCodeRecord | null>;
 }
 
 /** A client's stored secret digest, for the token endpoint to check a presented secret against. */

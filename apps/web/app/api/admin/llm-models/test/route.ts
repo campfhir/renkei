@@ -15,10 +15,11 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDataStore } from '@renkei/db';
-import { decrypt, loadKeyring } from '@renkei/crypto';
+import { AAD_PURPOSE, aadFor, decryptBoundValue, loadKeyring } from '@renkei/crypto';
 import { testLlmConnection, type TestConnectionError } from '@renkei/agent-llm';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { API_SURFACES, SUPPORTED_PROVIDERS } from '@/lib/agents/llm-model-payload';
+import { checkServiceEndpoint } from '@/lib/service-endpoint';
 import { logger } from '@/lib/logger';
 import { who } from '@/lib/log-actor';
 
@@ -79,9 +80,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   let apiKey = typeof payload.apiKey === 'string' && payload.apiKey ? payload.apiKey : null;
+  // A stored key is only ever sent to the address it was stored for: a
+  // base URL typed into the request cannot redirect it.
+  let storedBaseUrl: string | null | undefined;
   if (!apiKey && typeof payload.modelConfigId === 'string' && payload.modelConfigId) {
     const row = await getDataStore().llmModels.get(payload.modelConfigId);
     if (!row) return NextResponse.json({ error: 'Model config not found' }, { status: 404 });
+    storedBaseUrl = row.baseUrl;
 
     const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
     if (!keyResult.ok) {
@@ -98,7 +103,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
     }
     const secretsResult = row.encryptedSecrets
-      ? decrypt(row.encryptedSecrets, keyResult.val)
+      ? decryptBoundValue(row.encryptedSecrets, keyResult.val, aadFor(AAD_PURPOSE.llmModelKey))
       : null;
     if (secretsResult && !secretsResult.ok) {
       logger.warn(
@@ -131,6 +136,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     }
   }
+  if (
+    storedBaseUrl === undefined &&
+    typeof payload.baseUrl === 'string' &&
+    payload.baseUrl.trim()
+  ) {
+    const endpointVerdict = await checkServiceEndpoint(payload.baseUrl);
+    if (!endpointVerdict.ok) {
+      return NextResponse.json({ error: endpointVerdict.error }, { status: 400 });
+    }
+  }
   if (!apiKey) {
     return NextResponse.json(
       { error: 'Provide an API key, or name a model config with one stored.' },
@@ -143,7 +158,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     apiKey,
     model: payload.model.trim(),
     baseUrl:
-      typeof payload.baseUrl === 'string' && payload.baseUrl.trim() ? payload.baseUrl.trim() : null,
+      storedBaseUrl !== undefined
+        ? storedBaseUrl
+        : typeof payload.baseUrl === 'string' && payload.baseUrl.trim()
+          ? payload.baseUrl.trim()
+          : null,
     apiVersion:
       typeof payload.apiVersion === 'string' && payload.apiVersion.trim()
         ? payload.apiVersion.trim()

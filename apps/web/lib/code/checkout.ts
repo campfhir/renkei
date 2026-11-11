@@ -94,6 +94,7 @@ export async function resolveBase(
       subject: actor.subject,
       origin: actor.origin ?? getPublicBaseUrl() ?? '',
       provider: project.repo!.provider,
+      repo: project.repo!.fullName,
     },
     { write: false }
   );

@@ -16,6 +16,8 @@ import {
   invalidateConnectorConfigCache,
 } from '@renkei/connector-config';
 import { MISTRAL_OCR_CONNECTOR, DEFAULT_MISTRAL_OCR_MODEL } from '@renkei/connector-mistral-ocr';
+import { checkServiceEndpoint } from '@/lib/service-endpoint';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
 import { who } from '@/lib/log-actor';
 import { isRecord } from '@renkei/guards';
@@ -82,6 +84,10 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
   if (typeof endpoint !== 'string' || !endpoint) {
     return NextResponse.json({ error: 'endpoint is required' }, { status: 400 });
   }
+  const endpointVerdict = await checkServiceEndpoint(endpoint);
+  if (!endpointVerdict.ok) {
+    return NextResponse.json({ error: endpointVerdict.error }, { status: 400 });
+  }
   const enabled = typeof body.enabled === 'boolean' ? body.enabled : true;
 
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
@@ -136,6 +142,18 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
   }
 
   invalidateConnectorConfigCache(MISTRAL_OCR_CONNECTOR);
+  recordAuditEvent({
+    actorSubject: access.subject,
+    action: 'connector.configured',
+    targetKind: 'connector',
+    targetLabel: MISTRAL_OCR_CONNECTOR,
+    details: {
+      connector: MISTRAL_OCR_CONNECTOR,
+      endpoint: endpoint,
+      enabled,
+      apiKeyReplaced: typeof apiKey === 'string' && apiKey.length > 0,
+    },
+  });
   return NextResponse.json({
     connector: MISTRAL_OCR_CONNECTOR,
     configured: true,

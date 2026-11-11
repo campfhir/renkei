@@ -49,6 +49,8 @@ export interface GitToolDeps {
   ref: { id: string };
   origin: string;
   repoProvider: string;
+  /** `owner/repo`: a git ticket is bound to it. */
+  repoFullName: string;
   failed: (error: SandboxClientError) => McpToolResult;
 }
 
@@ -117,7 +119,12 @@ export function moreGitTools(deps: GitToolDeps): LocalTool[] {
   /** The person a commit git makes on their behalf is authored as — rebase and merge make commits too. */
   const authorFor = async (context: LocalToolContext) => {
     const credential = await resolveWorkspaceGitAccess(
-      { subject: context.subject, origin: deps.origin, provider: deps.repoProvider },
+      {
+        subject: context.subject,
+        origin: deps.origin,
+        provider: deps.repoProvider,
+        repo: deps.repoFullName,
+      },
       { write: false }
     );
     const username = typeof credential === 'string' ? '' : credential.username;
@@ -131,7 +138,12 @@ export function moreGitTools(deps: GitToolDeps): LocalTool[] {
   /** A read ticket on the project's host for one fetch, or the refusal to show. */
   const readTicket = async (context: LocalToolContext) => {
     const credential = await resolveWorkspaceGitAccess(
-      { subject: context.subject, origin: deps.origin, provider: deps.repoProvider },
+      {
+        subject: context.subject,
+        origin: deps.origin,
+        provider: deps.repoProvider,
+        repo: deps.repoFullName,
+      },
       { write: false }
     );
     return typeof credential === 'string' ? credential : credential.gitProxy;

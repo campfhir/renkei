@@ -36,6 +36,12 @@ import {
   type WirePreviewPort,
 } from '@renkei/sandbox-client';
 import { sessionCookieName } from '@/lib/session';
+import {
+  hostMemberPath,
+  hostTokenPath,
+  previewHostBase,
+  PREVIEW_SESSION_COOKIE,
+} from './preview-host';
 
 export interface PreviewsView {
   previews: WirePreview[];
@@ -115,20 +121,30 @@ export function previewAddresses(
     chatId: string | null;
     name: string;
     ports: ReadonlyArray<{ name: string; token: string | null }>;
-  }
+  },
+  /** The organization's preview host (preview-host.ts); '' serves previews on the app's origin. */
+  previewHost = ''
 ): PreviewAddresses {
-  const base = origin.replace(/\/$/, '');
-  const ports = input.ports.map((port, index) => ({
-    name: port.name,
-    url: `${base}${previewProxyPath({
+  const base = previewHost ? previewHostBase(previewHost) : origin.replace(/\/$/, '');
+  const ports = input.ports.map((port, index) => {
+    const ref = {
       projectId: input.projectId,
       chatId: input.chatId,
       name: input.name,
       ...(index === 0 ? {} : { port: port.name }),
-    })}`,
-    publicUrl: port.token ? `${base}${publicPreviewPath(port.token)}` : null,
-    token: port.token,
-  }));
+    };
+    const publicPath = port.token
+      ? previewHost
+        ? hostTokenPath(port.token)
+        : publicPreviewPath(port.token)
+      : null;
+    return {
+      name: port.name,
+      url: `${base}${previewHost ? hostMemberPath(ref) : previewProxyPath(ref)}`,
+      publicUrl: publicPath ? `${base}${publicPath}` : null,
+      token: port.token,
+    };
+  });
   return { url: ports[0]?.url ?? '', publicUrl: ports[0]?.publicUrl ?? null, ports };
 }
 
@@ -151,13 +167,18 @@ export type ListedPreview = Omit<WirePreview, 'ports'> & {
 export function withAddresses(
   preview: WirePreview,
   origin: string,
-  scope: { projectId: string; chatId: string | null }
+  scope: { projectId: string; chatId: string | null },
+  previewHost = ''
 ): ListedPreview {
-  const addresses = previewAddresses(origin, {
-    ...scope,
-    name: preview.name,
-    ports: preview.ports,
-  });
+  const addresses = previewAddresses(
+    origin,
+    {
+      ...scope,
+      name: preview.name,
+      ports: preview.ports,
+    },
+    previewHost
+  );
   return {
     ...preview,
     url: addresses.url,
@@ -172,6 +193,30 @@ export function withAddresses(
 
 /** Statuses that must carry no body, which the Response constructor refuses to pair with one. */
 const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
+
+/**
+ * The web app's own cookies. A preview runs a repository's or a model's
+ * code, so it is neither sent these nor allowed to set them: the session,
+ * the sign-in and connect-flow state, and the preview host's own session
+ * (preview-host.ts).
+ */
+function isAppCookie(name: string): boolean {
+  return (
+    name === sessionCookieName() ||
+    name === PREVIEW_SESSION_COOKIE ||
+    name.startsWith('oidc_') ||
+    name.startsWith('connect_state_')
+  );
+}
+
+/** A `cookie` header without the app's own cookies; empty when nothing is left. */
+function withoutAppCookies(cookieHeader: string): string {
+  const names = cookieHeader
+    .split(';')
+    .map((pair) => pair.trim().split('=')[0]?.trim() ?? '')
+    .filter(isAppCookie);
+  return stripCookies(cookieHeader, names);
+}
 
 /**
  * One browser request relayed to a preview's port through the worker and
@@ -207,7 +252,7 @@ export async function previewRelay(
   for (const [name, value] of Object.entries(incoming)) {
     if (name === 'authorization' || name === 'x-sandbox-subject') continue;
     if (name === 'cookie') {
-      const kept = stripCookies(String(value), [sessionCookieName()]);
+      const kept = withoutAppCookies(String(value));
       if (kept) headers.set('cookie', kept);
       continue;
     }
@@ -262,7 +307,14 @@ export async function previewRelay(
   const responseHeaders = new Headers();
   for (const [name, value] of Object.entries(outgoing)) {
     if (name === 'content-length' || name === 'content-encoding') continue;
+    // Cookies are set one header each, below, and never the app's own.
+    if (name === 'set-cookie') continue;
     responseHeaders.set(name, Array.isArray(value) ? value.join(', ') : value);
+  }
+  for (const cookie of upstream.headers.getSetCookie()) {
+    if (!isAppCookie(cookie.slice(0, cookie.indexOf('=')).trim())) {
+      responseHeaders.append('set-cookie', cookie);
+    }
   }
   responseHeaders.set('cache-control', 'no-store');
   return new Response(NULL_BODY_STATUSES.has(upstream.status) ? null : upstream.body, {

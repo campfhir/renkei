@@ -80,6 +80,7 @@ export interface EditableSettings {
   sandboxServicePids: number;
   sandboxWorkspacesDebug: boolean;
   admanagerProductName: string;
+  codePreviewHost: string;
 }
 
 /** The settings that are numbers, for the plain number fields. */

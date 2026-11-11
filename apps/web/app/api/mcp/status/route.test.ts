@@ -91,6 +91,25 @@ describe('GET /api/mcp/status', () => {
     expect(lookups).toEqual([]);
   });
 
+  it('returns a fixed message with a reference, never the exception text', async () => {
+    mockGetSession.mockResolvedValue(session('user-a@example.com'));
+    const store = createMemoryDataStore();
+    registerDataStore({
+      ...store,
+      providerGrants: {
+        ...store.providerGrants,
+        listForSubject: () => Promise.reject(new Error('connect ECONNREFUSED 10.0.0.5:5432')),
+      },
+    });
+
+    const response = await GET(request());
+
+    expect(response.status).toBe(500);
+    const body = await response.json();
+    expect(body.error).toMatch(/^Status check failed \(ref [0-9a-f-]{36}\)$/);
+    expect(JSON.stringify(body)).not.toContain('ECONNREFUSED');
+  });
+
   it('scopes the lookup to the caller and the provider', async () => {
     mockGetSession.mockResolvedValue(session('user-a@example.com'));
     const lookups = await withGrants([grant('atlassian', 'acc-a', 'user-a@example.com', siteA)]);

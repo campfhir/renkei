@@ -113,12 +113,13 @@ function post(body: unknown, options: { setupSecret?: string | null } = {}): Nex
   });
 }
 
-function grantOperator() {
+function grantOperator(signedInAgoMs = 60_000) {
   mockGetSession.mockResolvedValue({
     id: 's1',
     subject: 'op@example.com',
     roles: ['renkei-operator'],
     expiresAt: new Date(Date.now() + 60_000),
+    createdAt: new Date(Date.now() - signedInAgoMs),
   });
 }
 
@@ -309,6 +310,21 @@ describe('OIDC configuration', () => {
       expect(mockSetTenantOidc).toHaveBeenCalledTimes(1);
     });
 
+    it('asks an operator whose sign-in is older than 15 minutes to sign in again', async () => {
+      await stubDb({ existingOidc: true });
+      grantOperator(16 * 60_000);
+
+      const response = await POST(post(VALID_BODY, { setupSecret: null }));
+
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toMatchObject({
+        code: 'reauthentication_required',
+        error: expect.stringContaining('sign in again'),
+      });
+      expect(mockSetTenantOidc).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
     it('refuses before fetching the attacker-supplied discovery endpoint', async () => {
       // The gate runs first, so an unauthenticated caller cannot use this route
       // to make the server issue outbound requests.
@@ -354,6 +370,15 @@ describe('OIDC configuration', () => {
       const body = await response.json();
       expect(body).toMatchObject({ configured: true, clientId: 'existing-client' });
       expect(body).not.toHaveProperty('clientSecret');
+    });
+
+    it('serves an operator whose sign-in is old: only a change needs a recent one', async () => {
+      await stubDb({ existingOidc: true });
+      grantOperator(24 * 60 * 60_000);
+
+      const response = await GET();
+
+      expect(response.status).toBe(200);
     });
   });
 });

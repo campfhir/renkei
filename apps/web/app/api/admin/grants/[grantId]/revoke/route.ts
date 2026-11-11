@@ -11,7 +11,11 @@ import { grantProviderLabel, GRANT_PROVIDER_LABELS } from '@/lib/provider-labels
  * { provider } in the body ('atlassian' assumed when absent, the shape the
  * old Jira-only page sent).
  *
- * Deletes only the stored credential: the provider keeps its own record of
+ * Deletes only the stored credential and does NOT call the provider's
+ * revocation endpoint (the delegate's `grant/revoke` does that for Zoom,
+ * Salesforce, OnBase and remote MCP servers on a person's own disconnect;
+ * GitHub, Microsoft and Atlassian are revoked nowhere). The provider keeps
+ * its own record of
  * the authorization until the user withdraws it there, and the per-provider
  * self-disconnect routes carry the deeper cleanup (subscriptions, indexed
  * chunks). An admin revoke is containment — cut Renkei's access now — not
@@ -59,6 +63,10 @@ export async function POST(
 
   return NextResponse.json({
     success: true,
-    message: `${grantProviderLabel(provider)} access for ${grant.displayName ?? grantId} has been revoked`,
+    // Honest about what happened: our copy of the credential is gone and the
+    // person's MCP sessions with it; the provider still lists the
+    // authorization (and an issued token stays valid there until it expires)
+    // until the person, or an admin at the provider, withdraws it.
+    message: `${grantProviderLabel(provider)} access for ${grant.displayName ?? grantId} was removed from Renkei. The provider's own authorization is not revoked: withdraw it at ${grantProviderLabel(provider)} to end it there.`,
   });
 }

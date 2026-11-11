@@ -138,6 +138,7 @@ export function executionFromRow(
     | 'resume_failure'
     | 'error_kind'
     | 'trigger_kind'
+    | 'triggered_by_subject'
     | 'parent_run_id'
     | 'active_ms'
   >
@@ -158,6 +159,7 @@ export function executionFromRow(
     resumeFailure: row.resume_failure,
     errorKind: row.error_kind,
     triggerKind: row.trigger_kind,
+    triggeredBySubject: row.triggered_by_subject,
     parentRunId: row.parent_run_id,
     activeMs: Number(row.active_ms ?? 0),
   };

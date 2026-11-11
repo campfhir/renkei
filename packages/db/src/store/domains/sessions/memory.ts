@@ -39,6 +39,7 @@ export function memorySessions(tables: MemoryTables): SessionStore {
         subject: row.subject,
         roles: row.roles,
         expiresAt: row.expires_at,
+        createdAt: row.created_at,
         lastUsedAt: row.last_used_at,
       };
     },

@@ -6,7 +6,7 @@
  * 43+ tools on every request. Cache persists for the lifetime of the Next.js process.
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { createMcpHandler } from 'mcp-handler';
 import { getDataStore, describeActor, describeAgent, actorFields, agentFields } from '@renkei/db';
@@ -677,9 +677,13 @@ const handler = async (request: NextRequest): Promise<Response> => {
       withAttempt(attemptFromHeaders(request.headers), () => cachedHandler(request))
     );
   } catch (error) {
+    // The text of the failure stays in the log; the client gets a fixed
+    // string and an id to quote.
+    const correlationId = randomUUID();
     logger.error(
       'an MCP request failed before or while its handler ran, and was answered with a JSON-RPC internal error: {error}',
       {
+        correlationId,
         component: 'mcp/transport',
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
@@ -690,7 +694,7 @@ const handler = async (request: NextRequest): Promise<Response> => {
         jsonrpc: '2.0',
         error: {
           code: -32603,
-          message: `Internal server error: ${error instanceof Error ? error.message : String(error)}`,
+          message: `Internal server error (ref ${correlationId})`,
         },
         id: null,
       }),

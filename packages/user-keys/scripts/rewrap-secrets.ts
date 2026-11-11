@@ -10,6 +10,13 @@
  *   TOKEN_ENCRYPTION_KEYS=<new>,<old> pnpm rewrap --dry-run   # count only
  *   TOKEN_ENCRYPTION_KEYS=<new>,<old> pnpm rewrap
  *
+ * `--aad` instead re-seals rows written before the AAD release as `v3`
+ * envelopes bound to their purpose (audit R-04; DEPLOYMENT.md). Run it once
+ * every service runs that release, with the current rings:
+ *
+ *   pnpm rewrap --aad --dry-run
+ *   pnpm rewrap --aad
+ *
  * CONTENT_ENCRYPTION_KEYS and SANDBOX_ENV_SECRETS_KEYS the same way when
  * those are set apart from the token key. Batched and resumable: run it
  * again after an interruption and it finishes what is left. Exits 1 when
@@ -27,6 +34,7 @@ function fail(message: string): never {
 
 async function main(): Promise<void> {
   const dryRun = process.argv.includes('--dry-run');
+  const aad = process.argv.includes('--aad');
   const rings = rewrapRingsFromEnv();
   if (!rings.ok) fail(`Keys: ${rings.message}`);
 
@@ -35,6 +43,7 @@ async function main(): Promise<void> {
   try {
     const report = await rewrapAll(rings.val, {
       dryRun,
+      aad,
       log: (line) => console.log(line),
     });
     const all = [...Object.values(report.targets), report.vapid];

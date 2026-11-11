@@ -24,6 +24,7 @@ import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
 import { who, whichAgent } from '@/lib/log-actor';
 
+import { tokenLimitRefusal } from '@/lib/token-limits/refusal';
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
@@ -43,6 +44,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       { status: 400 }
     );
   }
+
+  const overLimit = await tokenLimitRefusal(session.subject, null);
+  if (overLimit)
+    return NextResponse.json({ error: overLimit, code: 'token-limit' }, { status: 429 });
 
   // Revision context: the builder's CURRENT (possibly unsaved) instructions
   // and tools — the model revises what the user is looking at, not what was
