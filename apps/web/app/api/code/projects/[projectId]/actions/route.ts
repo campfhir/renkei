@@ -59,6 +59,23 @@ export async function GET(
     );
     return jsonError(502, 'host', read.error);
   }
+  // The runs are what every member can read; when GitHub cannot list them
+  // (no grant of the person's own, say) the reason is the answer, as it was
+  // before this route read more, so the card and the page say it as an alert.
+  if (read.setup.runsError) {
+    logger.warn(
+      '{actor} opened the Actions runs of the project "{project}" ({repository}), but GitHub did not list them; the page showed the error: {error}',
+      {
+        component: 'api/code/projects/actions',
+        ...(await whoIs(subject)),
+        projectId,
+        project: project.name,
+        repository: project.repo.fullName,
+        error: read.setup.runsError,
+      }
+    );
+    return jsonError(502, 'host', read.setup.runsError);
+  }
   const setup = configureNeeds ? { ...read.setup, enabledError: configureNeeds } : read.setup;
   const access = { configureNeeds };
   if (summary)
