@@ -35,9 +35,26 @@ export const FIELD_TYPES = [
   'Picklist',
   'MultiselectPicklist',
   'Lookup',
+  'Formula',
 ] as const;
 
 export type FieldType = (typeof FIELD_TYPES)[number];
+
+/** What a formula field may calculate; it is the `<type>` Salesforce stores for it. */
+export const FORMULA_RETURN_TYPES = [
+  'Text',
+  'Number',
+  'Currency',
+  'Percent',
+  'Date',
+  'DateTime',
+  'Checkbox',
+] as const;
+
+export type FormulaReturnType = (typeof FORMULA_RETURN_TYPES)[number];
+
+/** Salesforce's limit on a formula field's text. */
+export const FORMULA_MAX_LENGTH = 3900;
 
 export interface PicklistValueSpec {
   value: string;
@@ -71,6 +88,12 @@ export interface FieldSpec {
   relationshipName?: string;
   relationshipLabel?: string;
   deleteConstraint?: 'SetNull' | 'Restrict';
+  /** Formula only: the expression, as Setup takes it. Salesforce compiles it in the check-only deploy. */
+  formula?: string;
+  /** Formula only: what it calculates. */
+  returnType?: FormulaReturnType;
+  /** Formula only: whether a blank field in the formula counts as zero or stays blank. */
+  blanksAs?: 'BlankAsZero' | 'BlankAsBlank';
 }
 
 export interface ValidationRuleSpec {
@@ -198,6 +221,12 @@ export function checkFieldSpec(
   if (required && ['Checkbox', 'MultiselectPicklist', 'LongTextArea'].includes(fieldType)) {
     errors.push(`A ${fieldType} field cannot be required.`);
   }
+  const formula = typeof entry.formula === 'string' ? entry.formula.trim() : '';
+  if (formula && fieldType !== 'Formula') {
+    errors.push(
+      `A ${fieldType} field takes no formula; for a calculated field use type Formula with returnType ${fieldType}.`
+    );
+  }
 
   const length = int(entry.length);
   switch (fieldType) {
@@ -280,6 +309,40 @@ export function checkFieldSpec(
       // refuse the parent's delete instead.
       spec.deleteConstraint =
         required || entry.deleteConstraint === 'Restrict' ? 'Restrict' : 'SetNull';
+      break;
+    }
+    case 'Formula': {
+      if (!formula) errors.push('A formula field needs its formula.');
+      if (formula.length > FORMULA_MAX_LENGTH) {
+        errors.push(
+          `A formula is ${FORMULA_MAX_LENGTH.toLocaleString('en-US')} characters at most.`
+        );
+      }
+      spec.formula = formula;
+      const returns = str(entry.returnType);
+      const returnType = FORMULA_RETURN_TYPES.find((candidate) => candidate === returns);
+      if (!returnType) {
+        errors.push(
+          `A formula field needs returnType, what it calculates: ${FORMULA_RETURN_TYPES.join(', ')}.`
+        );
+      }
+      spec.returnType = returnType;
+      if (required || spec.trackHistory) {
+        errors.push(
+          'A formula field is calculated: it cannot be required or have its history tracked.'
+        );
+      }
+      if (returnType === 'Number' || returnType === 'Currency' || returnType === 'Percent') {
+        spec.precision = int(entry.precision) ?? 18;
+        spec.scale = int(entry.scale) ?? (returnType === 'Number' ? 0 : 2);
+        if (spec.precision < 1 || spec.precision > 18) {
+          errors.push('Precision (all digits) is 1 to 18.');
+        }
+        if (spec.scale < 0 || spec.scale > spec.precision) {
+          errors.push('Scale (digits after the point) is 0 up to the precision.');
+        }
+      }
+      spec.blanksAs = entry.blanksAs === 'BlankAsZero' ? 'BlankAsZero' : 'BlankAsBlank';
       break;
     }
     default:
@@ -423,10 +486,17 @@ export function fieldXml(spec: FieldSpec): string {
       body += element('deleteConstraint', spec.deleteConstraint, i);
       body += element('required', spec.required, i);
       break;
+    case 'Formula':
+      body += element('formula', spec.formula, i);
+      body += element('formulaTreatBlanksAs', spec.blanksAs ?? 'BlankAsBlank', i);
+      body += element('precision', spec.precision, i);
+      body += element('scale', spec.scale, i);
+      break;
     default:
       break;
   }
-  body += element('type', spec.type, i);
+  // A formula field's stored type is what it calculates.
+  body += element('type', spec.type === 'Formula' ? spec.returnType : spec.type, i);
   return `    <fields>\n${body}    </fields>\n`;
 }
 

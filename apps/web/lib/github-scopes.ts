@@ -70,6 +70,16 @@ export const GITHUB_SCOPE_OPTIONS: ScopeOption[] = [
     scopes: ['actions:write'],
   },
   {
+    id: 'gh-actions-config',
+    label: 'Configure Actions',
+    hint: 'Turn Actions on or off for a repository, and read and set its Actions variables (secrets are listed by name only; values stay on GitHub)',
+    group: 'actions',
+    // Variables are where a deploy target or an account id lives: present
+    // in the catalog, but never granted by silence.
+    defaultChecked: false,
+    scopes: ['actions:configure'],
+  },
+  {
     id: 'gh-admin',
     label: 'Manage repository access',
     hint: 'List and change a repository’s collaborators and their permission level',

@@ -997,8 +997,24 @@ permission set proposals are built; the as-built description is the `salesforce-
   folder and report are still absent on apply. Reads: `salesforce_admin_list_report_types`
   (`/analytics/reportTypes`, and one type's columns and scopes) and
   `salesforce_admin_list_report_folders`. Both proposals stand on the schema capability, so no
-  connection reconnects for them. Changing an existing report, dashboards and folder sharing are
-  not offered yet.
+  connection reconnects for them. Dashboards and folder sharing are not offered yet.
+- **An existing report is changed whole, like a report type.**
+  `salesforce_admin_get_report` shows a report in a report folder as it is built, and
+  `salesforce_admin_propose_report_changes` changes it: name and description, columns added or
+  taken off and their summaries, filters replaced whole or added to, the date range, format and
+  groupings, scope, sort and detail rows (`editReport`). The report is read with the same SOAP
+  `readMetadata` (type `Report`, `Folder/Developer_Name`), only what the proposal names is
+  merged in — its chart, buckets and formulas stay as read — and it deploys under the same
+  name, with a `component-unchanged` precondition on a hash of what was read. A report in a
+  private folder or in Unfiled Public Reports is not reachable; its report type and folder do
+  not change.
+- **A report's date range can roll.** `dateFilter.relative` on `salesforce_admin_propose_report`
+  takes a relative date value (`LAST_N_DAYS:365`, `LAST_N_MONTHS:12`, `THIS_YEAR`, or the words
+  for one; `relativeDateLiteral`). A report's own time frame holds only fixed dates and
+  Salesforce's named intervals, so a relative range is written as one more filter on the date
+  column (`equals LAST_N_MONTHS:12`), ANDed with the report's filter logic, and the report
+  carries no time frame. `LAST_N_DAYS:n` runs up to today; `LAST_N_MONTHS:n` is the whole
+  calendar months before this one.
 - **A report type's columns are named as its report file names them.** A custom report type's
   describe joins everything with dots (`Referral.Client.Name`); its report file puts a `$`
   between the table (the base object and the child relationships joined down from it) and the
@@ -1007,12 +1023,15 @@ permission set proposals are built; the as-built description is the `salesforce-
   lookup; `salesforce_admin_list_report_types` lists a custom type's columns that way, and
   `salesforce_admin_propose_report` takes either spelling and refuses a column the type does not
   have before anything is stored.
-- **Fields are added to an existing report type through the SOAP read.**
+- **An existing report type is changed through the SOAP read.**
   `salesforce_admin_propose_report_type_changes` adds fields, lookup paths (a Referral's
-  `Client.Medicare__pc`) or a joined object's fields to a section, existing or new. A report type
+  `Client.Medicare__pc`) or a joined object's fields to a section, existing or new; takes fields
+  out (a section left empty goes with them; the last column cannot go); and changes the label,
+  the description and whether it is deployed (`editReportType`). Its object and joins do not
+  change. A report type
   deploys whole and the Tooling API has no object for it, so the proposal reads it with the
-  Metadata API's SOAP `readMetadata`, merges only the additions (nothing moves or goes, renamed
-  columns and defaults included), and carries a `component-unchanged` precondition on a hash of
+  Metadata API's SOAP `readMetadata`, merges only what the proposal names (nothing else moves or goes,
+  renamed columns and defaults included), and carries a `component-unchanged` precondition on a hash of
   what it read. SOAP takes the session inside the envelope, not a header, so the **delegate**
   writes the envelope (`apps/worker-delegate/src/salesforce-soap.ts`): only for an admin grant,
   only `POST /services/Soap/m/<version>`, and only a body that is one `readMetadata` naming a

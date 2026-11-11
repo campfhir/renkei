@@ -7,6 +7,7 @@ import {
   CHAT_ARCHIVE_MAX_DAYS,
   getChatArchivePrefs,
   getImagePrefs,
+  getChatModelPrefs,
   getNotificationPrefs,
   getThemePrefs,
 } from '@renkei/user-prefs';
@@ -21,7 +22,7 @@ import { CODE_PROJECT_CONNECTORS, CODE_PROJECT_DEFAULT_CONNECTORS } from '@/lib/
 import { getChatToolPermissionPrefs } from '@/lib/chat/permission-prefs';
 import { listChatActToolGroups } from '@/lib/chat/permission-catalog';
 import { loadVoiceAvailability } from '@/lib/voice/availability';
-import { listImageModels } from '@/lib/chat/models';
+import { listChatModels, listImageModels } from '@/lib/chat/models';
 import { keyStatusView } from '@/lib/keys/status';
 import PreferencesForm from './preferences-form';
 import { notificationConnectorRows } from './preferences-form.model';
@@ -30,6 +31,7 @@ import ToolPermissionsForm from './tool-permissions-form';
 import ThemeForm from './theme-form';
 import VoiceForm from './voice-form';
 import ImageModelForm from './image-model-form';
+import ChatModelForm from './chat-model-form';
 import ChatArchiveForm from './chat-archive-form';
 import EncryptionKeySection from './encryption-key-section';
 
@@ -55,6 +57,8 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
     actToolGroups,
     imagePrefs,
     imageModels,
+    chatModelPrefs,
+    chatModels,
     keyStatus,
     chatArchive,
     org,
@@ -78,6 +82,9 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
     getImagePrefs(session.subject, { fresh: true }),
     // Empty when the org has no image generation model; the section is then left out.
     listImageModels().catch(() => []),
+    getChatModelPrefs(session.subject, { fresh: true }),
+    // The organization's default first; empty when it has no chat model.
+    listChatModels().catch(() => []),
     // Managed until they say otherwise; a missing row reads as managed too.
     // The delegate answers; unreachable, and the section is left out.
     keyStatusView(session),
@@ -142,6 +149,11 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
             initial={voice.prefs}
             defaults={{ voice: voice.defaultVoice, locale: voice.defaultLocale }}
           />
+        </div>
+      ) : null}
+      {chatModels.length > 0 ? (
+        <div className="mb-6">
+          <ChatModelForm initial={chatModelPrefs} models={chatModels} />
         </div>
       ) : null}
       {imageModels.length > 0 ? (

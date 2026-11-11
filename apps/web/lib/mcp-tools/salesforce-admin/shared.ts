@@ -8,7 +8,12 @@
 
 import { z } from 'zod';
 import { actMeta } from '@renkei/tool-outcomes';
-import { FIELD_TYPES, takesChanges, type FieldSpec } from '@renkei/connector-salesforce';
+import {
+  FIELD_TYPES,
+  FORMULA_RETURN_TYPES,
+  takesChanges,
+  type FieldSpec,
+} from '@renkei/connector-salesforce';
 import type { MCPToolContext } from '../common';
 import { errText, type SalesforceAccess } from '../salesforce/client';
 import { listSalesforceConnectors } from '@/lib/salesforce-app';
@@ -199,7 +204,11 @@ export const fieldInput = z.object({
     .describe(
       'The API name, with or without __c; default derived from the label (Visit_Outcome__c).'
     ),
-  type: z.enum(FIELD_TYPES).describe('The field type.'),
+  type: z
+    .enum(FIELD_TYPES)
+    .describe(
+      'The field type. Formula is a calculated, read-only field: give formula and returnType.'
+    ),
   description: z.string().max(1000).optional().describe('For admins: what it is for.'),
   helpText: z.string().max(510).optional().describe('What people see when they hover the field.'),
   required: z.boolean().optional(),
@@ -217,7 +226,11 @@ export const fieldInput = z.object({
     .int()
     .optional()
     .describe('Text 1–255 (default 255); LongTextArea 256–131,072.'),
-  precision: z.number().int().optional().describe('Number, Currency, Percent: all digits, 1–18.'),
+  precision: z
+    .number()
+    .int()
+    .optional()
+    .describe('Number, Currency, Percent (or a formula returning one): all digits, 1–18.'),
   scale: z.number().int().optional().describe('Digits after the decimal point.'),
   visibleLines: z.number().int().optional(),
   defaultChecked: z.boolean().optional().describe('Checkbox: ticked by default.'),
@@ -257,17 +270,42 @@ export const fieldInput = z.object({
     .describe(
       'Lookup: what happens when the parent is deleted (a required lookup always Restricts).'
     ),
+  formula: z
+    .string()
+    .max(3900)
+    .optional()
+    .describe(
+      'Formula: the expression, in Salesforce formula syntax with field API names — ' +
+        'FLOOR((TODAY() - Enrollment_Date__c) / 365.25). Salesforce compiles it when it validates.'
+    ),
+  returnType: z.enum(FORMULA_RETURN_TYPES).optional().describe('Formula: what it calculates.'),
+  blanksAs: z
+    .enum(['BlankAsBlank', 'BlankAsZero'])
+    .optional()
+    .describe('Formula: whether a blank field in it stays blank (default) or counts as zero.'),
 });
 
 export function fieldRows(spec: FieldSpec): ComponentView['rows'] {
   const rows: ComponentView['rows'] = [
     { label: 'Label', value: spec.label },
-    { label: 'Type', value: spec.type },
+    {
+      label: 'Type',
+      value: spec.type === 'Formula' ? `Formula (${spec.returnType})` : spec.type,
+    },
   ];
   const add = (label: string, value: unknown) => {
     if (value === undefined || value === '' || value === false) return;
     rows.push({ label, value: typeof value === 'string' ? value : JSON.stringify(value) });
   };
+  add('Formula', spec.formula);
+  add(
+    'Blank fields',
+    spec.type === 'Formula'
+      ? spec.blanksAs === 'BlankAsZero'
+        ? 'count as zero'
+        : 'stay blank'
+      : undefined
+  );
   add('Length', spec.length);
   add('Precision', spec.precision);
   add('Scale', spec.scale);

@@ -3,7 +3,7 @@ import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { resolveChatAccess } from '@/lib/chat/access';
 import { loadChatView } from '@/lib/chat/chat-view';
-import { listChatModels } from '@/lib/chat/models';
+import { listChatModelsFor } from '@/lib/chat/models';
 import { tenantBlobStoreConfigured } from '@renkei/blob-store';
 import { getOrgSettings } from '@renkei/settings';
 import { loadVoiceAvailability } from '@/lib/voice/availability';
@@ -23,7 +23,7 @@ export default async function ChatPage({ params }: { params: Promise<{ chatId: s
   if (!access) notFound();
   const [view, models, uploadsEnabled, voice, orgSettings] = await Promise.all([
     loadChatView(access, session.subject),
-    listChatModels(),
+    listChatModelsFor(session.subject),
     tenantBlobStoreConfigured(),
     // Null when the org has no voice service: the thread then shows
     // nothing about voice at all.

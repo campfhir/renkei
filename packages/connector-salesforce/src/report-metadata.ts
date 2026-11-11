@@ -392,7 +392,19 @@ export interface ReportSpec {
   groupingsAcross: ReportGrouping[];
   filters: Array<{ column: string; operator: ReportFilterOperator; value: string }>;
   filterLogic?: string;
-  dateFilter?: { column: string; interval: DateInterval; start?: string; end?: string };
+  /**
+   * `relative` is a range that moves with the day the report is run
+   * (`LAST_N_MONTHS:12`): the report's own time frame only takes fixed
+   * dates and Salesforce's named intervals, so it is written as a filter on
+   * the column, ANDed with the others.
+   */
+  dateFilter?: {
+    column: string;
+    interval: DateInterval;
+    start?: string;
+    end?: string;
+    relative?: string;
+  };
   scope?: string;
   sort?: { column: string; order: 'Asc' | 'Desc' };
   showDetails: boolean;
@@ -403,6 +415,61 @@ export interface ReportSpec {
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+const RELATIVE_FIXED = new Set([
+  'TODAY',
+  'YESTERDAY',
+  'TOMORROW',
+  'LAST_90_DAYS',
+  'NEXT_90_DAYS',
+  ...['WEEK', 'MONTH', 'QUARTER', 'YEAR', 'FISCAL_QUARTER', 'FISCAL_YEAR'].flatMap((unit) => [
+    `THIS_${unit}`,
+    `LAST_${unit}`,
+    `NEXT_${unit}`,
+  ]),
+]);
+const RELATIVE_UNITS = 'DAYS|WEEKS|MONTHS|QUARTERS|YEARS|FISCAL_QUARTERS|FISCAL_YEARS';
+const RELATIVE_COUNTED = new RegExp(`^(LAST|NEXT)_N_(${RELATIVE_UNITS}):(\\d+)$`);
+const RELATIVE_AGO = new RegExp(`^N_(${RELATIVE_UNITS})_AGO:(\\d+)$`);
+const RELATIVE_SPOKEN = new RegExp(`^(LAST|NEXT)_(\\d+)_(${RELATIVE_UNITS})$`);
+const RELATIVE_SPOKEN_AGO = new RegExp(`^(\\d+)_(${RELATIVE_UNITS})_AGO$`);
+
+/**
+ * A relative date value as a report filter takes it — `LAST_N_MONTHS:12`,
+ * `LAST_N_DAYS:365`, `THIS_YEAR`, `N_DAYS_AGO:30` — from that or from the
+ * words for it ("last 12 months", "30 days ago"); null when it is neither.
+ * A count is 1 to 9,999.
+ */
+export function relativeDateLiteral(text: string): string | null {
+  const value = text
+    .trim()
+    .toUpperCase()
+    .replace(/[\s_]+/g, '_')
+    .replace(/_?:_?/, ':');
+  if (RELATIVE_FIXED.has(value)) return value;
+  const spoken = RELATIVE_SPOKEN.exec(value);
+  const spokenAgo = RELATIVE_SPOKEN_AGO.exec(value);
+  const literal = spoken
+    ? `${spoken[1]}_N_${spoken[3]}:${spoken[2]}`
+    : spokenAgo
+      ? `N_${spokenAgo[2]}_AGO:${spokenAgo[1]}`
+      : value;
+  const counted = RELATIVE_COUNTED.exec(literal) ?? RELATIVE_AGO.exec(literal);
+  if (!counted) return null;
+  const n = Number(counted[counted.length - 1]);
+  if (n < 1 || n > 9999) return null;
+  // Without leading zeros.
+  return literal.replace(/:\d+$/, `:${n}`);
+}
+
+/** A relative date value in words: `LAST_N_MONTHS:12` is "last 12 months". */
+export function relativeDateWords(literal: string): string {
+  const counted = RELATIVE_COUNTED.exec(literal);
+  if (counted) return `${counted[1]} ${counted[3]} ${counted[2]}`.replace(/_/g, ' ').toLowerCase();
+  const ago = RELATIVE_AGO.exec(literal);
+  if (ago) return `${ago[2]} ${ago[1]} ago`.replace(/_/g, ' ').toLowerCase();
+  return literal.replace(/_/g, ' ').toLowerCase();
+}
 
 function groupingsOf(raw: unknown, label: string, errors: string[]): ReportGrouping[] {
   return (Array.isArray(raw) ? raw : []).flatMap((item): ReportGrouping[] => {
@@ -425,6 +492,30 @@ function groupingsOf(raw: unknown, label: string, errors: string[]): ReportGroup
       },
     ];
   });
+}
+
+/** Why a format does not fit its groupings: tabular none, summary rows, matrix both ways. */
+export function groupingProblems(format: ReportFormat, down: number, across: number): string[] {
+  const errors: string[] = [];
+  if (format === 'Tabular' && (down > 0 || across > 0)) {
+    errors.push(
+      'A tabular report has no groupings; make it Summary (rows) or Matrix (rows and columns).'
+    );
+  }
+  if (format === 'Summary') {
+    if (down === 0) errors.push('A summary report groups its rows by at least one field.');
+    if (down > 3) errors.push('A summary report groups by three fields at most.');
+    if (across > 0) errors.push('Only a matrix report groups columns.');
+  }
+  if (format === 'Matrix') {
+    if (down === 0 || across === 0) {
+      errors.push('A matrix report groups both rows and columns, by at least one field each.');
+    }
+    if (down > 2 || across > 2) {
+      errors.push('A matrix report groups by two fields at most each way.');
+    }
+  }
+  return errors;
 }
 
 /**
@@ -488,25 +579,8 @@ export function checkReportSpec(
 
   const groupingsDown = groupingsOf(entry.groupingsDown, 'Row groupings', errors);
   const groupingsAcross = groupingsOf(entry.groupingsAcross, 'Column groupings', errors);
-  if (format === 'Tabular' && (groupingsDown.length > 0 || groupingsAcross.length > 0)) {
-    errors.push(
-      'A tabular report has no groupings; make it Summary (rows) or Matrix (rows and columns).'
-    );
-  }
-  if (format === 'Summary') {
-    if (groupingsDown.length === 0)
-      errors.push('A summary report groups its rows by at least one field.');
-    if (groupingsDown.length > 3) errors.push('A summary report groups by three fields at most.');
-    if (groupingsAcross.length > 0) errors.push('Only a matrix report groups columns.');
-  }
-  if (format === 'Matrix') {
-    if (groupingsDown.length === 0 || groupingsAcross.length === 0) {
-      errors.push('A matrix report groups both rows and columns, by at least one field each.');
-    }
-    if (groupingsDown.length > 2 || groupingsAcross.length > 2) {
-      errors.push('A matrix report groups by two fields at most each way.');
-    }
-  }
+  if (format)
+    errors.push(...groupingProblems(format, groupingsDown.length, groupingsAcross.length));
   const grouped = new Set([...groupingsDown, ...groupingsAcross].map((g) => g.field.toLowerCase()));
 
   const columns: ReportSpec['columns'] = [];
@@ -559,15 +633,32 @@ export function checkReportSpec(
     const interval = DATE_INTERVALS.find((i) => i === (str(range.interval) || 'INTERVAL_CUSTOM'));
     const start = str(range.start);
     const end = str(range.end);
+    const relativeText = str(range.relative);
+    const relative = relativeText ? relativeDateLiteral(relativeText) : null;
     if (!column) errors.push('A date range names its date column.');
-    if (!interval) errors.push(`A date range is one of ${DATE_INTERVALS.join(', ')}.`);
-    if ((start && !ISO_DATE.test(start)) || (end && !ISO_DATE.test(end))) {
-      errors.push('A date range’s start and end are YYYY-MM-DD.');
+    if (relativeText) {
+      if (!relative) {
+        errors.push(
+          `"${relativeText}" is not a relative date range: LAST_N_DAYS:365, LAST_N_MONTHS:12, NEXT_N_WEEKS:4, THIS_YEAR, LAST_QUARTER…`
+        );
+      }
+      if (str(range.interval) || start || end) {
+        errors.push('A date range is relative, an interval, or start and end dates: one of them.');
+      }
+      if (filters.length >= 20) {
+        errors.push('A relative date range counts as a filter, and a report takes 20 at most.');
+      }
+      if (column && relative) dateFilter = { column, interval: 'INTERVAL_CUSTOM', relative };
+    } else {
+      if (!interval) errors.push(`A date range is one of ${DATE_INTERVALS.join(', ')}.`);
+      if ((start && !ISO_DATE.test(start)) || (end && !ISO_DATE.test(end))) {
+        errors.push('A date range’s start and end are YYYY-MM-DD.');
+      }
+      if (interval === 'INTERVAL_CUSTOM' && !start && !end) {
+        errors.push('A custom date range has a start, an end, or both.');
+      }
     }
-    if (interval === 'INTERVAL_CUSTOM' && !start && !end) {
-      errors.push('A custom date range has a start, an end, or both.');
-    }
-    if (column && interval) {
+    if (!relativeText && column && interval) {
       dateFilter = {
         column,
         interval,
@@ -638,6 +729,16 @@ export function buildReportPackage(spec: ReportSpec): {
     ...(spec.newFolder ? [{ type: 'Report', member: spec.folder }] : []),
     { type: 'Report', member: `${spec.folder}/${spec.developerName}` },
   ];
+  // A relative range is one more filter, ANDed with whatever the logic says.
+  const relative = spec.dateFilter?.relative;
+  const filters = relative
+    ? [
+        ...spec.filters,
+        { column: spec.dateFilter?.column ?? '', operator: 'equals' as const, value: relative },
+      ]
+    : spec.filters;
+  const filterLogic =
+    spec.filterLogic && relative ? `(${spec.filterLogic}) AND ${filters.length}` : spec.filterLogic;
   const report = metadataFile('Report', {
     columns: spec.columns.map((column) => ({
       aggregateTypes: column.aggregates.length > 0 ? column.aggregates : null,
@@ -645,10 +746,10 @@ export function buildReportPackage(spec: ReportSpec): {
     })),
     description: spec.description ?? null,
     filter:
-      spec.filters.length > 0
+      filters.length > 0
         ? {
-            booleanFilter: spec.filterLogic ?? null,
-            criteriaItems: spec.filters.map((filter) => ({
+            booleanFilter: filterLogic ?? null,
+            criteriaItems: filters.map((filter) => ({
               column: filter.column,
               columnToColumn: false,
               isUnlocked: true,
@@ -669,14 +770,15 @@ export function buildReportPackage(spec: ReportSpec): {
     showSubTotals: true,
     sortColumn: spec.sort?.column ?? null,
     sortOrder: spec.sort?.order ?? null,
-    timeFrameFilter: spec.dateFilter
-      ? {
-          dateColumn: spec.dateFilter.column,
-          endDate: spec.dateFilter.end ?? null,
-          interval: spec.dateFilter.interval,
-          startDate: spec.dateFilter.start ?? null,
-        }
-      : null,
+    timeFrameFilter:
+      spec.dateFilter && !relative
+        ? {
+            dateColumn: spec.dateFilter.column,
+            endDate: spec.dateFilter.end ?? null,
+            interval: spec.dateFilter.interval,
+            startDate: spec.dateFilter.start ?? null,
+          }
+        : null,
   });
   const files: Record<string, string> = {
     'package.xml': packageXml(members),
@@ -735,34 +837,142 @@ export interface ReportTypeColumnAdd {
   checked: boolean;
 }
 
+export interface ReportTypeColumnRemove {
+  /** One of reportTypeTables. */
+  table: string;
+  field: string;
+}
+
+export interface ReportTypeEdit {
+  adds?: readonly ReportTypeColumnAdd[];
+  removes?: readonly ReportTypeColumnRemove[];
+  label?: string;
+  description?: string;
+  /** Whether report builders can use it (false: in development). */
+  deployed?: boolean;
+}
+
+/** The ReportType schema's element order, for an element the read did not carry. */
+const REPORT_TYPE_ELEMENTS = [
+  'fullName',
+  'autogenerated',
+  'baseObject',
+  'category',
+  'deployed',
+  'description',
+  'join',
+  'label',
+  'sections',
+];
+
+function setElement(metadata: Json, key: string, value: unknown): void {
+  if (key in metadata) {
+    metadata[key] = value;
+    return;
+  }
+  const rank = (name: string) => {
+    const at = REPORT_TYPE_ELEMENTS.indexOf(name);
+    return at < 0 ? REPORT_TYPE_ELEMENTS.length : at;
+  };
+  const added: [string, unknown] = [key, value];
+  const entries = [...Object.entries(metadata), added];
+  for (const name of Object.keys(metadata)) delete metadata[name];
+  entries
+    .map((entry, index) => ({ entry, index }))
+    .sort((a, b) => rank(a.entry[0]) - rank(b.entry[0]) || a.index - b.index)
+    .forEach(({ entry }) => {
+      metadata[entry[0]] = entry[1];
+    });
+}
+
 /**
- * A report type with columns added, and its rows for the review page — or
- * why not. A report type deploys whole, so everything it has stays exactly
- * as read: columns are only added, at the end of their section (a new
- * section at the end), never moved or taken away. A column already offered
- * anywhere in the type is refused, as is a table the type does not join.
+ * A report type changed, and its rows for the review page — or why not. A
+ * report type deploys whole, so everything the change does not name stays
+ * exactly as read. Columns are taken away first (a section left empty goes
+ * with them), then added at the end of their section (a new section at the
+ * end), never moved; the label, description and whether it is deployed are
+ * replaced. Refused: a column to remove that is not offered, one to add
+ * that already is, a table the type does not join, taking the last column,
+ * and a change that changes nothing.
  */
-export function mergeReportTypeColumns(
+export function editReportType(
   metadata: Json,
-  adds: readonly ReportTypeColumnAdd[]
+  edit: ReportTypeEdit
 ): { ok: true; metadata: Json; rows: ChangeRow[] } | { ok: false; errors: string[] } {
   const next = normalizeReportType(metadata);
-  const sections = list(next.sections).filter(isRecord);
+  let sections = list(next.sections).filter(isRecord);
   const tables = reportTypeTables(next);
   const errors: string[] = [];
+  const rows: ChangeRow[] = [];
+  const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+  const columnsOf = (section: Json) => list(section.columns).filter(isRecord);
+
+  const label = edit.label?.trim();
+  if (label !== undefined && label !== str(next.label)) {
+    if (!label || label.length > 50) errors.push('A report type label is 1 to 50 characters.');
+    else {
+      rows.push({ label: 'Label', value: `${str(next.label)} → ${label}` });
+      setElement(next, 'label', label);
+    }
+  }
+  const description = edit.description?.trim();
+  if (description !== undefined && description !== str(next.description)) {
+    if (!description || description.length > 255) {
+      errors.push('A report type description is 1 to 255 characters.');
+    } else {
+      rows.push({ label: 'Description', value: description });
+      setElement(next, 'description', description);
+    }
+  }
+  if (edit.deployed !== undefined && edit.deployed !== (String(next.deployed) === 'true')) {
+    rows.push({
+      label: 'Available to users',
+      value: edit.deployed ? 'yes' : 'no (in development): its reports stop running until it is',
+    });
+    setElement(next, 'deployed', edit.deployed ? 'true' : 'false');
+  }
+
+  const removed = new Map<string, string[]>();
+  for (const remove of edit.removes ?? []) {
+    const table = tables.find((t) => same(t, remove.table));
+    const holder =
+      table &&
+      sections.find((section) =>
+        columnsOf(section).some(
+          (column) => same(str(column.table), table) && same(str(column.field), remove.field)
+        )
+      );
+    if (!table || !holder) {
+      errors.push(
+        `${remove.field} (${table ?? remove.table}) is not in the report type, so it cannot be taken out.`
+      );
+      continue;
+    }
+    holder.columns = columnsOf(holder).filter(
+      (column) => !(same(str(column.table), table) && same(str(column.field), remove.field))
+    );
+    const key = str(holder.masterLabel);
+    removed.set(key, [...(removed.get(key) ?? []), remove.field]);
+  }
+  for (const [section, fields] of removed) {
+    const emptied = sections.some(
+      (s) => str(s.masterLabel) === section && columnsOf(s).length === 0
+    );
+    rows.push({
+      label: `Section “${section}”`,
+      value: `takes out ${fields.join(', ')}${emptied ? '; the section, now empty, goes too' : ''} — reports showing ${fields.length === 1 ? 'it lose that column' : 'them lose those columns'}`,
+    });
+  }
+
   const added = new Map<string, string[]>();
   const has = (table: string, field: string) =>
     sections.find((section) =>
-      list(section.columns)
-        .filter(isRecord)
-        .some(
-          (column) =>
-            str(column.table).toLowerCase() === table.toLowerCase() &&
-            str(column.field).toLowerCase() === field.toLowerCase()
-        )
+      columnsOf(section).some(
+        (column) => same(str(column.table), table) && same(str(column.field), field)
+      )
     );
-  for (const add of adds) {
-    const table = tables.find((t) => t.toLowerCase() === add.table.toLowerCase());
+  for (const add of edit.adds ?? []) {
+    const table = tables.find((t) => same(t, add.table));
     if (!table) {
       errors.push(
         `${add.field}: the report type’s tables are ${tables.join(', ')}, not ${add.table}.`
@@ -776,17 +986,17 @@ export function mergeReportTypeColumns(
       );
       continue;
     }
-    const label = add.section.trim();
-    if (!label || label.length > 80) {
+    const sectionLabel = add.section.trim();
+    if (!sectionLabel || sectionLabel.length > 80) {
       errors.push('A section label is 1 to 80 characters.');
       continue;
     }
-    let section = sections.find((s) => str(s.masterLabel).toLowerCase() === label.toLowerCase());
+    let section = sections.find((s) => same(str(s.masterLabel), sectionLabel));
     if (!section) {
-      section = { columns: [], masterLabel: label };
+      section = { columns: [], masterLabel: sectionLabel };
       sections.push(section);
     }
-    const columns = list(section.columns).filter(isRecord);
+    const columns = columnsOf(section);
     columns.push({ checkedByDefault: add.checked ? 'true' : 'false', field: add.field, table });
     section.columns = columns;
     const key = str(section.masterLabel);
@@ -795,18 +1005,27 @@ export function mergeReportTypeColumns(
       `${add.field}${add.checked ? ' (shown by default)' : ''}`,
     ]);
   }
+  for (const [section, fields] of added) {
+    rows.push({ label: `Section “${section}”`, value: `adds ${fields.join(', ')}` });
+  }
+
+  sections = sections.filter((section) => columnsOf(section).length > 0);
   next.sections = sections;
-  if (errors.length === 0 && added.size === 0)
+  if (errors.length === 0 && sections.length === 0) {
+    errors.push('A report type with no columns offers nothing to report on.');
+  }
+  if (errors.length === 0 && rows.length === 0)
     errors.push('Nothing in that changes the report type.');
   if (errors.length > 0) return { ok: false, errors };
-  return {
-    ok: true,
-    metadata: next,
-    rows: [...added].map(([section, fields]) => ({
-      label: `Section “${section}”`,
-      value: `adds ${fields.join(', ')}`,
-    })),
-  };
+  return { ok: true, metadata: next, rows };
+}
+
+/** A report type with columns added (editReportType, additions only). */
+export function mergeReportTypeColumns(
+  metadata: Json,
+  adds: readonly ReportTypeColumnAdd[]
+): { ok: true; metadata: Json; rows: ChangeRow[] } | { ok: false; errors: string[] } {
+  return editReportType(metadata, { adds });
 }
 
 /**
@@ -910,3 +1129,422 @@ export function reportFileColumnsFromLayout(
 
 /** Whether a report type's API name is a custom report type's (`…__c`). */
 export const isCustomReportType = (name: string): boolean => /__c$/i.test(name.trim());
+
+// ——— changes to an existing report ———
+
+const REPORT_LISTS = ['columns', 'groupingsDown', 'groupingsAcross'];
+
+/**
+ * A report read whole (readMetadata), with the repeated elements a change
+ * touches always arrays — columns, groupings, and the filter's criteria —
+ * so a change and its fingerprint do not depend on there being one.
+ */
+export function normalizeReport(metadata: Json): Json {
+  const next = structuredClone(metadata);
+  for (const key of REPORT_LISTS) {
+    if (key in next) next[key] = list(next[key]).filter(isRecord);
+  }
+  if (isRecord(next.filter)) {
+    next.filter = {
+      ...next.filter,
+      criteriaItems: list(next.filter.criteriaItems).filter(isRecord),
+    };
+  }
+  return next;
+}
+
+/** A report's elements are in alphabetical order in the schema: a new one goes where it sorts. */
+function setReportElement(metadata: Json, key: string, value: unknown): void {
+  if (key in metadata) {
+    metadata[key] = value;
+    return;
+  }
+  const entries = Object.entries(metadata);
+  const at = entries.findIndex(
+    ([name]) => name !== 'fullName' && name.toLowerCase() > key.toLowerCase()
+  );
+  entries.splice(at < 0 ? entries.length : at, 0, [key, value]);
+  for (const name of Object.keys(metadata)) delete metadata[name];
+  for (const [name, entry] of entries) metadata[name] = entry;
+}
+
+type ReportFilter = ReportSpec['filters'][number];
+
+const criteriaItem = (filter: ReportFilter): Json => ({
+  column: filter.column,
+  columnToColumn: false,
+  isUnlocked: true,
+  operator: filter.operator,
+  value: filter.value,
+});
+
+const filterWords = (item: Json): string =>
+  `${str(item.column)} ${str(item.operator)} ${str(item.value) || '(blank)'}`;
+
+/** A relative range saved as a filter (`equals LAST_N_MONTHS:12`) on this column. */
+const isRelativeRange = (item: Json, column: string): boolean =>
+  str(item.column).toLowerCase() === column.toLowerCase() &&
+  str(item.operator) === 'equals' &&
+  relativeDateLiteral(str(item.value)) !== null;
+
+function timeFrameWords(frame: Json): string {
+  const interval = str(frame.interval);
+  return interval === 'INTERVAL_CUSTOM'
+    ? `${str(frame.dateColumn)}: ${str(frame.startDate) || '…'} to ${str(frame.endDate) || '…'}`
+    : `${str(frame.dateColumn)}: ${interval.replace(/^INTERVAL_/, '').toLowerCase()}`;
+}
+
+const groupingWords = (grouping: Json): string =>
+  `${str(grouping.field)}${str(grouping.dateGranularity) && str(grouping.dateGranularity) !== 'None' ? ` by ${str(grouping.dateGranularity)}` : ''}${str(grouping.sortOrder) === 'Desc' ? ' (descending)' : ''}`;
+
+/**
+ * A report as it is, in lines: what a change to it starts from. Filters are
+ * numbered as its filter logic numbers them.
+ */
+export function reportLines(metadata: Json): string[] {
+  const report = normalizeReport(metadata);
+  const lines = [
+    `Name: ${str(report.name)}`,
+    ...(str(report.description) ? [`Description: ${str(report.description)}`] : []),
+    `Report type: ${str(report.reportType)}`,
+    `Format: ${str(report.format) || 'Tabular'}`,
+    'Columns:',
+    ...list(report.columns)
+      .filter(isRecord)
+      .map((column) => {
+        const aggregates = list(column.aggregateTypes).map(str).filter(Boolean);
+        return `  ${str(column.field)}${aggregates.length ? ` (${aggregates.join(', ')})` : ''}`;
+      }),
+  ];
+  const down = list(report.groupingsDown).filter(isRecord);
+  const across = list(report.groupingsAcross).filter(isRecord);
+  if (down.length) lines.push(`Rows grouped by: ${down.map(groupingWords).join(', then ')}`);
+  if (across.length) lines.push(`Columns grouped by: ${across.map(groupingWords).join(', then ')}`);
+  const filter = isRecord(report.filter) ? report.filter : {};
+  const items = list(filter.criteriaItems).filter(isRecord);
+  if (items.length) {
+    lines.push('Filters:', ...items.map((item, index) => `  ${index + 1}. ${filterWords(item)}`));
+  }
+  if (str(filter.booleanFilter)) lines.push(`Filter logic: ${str(filter.booleanFilter)}`);
+  if (isRecord(report.timeFrameFilter)) {
+    lines.push(`Date range: ${timeFrameWords(report.timeFrameFilter)}`);
+  }
+  if (str(report.scope)) lines.push(`Records: ${str(report.scope)}`);
+  if (str(report.sortColumn)) {
+    lines.push(`Sorted by: ${str(report.sortColumn)} ${str(report.sortOrder) || 'Asc'}`);
+  }
+  return lines;
+}
+
+export interface ReportEdit {
+  name?: string;
+  description?: string;
+  /** A column to show; one already shown takes the summaries given. */
+  addColumns?: ReadonlyArray<{ field: string; aggregates?: readonly string[] }>;
+  removeColumns?: readonly string[];
+  /** The report's filters, all of them: these replace the ones it has. */
+  filters?: ReadonlyArray<{ column: string; operator: string; value: string }>;
+  /** Filters added after the ones it has, ANDed with them. */
+  addFilters?: ReadonlyArray<{ column: string; operator: string; value: string }>;
+  filterLogic?: string;
+  dateFilter?: {
+    column: string;
+    interval?: string;
+    start?: string;
+    end?: string;
+    relative?: string;
+  };
+  format?: string;
+  groupingsDown?: readonly unknown[];
+  groupingsAcross?: readonly unknown[];
+  scope?: string;
+  sort?: { column: string; order?: string };
+  showDetails?: boolean;
+}
+
+/**
+ * A report changed, and its rows for the review page — or why not. A report
+ * deploys whole, so everything the change does not name — its chart,
+ * buckets, formulas, cross filters — stays exactly as read. `column` gives
+ * a column's name as the report type has it, or null when it has none.
+ *
+ * A relative date range (`dateFilter.relative`) is a filter on the date
+ * column, as in a new report: it takes the place of the report's time
+ * frame, and of a relative range saved on that column before.
+ */
+export function editReport(
+  metadata: Json,
+  edit: ReportEdit,
+  column: (name: string) => string | null = (name) => name
+): { ok: true; metadata: Json; rows: ChangeRow[] } | { ok: false; errors: string[] } {
+  const next = normalizeReport(metadata);
+  const errors: string[] = [];
+  const rows: ChangeRow[] = [];
+  const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+  const named = (name: string): string => {
+    const found = column(name.trim());
+    if (!found) errors.push(`${str(next.reportType)} has no column ${name}.`);
+    return found ?? name.trim();
+  };
+
+  const name = edit.name?.trim();
+  if (name !== undefined && name !== str(next.name)) {
+    if (!name || name.length > 40) errors.push('A report name is 1 to 40 characters.');
+    else {
+      rows.push({ label: 'Name', value: `${str(next.name)} → ${name}` });
+      setReportElement(next, 'name', name);
+    }
+  }
+  const description = edit.description?.trim();
+  if (description !== undefined && description !== str(next.description)) {
+    if (description.length > 255) errors.push('A report description is 255 characters at most.');
+    else {
+      rows.push({ label: 'Description', value: description || '(none)' });
+      setReportElement(next, 'description', description || null);
+    }
+  }
+
+  // Columns: taken off, then added at the end.
+  let columns = list(next.columns).filter(isRecord);
+  const removed: string[] = [];
+  for (const raw of edit.removeColumns ?? []) {
+    const field = column(raw.trim()) ?? raw.trim();
+    if (!columns.some((c) => same(str(c.field), field))) {
+      errors.push(`${raw} is not a column of the report, so it cannot be taken off.`);
+      continue;
+    }
+    columns = columns.filter((c) => !same(str(c.field), field));
+    removed.push(field);
+  }
+  const shown: string[] = [];
+  const summarized: string[] = [];
+  for (const add of edit.addColumns ?? []) {
+    const field = named(add.field);
+    const aggregates: ReportSummary[] = [];
+    for (const aggregate of add.aggregates ?? []) {
+      const known = REPORT_SUMMARIES.find((s) => s === aggregate);
+      if (known) aggregates.push(known);
+      else errors.push(`${field}: a summary is one of ${REPORT_SUMMARIES.join(', ')}.`);
+    }
+    const words = aggregates.length ? `${field} (${aggregates.join(', ')})` : field;
+    const at = columns.findIndex((c) => same(str(c.field), field));
+    if (at < 0) {
+      columns.push({ aggregateTypes: aggregates.length ? aggregates : null, field });
+      shown.push(words);
+    } else if (add.aggregates) {
+      columns[at] = { aggregateTypes: aggregates.length ? aggregates : null, field };
+      summarized.push(aggregates.length ? words : `${field} (no summary)`);
+    } else {
+      errors.push(`${field} is already a column of the report.`);
+    }
+  }
+  if (removed.length) rows.push({ label: 'Columns taken off', value: removed.join(', ') });
+  if (shown.length) rows.push({ label: 'Columns added', value: shown.join(', ') });
+  if (summarized.length) rows.push({ label: 'Summaries', value: summarized.join(', ') });
+  if (removed.length || shown.length || summarized.length) {
+    if (columns.length === 0) errors.push('A report shows at least one column.');
+    if (columns.length > 100) errors.push('A report shows 100 columns at most.');
+    setReportElement(next, 'columns', columns);
+  }
+
+  // Filters, their logic and the date range.
+  const filter: Json = isRecord(next.filter) ? { ...next.filter } : {};
+  let items = list(filter.criteriaItems).filter(isRecord);
+  let logic = str(filter.booleanFilter);
+  let filtersChanged = false;
+  const checkedFilters = (raw: ReportEdit['filters']): Json[] =>
+    (raw ?? []).flatMap((entry) => {
+      const operator = REPORT_FILTER_OPERATORS.find((o) => o === entry.operator);
+      if (!operator) {
+        errors.push(`A filter’s operator is one of ${REPORT_FILTER_OPERATORS.join(', ')}.`);
+        return [];
+      }
+      return [criteriaItem({ column: named(entry.column), operator, value: entry.value })];
+    });
+  if (edit.filters) {
+    items = checkedFilters(edit.filters);
+    logic = '';
+    filtersChanged = true;
+    rows.push({
+      label: 'Filters',
+      value: items.length ? items.map(filterWords).join('; ') : 'none (the ones it had go)',
+    });
+  }
+  if (edit.addFilters?.length) {
+    const added = checkedFilters(edit.addFilters);
+    if (logic) {
+      logic = `(${logic})${added.map((_, index) => ` AND ${items.length + index + 1}`).join('')}`;
+    }
+    items = [...items, ...added];
+    filtersChanged = true;
+    rows.push({ label: 'Filters added', value: added.map(filterWords).join('; ') });
+  }
+  if (edit.dateFilter) {
+    const range = edit.dateFilter;
+    const dateColumn = named(range.column);
+    const relativeText = str(range.relative);
+    const start = str(range.start);
+    const end = str(range.end);
+    // A relative range saved on the column before gives way to the new range.
+    const old = items.findIndex((item) => isRelativeRange(item, dateColumn));
+    if (old >= 0 && !edit.filters) {
+      const ours = new RegExp(`^\\((.*)\\) AND ${items.length}$`).exec(logic);
+      if (logic && !(old === items.length - 1 && ours)) {
+        errors.push(
+          `The report’s filter logic (${logic}) uses its relative range on ${dateColumn} (filter ${old + 1}); give its filters whole, with filterLogic, to change it.`
+        );
+      } else {
+        items = items.filter((_, index) => index !== old);
+        logic = ours ? ours[1] : '';
+        filtersChanged = true;
+      }
+    }
+    if (relativeText) {
+      const relative = relativeDateLiteral(relativeText);
+      if (!relative) {
+        errors.push(
+          `"${relativeText}" is not a relative date range: LAST_N_DAYS:365, LAST_N_MONTHS:12, NEXT_N_WEEKS:4, THIS_YEAR, LAST_QUARTER…`
+        );
+      } else if (str(range.interval) || start || end) {
+        errors.push('A date range is relative, an interval, or start and end dates: one of them.');
+      } else {
+        items = [
+          ...items,
+          criteriaItem({ column: dateColumn, operator: 'equals', value: relative }),
+        ];
+        if (logic) logic = `(${logic}) AND ${items.length}`;
+        filtersChanged = true;
+        if ('timeFrameFilter' in next) setReportElement(next, 'timeFrameFilter', null);
+        rows.push({
+          label: 'Date range',
+          value: `${dateColumn}: ${relativeDateWords(relative)} (${relative}), counted from the day the report is run`,
+        });
+      }
+    } else {
+      const interval = DATE_INTERVALS.find((i) => i === (str(range.interval) || 'INTERVAL_CUSTOM'));
+      if (!interval) errors.push(`A date range is one of ${DATE_INTERVALS.join(', ')}.`);
+      if ((start && !ISO_DATE.test(start)) || (end && !ISO_DATE.test(end))) {
+        errors.push('A date range’s start and end are YYYY-MM-DD.');
+      }
+      if (interval === 'INTERVAL_CUSTOM' && !start && !end) {
+        errors.push('A custom date range has a start, an end, or both.');
+      }
+      if (interval) {
+        const frame = {
+          dateColumn,
+          endDate: interval === 'INTERVAL_CUSTOM' && end ? end : null,
+          interval,
+          startDate: interval === 'INTERVAL_CUSTOM' && start ? start : null,
+        };
+        setReportElement(next, 'timeFrameFilter', frame);
+        rows.push({ label: 'Date range', value: timeFrameWords(frame) });
+      }
+    }
+  }
+  const newLogic = edit.filterLogic?.trim();
+  if (newLogic !== undefined && newLogic !== logic) {
+    // Logic given with a relative range is over the other filters; the range is ANDed on.
+    const relativeLast =
+      edit.dateFilter?.relative && items.length > 0 && !errors.length ? items.length : 0;
+    if (relativeLast && newLogic) {
+      const problem = checkFilterLogic(newLogic, relativeLast - 1);
+      if (problem) errors.push(problem);
+      logic = `(${newLogic}) AND ${relativeLast}`;
+    } else {
+      logic = newLogic;
+    }
+    filtersChanged = true;
+    rows.push({ label: 'Filter logic', value: logic || 'every filter (AND)' });
+  }
+  if (filtersChanged) {
+    if (items.length > 20) errors.push('A report takes 20 filters at most.');
+    if (logic) {
+      const problem = checkFilterLogic(logic, items.length);
+      if (problem && !errors.includes(problem)) errors.push(problem);
+    }
+    if (items.length === 0) {
+      if ('filter' in next) setReportElement(next, 'filter', null);
+    } else {
+      // booleanFilter, criteriaItems, then whatever else it had (language).
+      const { booleanFilter: _logic, criteriaItems: _items, ...rest } = filter;
+      setReportElement(next, 'filter', {
+        booleanFilter: logic || null,
+        criteriaItems: items,
+        ...rest,
+      });
+    }
+  }
+
+  // Format and groupings.
+  const groupingErrors: string[] = [];
+  const toGroupings = (raw: readonly unknown[], label: string): Json[] =>
+    groupingsOf(raw, label, groupingErrors).map((g) => ({
+      dateGranularity: g.dateGranularity ?? null,
+      field: named(g.field),
+      sortOrder: g.sortOrder,
+    }));
+  if (edit.groupingsDown) {
+    const groupings = toGroupings(edit.groupingsDown, 'Row groupings');
+    setReportElement(next, 'groupingsDown', groupings);
+    rows.push({
+      label: 'Rows grouped by',
+      value: groupings.map(groupingWords).join(', then ') || 'nothing',
+    });
+  }
+  if (edit.groupingsAcross) {
+    const groupings = toGroupings(edit.groupingsAcross, 'Column groupings');
+    setReportElement(next, 'groupingsAcross', groupings);
+    rows.push({
+      label: 'Columns grouped by',
+      value: groupings.map(groupingWords).join(', then ') || 'nothing',
+    });
+  }
+  errors.push(...groupingErrors);
+  const formatText = edit.format?.trim();
+  if (formatText !== undefined && formatText !== str(next.format)) {
+    const format = REPORT_FORMATS.find((f) => f === formatText);
+    if (!format) errors.push(`The format is one of ${REPORT_FORMATS.join(', ')}.`);
+    else {
+      rows.push({ label: 'Format', value: `${str(next.format) || 'Tabular'} → ${format}` });
+      setReportElement(next, 'format', format);
+    }
+  }
+  if (edit.groupingsDown || edit.groupingsAcross || formatText !== undefined) {
+    const format = REPORT_FORMATS.find((f) => f === str(next.format));
+    if (format) {
+      errors.push(
+        ...groupingProblems(
+          format,
+          list(next.groupingsDown).length,
+          list(next.groupingsAcross).length
+        )
+      );
+    }
+  }
+
+  const scope = edit.scope?.trim();
+  if (scope && scope !== str(next.scope)) {
+    rows.push({ label: 'Records', value: scope });
+    setReportElement(next, 'scope', scope);
+  }
+  if (edit.sort) {
+    const sortColumn = named(edit.sort.column);
+    const order = edit.sort.order === 'Desc' ? 'Desc' : 'Asc';
+    if (sortColumn !== str(next.sortColumn) || order !== str(next.sortOrder)) {
+      rows.push({ label: 'Sorted by', value: `${sortColumn} ${order}` });
+      setReportElement(next, 'sortColumn', sortColumn);
+      setReportElement(next, 'sortOrder', order);
+    }
+  }
+  if (
+    edit.showDetails !== undefined &&
+    edit.showDetails !== (String(next.showDetails) === 'true')
+  ) {
+    rows.push({ label: 'Detail rows', value: edit.showDetails ? 'shown' : 'hidden' });
+    setReportElement(next, 'showDetails', edit.showDetails ? 'true' : 'false');
+  }
+
+  if (errors.length === 0 && rows.length === 0) errors.push('Nothing in that changes the report.');
+  if (errors.length > 0) return { ok: false, errors: [...new Set(errors)] };
+  return { ok: true, metadata: next, rows };
+}

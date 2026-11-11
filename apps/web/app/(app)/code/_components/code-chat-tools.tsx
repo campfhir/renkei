@@ -5,6 +5,10 @@
  * Tools — their own buttons on a wide screen, items of the overflow menu
  * on a narrow one: **Environment** — the project's variables, to look
  * at, replace by pasting a `.env`, or prune, without leaving the chat;
+ * and, in the overflow menu only, **Pipelines** — the project's
+ * Bitbucket Pipelines or GitHub Actions page in a dialog, the very
+ * component the project's own page draws (pipelines-modal.tsx), where a
+ * person sees the workflow a chat drafted and the variables it set;
  * **Add files**, which puts files a person picks or drops into the
  * checkout, untracked, for the chat's tools to read, use and commit —
  * or among the project's artifacts instead (add-files-modal.tsx);
@@ -32,6 +36,7 @@ import {
   type ReactNode,
 } from 'react';
 import AddFilesModal from './add-files-modal';
+import PipelinesModal from './pipelines-modal';
 import Modal from '@/components/modal';
 import { Icon, ICONS } from '@/components/icons';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
@@ -103,6 +108,8 @@ export interface CodeChatToolsHandle {
   /** The project's previews that are up — "Open preview" items for the menu (code-chat-previews.model.ts). */
   previews: PreviewMenuItem[];
   openEnvironment: () => void;
+  /** The project's Pipelines (Bitbucket) or Actions (GitHub), in a dialog. */
+  openPipelines: () => void;
   openFiles: () => void;
   /** Open the panel — on one commit's diff when a hash is given. */
   openChanges: (commitSha?: string) => void;
@@ -156,6 +163,7 @@ export function useCodeChatTools({
     commit: null,
   });
   const [envOpen, setEnvOpen] = useState(false);
+  const [pipelinesOpen, setPipelinesOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
   const [branch, setBranch] = useState<string | null>(null);
   const [previewState, dispatchPreviews] = useReducer(
@@ -229,6 +237,13 @@ export function useCodeChatTools({
       {envOpen ? (
         <EnvironmentModal base={envBase} canEdit={canEdit} onClose={() => setEnvOpen(false)} />
       ) : null}
+      {pipelinesOpen ? (
+        <PipelinesModal
+          projectId={projectId}
+          projectName={projectName ?? 'the project'}
+          onClose={() => setPipelinesOpen(false)}
+        />
+      ) : null}
       {filesOpen ? (
         <AddFilesModal
           base={base}
@@ -259,6 +274,7 @@ export function useCodeChatTools({
     commits,
     branch,
     openEnvironment: () => setEnvOpen(true),
+    openPipelines: () => setPipelinesOpen(true),
     openFiles: () => setFilesOpen(true),
     openChanges,
     modals,

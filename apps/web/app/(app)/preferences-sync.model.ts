@@ -29,6 +29,7 @@ const SHELL_DOCUMENTS: ReadonlySet<string> = new Set([
   'coachMarks',
   'chatArchive',
   'image',
+  'chatModel',
   'defaultTools',
 ]);
 

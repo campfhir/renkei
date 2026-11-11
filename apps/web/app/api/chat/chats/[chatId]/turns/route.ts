@@ -75,6 +75,12 @@ export async function POST(
         );
       case 'MODEL_ERROR':
         return jsonError(409, 'model-error', started.err.message ?? 'The model is not usable.');
+      case 'TOKEN_LIMIT':
+        return jsonError(
+          429,
+          'token-limit',
+          started.err.message ?? 'You have reached your token limit.'
+        );
       case 'CONTENT_KEY':
         logger.error(
           '{actor} sent a message of {chars} characters{withFiles}, but the content encryption key is not configured; nothing was saved: {error}',

@@ -20,6 +20,8 @@ export interface ProjectView {
     description: string | null;
     instructions: string | null;
     toolConfig: ChatToolConfigView | null;
+    /** The model the project's new chats start on; null for none of its own. */
+    llmModelId: string | null;
     ownerSubject: string;
     ownerName: string | null;
     createdAt: string;
@@ -84,6 +86,7 @@ export async function loadProjectView(
       description: project.description,
       instructions: openProjectInstructions(project, access.cipher),
       toolConfig: project.toolConfig,
+      llmModelId: project.llmModelId,
       ownerSubject: project.ownerSubject,
       ownerName: names.get(project.ownerSubject) ?? null,
       createdAt: project.createdAt.toISOString(),

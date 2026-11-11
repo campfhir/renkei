@@ -233,8 +233,12 @@ export interface QuickChatState<S extends QuickChatSetup = QuickChatSetup> {
 }
 
 export type QuickChatAction<S extends QuickChatSetup = QuickChatSetup> =
-  /** The chat was made and the composer's setup loaded. */
-  | { type: 'ready'; chatId: string; setup: S }
+  /**
+   * The chat was made and the composer's setup loaded. `modelId` is the
+   * model the chat was made on: the person's preferred one, when they
+   * have one.
+   */
+  | { type: 'ready'; chatId: string; setup: S; modelId?: string | null }
   /** Making the chat or loading the composer failed; `error` is the server's words, if any. */
   | { type: 'failed'; stage: 'create' | 'setup'; error: string | null }
   | { type: 'sending' }
@@ -261,7 +265,9 @@ export function quickChatReducer<S extends QuickChatSetup>(
         ...state,
         chatId: action.chatId,
         setup: action.setup,
-        modelId: defaultModelId(action.setup.models),
+        modelId:
+          action.setup.models.find((model) => model.id === action.modelId)?.id ??
+          defaultModelId(action.setup.models),
       };
     case 'failed':
       return {

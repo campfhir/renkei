@@ -27,7 +27,12 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { APIResponse, Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { connectBitbucket, createCodeProject, prepareCodeHost } from './support/code-host';
+import {
+  connectBitbucket,
+  createChat,
+  createCodeProject,
+  prepareCodeHost,
+} from './support/code-host';
 
 // The catalog's admin page is an operator's.
 test.use({ roles: ['renkei-user', 'renkei-operator'] });
@@ -332,5 +337,24 @@ test.describe('Code project pipelines', () => {
     await row.getByRole('button', { name: 'Delete' }).click();
     await expect(row).toHaveCount(0);
     await expect(main.getByText('Node with pnpm', { exact: true })).toBeVisible();
+  });
+  test('a code chat’s overflow menu opens the same page in a dialog', async ({ page }) => {
+    const chatId = await createChat(page.request, { projectId: ids.projectId, title: 'Draft CI' });
+    await page.goto(`/chat/${chatId}`);
+    const main = page.getByRole('main');
+    await main.getByRole('button', { name: 'More', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Pipelines' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Pipelines' });
+    await expect(dialog).toBeVisible();
+    // The page's own cards, without its page header or back link.
+    await expect(dialog.getByRole('region', { name: 'Recent runs' })).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(dialog.getByRole('region', { name: 'Setup' })).toBeVisible();
+    await expect(dialog.getByRole('region', { name: 'Repository variables' })).toBeVisible();
+    await expect(dialog.getByRole('heading', { level: 1 })).toHaveCount(0);
+    await expect(dialog.getByRole('link', { name: 'Open on Bitbucket' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
   });
 });

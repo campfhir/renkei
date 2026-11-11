@@ -272,6 +272,14 @@ export interface ModelOption {
   supportsThinking: boolean;
   /** Context window in tokens, as the admin recorded it; null when none was. */
   contextWindow: number | null;
+  /**
+   * Why this person cannot start a turn on this model right now: their
+   * token limit, or the model's own, is reached ("Weekly limit reached ·
+   * resets Mon 16 Nov, 00:00 UTC"). Absent or null when they can. The
+   * picker shows it and does not let the model be chosen; the server
+   * refuses the turn either way.
+   */
+  limitReached?: string | null;
 }
 
 /**

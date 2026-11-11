@@ -560,3 +560,33 @@ describe('file sizes', () => {
     expect(sizeOf(5 * 1024 * 1024 + 100_000)).toBe('5.1 MB');
   });
 });
+
+describe('the model in use is at a token limit', () => {
+  const typed = run([{ type: 'typed', text: 'Hi' }]);
+
+  it('Send is off whatever is typed, and Enter sends nothing', () => {
+    expect(sendButton(typed, { running: false, disabled: false, blocked: true })).toEqual({
+      kind: 'send',
+      disabled: true,
+    });
+    expect(sendStep(typed, false, true).kind).toBe('nothing');
+  });
+
+  it('nothing is queued behind a running reply either, but Stop still stops', () => {
+    expect(sendButton(typed, { running: true, disabled: false, blocked: true })).toEqual({
+      kind: 'queue',
+      disabled: true,
+    });
+    expect(sendButton(run([]), { running: true, disabled: false, blocked: true })).toEqual({
+      kind: 'stop',
+    });
+  });
+
+  it('with another model picked, Send is back', () => {
+    expect(sendButton(typed, { running: false, disabled: false, blocked: false })).toEqual({
+      kind: 'send',
+      disabled: false,
+    });
+    expect(sendStep(typed, false, false).kind).toBe('submit');
+  });
+});

@@ -20,6 +20,7 @@ export function salesforceAdminScopeFor(toolName: string): string[] {
     case 'salesforce_admin_get_record_type':
     case 'salesforce_admin_list_report_types':
     case 'salesforce_admin_list_report_folders':
+    case 'salesforce_admin_get_report':
       return ['sfa-read'];
 
     // Asking for a change in words needs only what looking things up
@@ -39,6 +40,7 @@ export function salesforceAdminScopeFor(toolName: string): string[] {
     case 'salesforce_admin_propose_report_type':
     case 'salesforce_admin_propose_report_type_changes':
     case 'salesforce_admin_propose_report':
+    case 'salesforce_admin_propose_report_changes':
       return ['sfa-read', 'sfa-schema'];
 
     case 'salesforce_admin_propose_layout_changes':

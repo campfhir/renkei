@@ -190,7 +190,11 @@ export async function POST(
       });
     }
     const status =
-      result.err.type === 'DAILY_RUN_CAP' ? 429 : result.err.type === 'DB_ERROR' ? 500 : 409;
+      result.err.type === 'DAILY_RUN_CAP' || result.err.type === 'TOKEN_LIMIT'
+        ? 429
+        : result.err.type === 'DB_ERROR'
+          ? 500
+          : 409;
     return NextResponse.json(
       { error: result.err.message ?? 'The run could not be started.' },
       { status }

@@ -115,6 +115,30 @@ export interface ModelFormsState {
   testing: boolean;
   testError: string | null;
   testReply: string | null;
+  /** The removal being confirmed: null with its dialog closed. */
+  removing: ModelRemoval | null;
+}
+
+/** Who is still on a model, as the server counts them before it is removed. */
+export interface ModelUsage {
+  people: number;
+  /** At most three of them by name; the rest are only counted. */
+  names: string[];
+  /** People whose preferred chat model it is. */
+  preferences: number;
+  projects: number;
+  chats: number;
+  agents: number;
+}
+
+export interface ModelRemoval {
+  row: ModelRow;
+  /** null until the server says who is on the model. */
+  usage: ModelUsage | null;
+  /** The model picked to replace it: '' is none, which reads as the organization default. */
+  replacementId: string;
+  sending: boolean;
+  error: string | null;
 }
 
 /** One field of the draft changed to a value of its own type. */
@@ -141,6 +165,14 @@ export type ModelFormsAction =
   | { type: 'saved' }
   /** Save refused, by the form's own check or by the server; the draft stays as typed. */
   | { type: 'saveFailed'; error: string }
+  /** Remove pressed on a row: its dialog opens and asks who is on the model. */
+  | { type: 'removeAsked'; row: ModelRow }
+  | { type: 'usageLoaded'; usage: ModelUsage }
+  | { type: 'replacementPicked'; value: string }
+  | { type: 'removeCancelled' }
+  | { type: 'removeSent' }
+  | { type: 'removed' }
+  /** The usage could not be read, or the removal was refused; the dialog stays and says why. */
   | { type: 'removeFailed'; error: string };
 
 export const emptyDraft: ModelDraft = {
@@ -177,6 +209,7 @@ export const initialModelForms: ModelFormsState = {
   testing: false,
   testError: null,
   testReply: null,
+  removing: null,
 };
 
 /** Common model ids per provider, offered as suggestions — any id is accepted. */
@@ -328,8 +361,32 @@ export function modelFormsReducer(
       return { ...state, saving: false, editingId: null, draft: emptyDraft };
     case 'saveFailed':
       return { ...state, saving: false, formError: action.error };
+    case 'removeAsked':
+      return {
+        ...state,
+        removing: { row: action.row, usage: null, replacementId: '', sending: false, error: null },
+      };
+    case 'usageLoaded':
+      return state.removing
+        ? { ...state, removing: { ...state.removing, usage: action.usage } }
+        : state;
+    case 'replacementPicked':
+      return state.removing
+        ? { ...state, removing: { ...state.removing, replacementId: action.value, error: null } }
+        : state;
+    case 'removeCancelled':
+      // A removal on its way cannot be called back.
+      return state.removing?.sending ? state : { ...state, removing: null };
+    case 'removeSent':
+      return state.removing
+        ? { ...state, removing: { ...state.removing, sending: true, error: null } }
+        : state;
+    case 'removed':
+      return { ...state, removing: null };
     case 'removeFailed':
-      return { ...state, loadError: action.error };
+      return state.removing
+        ? { ...state, removing: { ...state.removing, sending: false, error: action.error } }
+        : { ...state, loadError: action.error };
   }
 }
 
@@ -541,4 +598,80 @@ export function rowView(row: ModelRow): RowView {
     warning: dataHandlingWarningOf(row),
     keyStored: row.hasApiKey,
   };
+}
+
+// ── Removing a model ────────────────────────────────────────────────────
+
+const counted = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+
+const listOf = (parts: string[]) =>
+  parts.length <= 1
+    ? parts.join('')
+    : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+
+export interface RemovalView {
+  title: string;
+  /** Who is on the model, in a sentence; null while the server is still counting. */
+  summary: string | null;
+  /** Somebody is on it: the dialog offers a replacement and says they will be told. */
+  inUse: boolean;
+  /** The replacement picker's options: the organization default first, then every model that can answer a chat. */
+  options: { value: string; label: string }[];
+  confirmLabel: string;
+  canConfirm: boolean;
+}
+
+export function removalView(state: ModelFormsState): RemovalView | null {
+  const removing = state.removing;
+  if (!removing) return null;
+  const { row, usage } = removing;
+  const others = (state.models ?? []).filter(
+    (model) => model.id !== row.id && model.enabled && !isImageSurface(model.settings?.apiSurface)
+  );
+  const orgDefault = others.find((model) => model.isDefault);
+  const inUse = (usage?.people ?? 0) > 0;
+  const what = usage
+    ? [
+        usage.preferences > 0 ? counted(usage.preferences, 'preferred chat model') : null,
+        usage.projects > 0 ? counted(usage.projects, 'project') : null,
+        usage.chats > 0 ? counted(usage.chats, 'chat') : null,
+        usage.agents > 0 ? counted(usage.agents, 'agent') : null,
+      ].filter((part) => part !== null)
+    : [];
+  const people = usage ? counted(usage.people, 'person').replace('persons', 'people') : '';
+  // A few people are named; past three the rest are a number.
+  const named = (usage?.names ?? []).slice(0, 3);
+  const unnamed = (usage?.people ?? 0) - named.length;
+  const who =
+    named.length === 0
+      ? people
+      : listOf([...named, ...(unnamed > 0 ? [`${unnamed} other${unnamed === 1 ? '' : 's'}`] : [])]);
+  return {
+    title: `Remove “${row.label}”`,
+    summary: !usage
+      ? null
+      : inUse
+        ? `${who} ${usage.people === 1 ? 'is' : 'are'} on this model: ${listOf(what)}.`
+        : 'Nobody is on this model.',
+    inUse,
+    options: [
+      {
+        value: '',
+        label: orgDefault
+          ? `Organization default (${orgDefault.label})`
+          : 'No replacement — the organization default, once there is one',
+      },
+      ...others.map((model) => ({ value: model.id, label: `${model.label} · ${model.model}` })),
+    ],
+    confirmLabel: removing.sending ? 'Removing…' : inUse ? `Remove and notify ${people}` : 'Remove',
+    canConfirm: usage !== null && !removing.sending,
+  };
+}
+
+/** What Remove sends: the model to delete and, when one was picked, what replaces it. */
+export function removeRequest(removing: ModelRemoval): { method: 'DELETE'; path: string } {
+  const replacement = removing.replacementId
+    ? `?replaceWith=${encodeURIComponent(removing.replacementId)}`
+    : '';
+  return { method: 'DELETE', path: `/api/admin/llm-models/${removing.row.id}${replacement}` };
 }

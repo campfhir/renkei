@@ -165,12 +165,19 @@ test.describe('code projects', () => {
     const sectionOf = (name: string) =>
       main.locator('section', { has: page.getByRole('heading', { level: 2, name }) });
 
-    // ── The index: the seeded project under Mine, its repository beneath ──
+    // ── The index: the seeded project under Mine, its repository beside it ──
     await page.goto(`/code`);
     await expect(page.getByRole('heading', { level: 1, name: 'Code' })).toBeVisible();
     const seededRow = main.getByRole('link', { name: ids.seededName });
     await expect(seededRow).toBeVisible();
-    await expect(seededRow).toContainText('acme/billing-service');
+    // A table row from `sm` up, a card below it: the link's own row or card.
+    await expect(
+      main
+        .locator('tr, li')
+        .filter({ has: page.getByRole('link', { name: ids.seededName }) })
+        .filter({ visible: true })
+        .first()
+    ).toContainText('acme/billing-service');
     await expect(page.getByRole('link', { name: 'New code project' }).first()).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await shot('code-index.png');

@@ -20,6 +20,8 @@ export interface ChatProjectRecord {
   repoFullName: string | null;
   repoBranch: string | null;
   workspaceId: string | null;
+  /** The model the project's new chats start on; null for none of its own. */
+  llmModelId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -33,8 +35,10 @@ export interface NewChatProject {
   repo?: { provider: string; fullName: string; branch: string | null };
 }
 
-/** Absent fields stay; every update bumps `updatedAt`. */
+/** Absent fields stay; every update bumps `updatedAt`, unless `keepUpdatedAt` is set. */
 export interface ChatProjectPatch {
+  /** A change made on the owner's behalf, not by them (a description read from the README): the list order stays. */
+  keepUpdatedAt?: boolean;
   name?: string;
   description?: string | null;
   /** Sealed instructions, or null to clear. */
@@ -42,6 +46,8 @@ export interface ChatProjectPatch {
   toolConfig?: unknown;
   repo?: { provider: string; fullName: string; branch: string | null };
   workspaceId?: string | null;
+  /** The project's model, or null for none of its own. */
+  llmModelId?: string | null;
 }
 
 export interface ProjectMemoryRecord {

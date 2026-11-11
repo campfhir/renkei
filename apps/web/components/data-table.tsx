@@ -43,6 +43,8 @@ export function DataFrame({
   empty,
   footer,
   breakpoint = 'sm',
+  stickyFooter = true,
+  bodyHeight = BODY_MAX_HEIGHT,
   className = '',
 }: {
   /** The frame's accessible name, e.g. "Runs". */
@@ -56,6 +58,19 @@ export function DataFrame({
   /** Usually a `Pager`. */
   footer?: React.ReactNode;
   breakpoint?: DataTableBreakpoint;
+  /**
+   * Whether the footer rides the bottom edge of the viewport while the
+   * frame runs past it (the default). A short, fixed-height table turns it
+   * off, so its footer stays under its last row.
+   */
+  stickyFooter?: boolean;
+  /**
+   * The scrolling body's height, as Tailwind classes (literal, so they are
+   * read from source). The default caps it at the viewport; a list that
+   * shows a fixed few rows gives its own (`h-…`), the headings and the
+   * footer staying put as the rows scroll.
+   */
+  bodyHeight?: string;
   className?: string;
 }): React.ReactNode {
   return (
@@ -65,7 +80,7 @@ export function DataFrame({
       aria-label={label}
       className={`flex flex-col rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950 ${className}`}
     >
-      <div data-table-body className={`${BODY_MAX_HEIGHT} min-h-0 overflow-auto rounded-t-lg`}>
+      <div data-table-body className={`${bodyHeight} min-h-0 overflow-auto rounded-t-lg`}>
         {empty ?? (
           <>
             {table ? <div className={cards ? TABLE_FROM[breakpoint] : ''}>{table}</div> : null}
@@ -78,7 +93,9 @@ export function DataFrame({
         )}
       </div>
       {footer ? (
-        <div className="sticky bottom-0 z-10 rounded-b-lg border-t border-gray-200 bg-white/95 px-3 py-2 backdrop-blur dark:border-gray-800 dark:bg-gray-950/95">
+        <div
+          className={`${stickyFooter ? 'sticky bottom-0 z-10 ' : ''}rounded-b-lg border-t border-gray-200 bg-white/95 px-3 py-2 backdrop-blur dark:border-gray-800 dark:bg-gray-950/95`}
+        >
           {footer}
         </div>
       ) : null}

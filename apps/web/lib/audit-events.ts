@@ -53,6 +53,13 @@ export type AuditAction =
   | 'storage.configured'
   /** An operator replaced the identity provider (details: issuer). */
   | 'oidc.provider_replaced'
+  /** An operator changed the token limits: the weekly or monthly limit, the weekly reset, a model's limit (details: changed). */
+  | 'token_limits.updated'
+  /** An operator exempted a person from the token limits, or put them back under them (details: subject, exempt). */
+  | 'token_limits.exemption_changed'
+  /** An operator granted a person extra tokens for the week or month in progress (details: subject, period, tokens, expiresAt). */
+  | 'token_limits.boost_granted'
+  | 'token_limits.boost_revoked'
   /** A person allowed an MCP client to act as them (details: clientId, redirectTarget). */
   | 'oauth.consent_granted'
   /** A person refused an MCP client on the consent page (details: clientId, redirectTarget). */
@@ -128,6 +135,11 @@ export type AuditAction =
   | 'code.pipelines.run'
   /** A bitbucket-pipelines.yml committed from the page, from a template or edited. */
   | 'code.pipelines.file.committed'
+  /** A GitHub repository's Actions switch, variables or workflow file, changed from a code project's page or its chat (details: keys, never values). */
+  | 'code.actions.enabled'
+  | 'code.actions.disabled'
+  | 'code.actions.variables.replaced'
+  | 'code.actions.file.committed'
   /** A service container started or stopped from a code project's Services page. */
   | 'code.services.started'
   | 'code.services.stopped'

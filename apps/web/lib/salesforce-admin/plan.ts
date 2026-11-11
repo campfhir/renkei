@@ -119,7 +119,12 @@ export type Precondition =
 
 /** Components read whole and written back whole, checked by a hash on apply. */
 export type WholeComponent =
-  'RecordType' | 'BusinessProcess' | 'GlobalValueSet' | 'StandardValueSet' | 'ReportType';
+  | 'RecordType'
+  | 'BusinessProcess'
+  | 'GlobalValueSet'
+  | 'StandardValueSet'
+  | 'ReportType'
+  | 'Report';
 
 const WHOLE_COMPONENTS: readonly WholeComponent[] = [
   'RecordType',
@@ -127,6 +132,7 @@ const WHOLE_COMPONENTS: readonly WholeComponent[] = [
   'GlobalValueSet',
   'StandardValueSet',
   'ReportType',
+  'Report',
 ];
 
 export interface Access {
@@ -427,6 +433,49 @@ export async function listReportFolders(
     developerName: str(row.DeveloperName),
     accessType: str(row.AccessType),
   }));
+}
+
+export interface ReportRef {
+  id: string;
+  name: string;
+  developerName: string;
+  /** The folder it is in: its name, and its developer name for a deploy. */
+  folder: ReportFolder;
+}
+
+/**
+ * The reports of this name or API name in the org's report folders,
+ * optionally in one folder (by its name or API name). A report in a
+ * person's private folder or in Unfiled Public Reports is in none of them.
+ */
+export async function findReports(
+  context: SalesforceCallContext,
+  access: SalesforceAccess,
+  report: string,
+  folder?: string
+): Promise<ReportRef[] | string> {
+  const folders = await listReportFolders(context, access, folder);
+  if (typeof folders === 'string') return folders;
+  if (folders.length === 0) return [];
+  const found = await sfQuery(
+    context,
+    access,
+    `SELECT Id, Name, DeveloperName, OwnerId FROM Report WHERE DeveloperName = ${soqlString(report)} OR Name = ${soqlString(report)} ORDER BY Name LIMIT 50`
+  );
+  if (!found.ok) return found.error;
+  return found.records.flatMap((row) => {
+    const home = folders.find((f) => f.id === str(row.OwnerId));
+    return home
+      ? [
+          {
+            id: str(row.Id),
+            name: str(row.Name),
+            developerName: str(row.DeveloperName),
+            folder: home,
+          },
+        ]
+      : [];
+  });
 }
 
 /** Whether a report of this developer name is in the folder. */
@@ -732,7 +781,9 @@ export async function brokenPreconditions(
               ? `The global value set ${precondition.name}`
               : precondition.type === 'ReportType'
                 ? `The report type ${precondition.name}__c`
-                : `The ${precondition.type === 'RecordType' ? 'record type' : 'process'} ${precondition.object}.${precondition.name}`;
+                : precondition.type === 'Report'
+                  ? `The report ${precondition.name}`
+                  : `The ${precondition.type === 'RecordType' ? 'record type' : 'process'} ${precondition.object}.${precondition.name}`;
         const now = await wholeComponentFingerprint(context, access, precondition);
         if (now && typeof now === 'object') broken.push(`Could not check ${label}: ${now.error}`);
         else if (now === null)

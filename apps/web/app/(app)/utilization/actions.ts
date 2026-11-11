@@ -50,6 +50,7 @@ import {
   type OrgBucket,
 } from '../admin/usage/window';
 import { resolvePeriod } from './window';
+import { hasTokenLimits, readOwnTokenLimits, type OwnTokenLimits } from '@/lib/token-limits/own';
 import { logger } from '@/lib/logger';
 import { who } from '@/lib/log-actor';
 
@@ -88,6 +89,12 @@ export interface UtilizationReport {
   imageAvailable: boolean;
   /** Summaries and descriptions the model wrote for files they uploaded, and their OCR reads. */
   document: DocumentTotals;
+  /**
+   * Where this person stands against the organization's token limits, since
+   * the week and the month began (not the charted period). Null when the
+   * organization sets none and they are not exempt: there is nothing to show.
+   */
+  limits: OwnTokenLimits | null;
   error?: string;
   signedOut?: boolean;
 }
@@ -139,6 +146,7 @@ export async function getUtilizationReport(
     image: ZERO_IMAGE_TOTALS,
     imageAvailable: false,
     document: ZERO_DOCUMENT_TOTALS,
+    limits: null,
   };
 
   const session = await getSessionFromCookies();
@@ -166,6 +174,7 @@ export async function getUtilizationReport(
       byModel,
       topAgents,
       topTools,
+      limits,
     ] = await Promise.all([
       getUtilizationTotals(subject, span, timeZone),
       getOrgDailySeries(span, timeZone, subject, seriesGranularity(period.days)),
@@ -181,6 +190,7 @@ export async function getUtilizationReport(
       getTokensByModel(span, timeZone, subject),
       getTopAgentsByTokens(span, timeZone, subject),
       getTopToolsOrg(span, timeZone, subject),
+      readOwnTokenLimits(subject),
     ]);
     const now = new Date();
     return {
@@ -202,6 +212,7 @@ export async function getUtilizationReport(
       image,
       imageAvailable: imageModels.length > 0,
       document,
+      limits: hasTokenLimits(limits) ? limits : null,
     };
   } catch (error) {
     logger.error(

@@ -1,0 +1,134 @@
+/**
+ * How token counts and limits are written and typed on screen, for the
+ * operator's Token limits page and the limits card on My usage. Pure, and
+ * free of the settings package (which reaches the database), so client
+ * components can use it.
+ */
+
+/** 1,234,567 → "1.2M"; exact below a thousand. */
+export function formatTokens(tokens: number): string {
+  const short = (value: number, unit: string) =>
+    `${value >= 100 ? Math.round(value) : Math.round(value * 10) / 10}${unit}`;
+  if (tokens >= 1_000_000_000) return short(tokens / 1_000_000_000, 'B');
+  if (tokens >= 1_000_000) return short(tokens / 1_000_000, 'M');
+  if (tokens >= 1_000) return short(tokens / 1_000, 'K');
+  return String(Math.max(0, Math.round(tokens)));
+}
+
+const UNITS: Record<string, number> = { k: 1_000, m: 1_000_000, b: 1_000_000_000 };
+const MAX_TOKENS = 1_000_000_000_000;
+
+/**
+ * A typed amount of tokens: "2M", "500k", "1.5 m", "1,500,000". Blank is 0
+ * (which, for a limit, is no limit). Null when the text is not an amount.
+ */
+export function parseTokens(text: string): number | null {
+  const trimmed = text.trim().toLowerCase().replace(/,/g, '').replace(/\s+/g, '');
+  if (trimmed === '') return 0;
+  const match = /^(\d+(?:\.\d+)?)([kmb])?$/.exec(trimmed);
+  if (!match) return null;
+  const value = Math.round(Number(match[1]) * (match[2] ? UNITS[match[2]] : 1));
+  return Number.isFinite(value) && value <= MAX_TOKENS ? value : null;
+}
+
+/** A stored limit as the text its field starts with: "" for none, else the shortest exact form. */
+export function tokensFieldText(tokens: number): string {
+  if (tokens <= 0) return '';
+  for (const [unit, size] of [
+    ['B', 1_000_000_000],
+    ['M', 1_000_000],
+    ['K', 1_000],
+  ] as const) {
+    // Up to two decimals keeps the text exact ("1.25M"); anything finer is written out.
+    if (tokens >= size && (tokens * 100) % size === 0) return `${tokens / size}${unit}`;
+  }
+  return String(tokens);
+}
+
+export interface LimitProgress {
+  /** The limit in force, boost included; null when nothing limits this. */
+  limit: number | null;
+  used: number;
+  /** How full the bar is, 0–100. */
+  percent: number;
+  /** At or past the limit: nothing new starts. */
+  reached: boolean;
+  /** Within a fifth of the limit. */
+  near: boolean;
+  /** "350K of 1M", or "350K used" with no limit. */
+  label: string;
+}
+
+export function limitProgress(used: number, limit: number | null, boost = 0): LimitProgress {
+  if (limit === null || limit <= 0) {
+    return {
+      limit: null,
+      used,
+      percent: 0,
+      reached: false,
+      near: false,
+      label: `${formatTokens(used)} used`,
+    };
+  }
+  const inForce = limit + boost;
+  const share = used / inForce;
+  return {
+    limit: inForce,
+    used,
+    percent: Math.min(100, Math.round(share * 100)),
+    reached: used >= inForce,
+    near: used < inForce && share >= 0.8,
+    label: `${formatTokens(used)} of ${formatTokens(inForce)}`,
+  };
+}
+
+/**
+ * The line a model picker shows under a model no turn can start on: which
+ * limit is reached (the person's own, or this model's) and when it resets.
+ */
+export function limitReachedNote(block: {
+  period: 'week' | 'month';
+  /** Null when it is the person's overall limit, not this model's. */
+  llmModelId: string | null;
+  resetsAt: string;
+  /** The zone the organization's resets are told in; UTC when left out. */
+  timeZone?: string;
+}): string {
+  const period = block.period === 'week' ? 'weekly' : 'monthly';
+  const which =
+    block.llmModelId === null
+      ? `Your ${period} token limit is reached`
+      : `${period === 'weekly' ? 'Weekly' : 'Monthly'} limit for this model reached`;
+  return `${which} · resets ${formatReset(block.resetsAt, block.timeZone)}`;
+}
+
+/**
+ * "Mon 16 Nov, 00:00 UTC", or on the clock of the zone the organization's
+ * resets are told in ("Mon 16 Nov, 00:00 EST"). The zone is always said: a
+ * reset is the organization's time, not the reader's.
+ */
+export function formatReset(iso: string, timeZone = 'UTC'): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return '';
+  const partsIn = (zone: string) =>
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: zone,
+      hourCycle: 'h23',
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZoneName: 'short',
+    }).formatToParts(at);
+  let parts: Intl.DateTimeFormatPart[];
+  try {
+    parts = partsIn(timeZone);
+  } catch {
+    // A zone name this browser does not know: UTC is still true.
+    parts = partsIn('UTC');
+  }
+  const read = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
+  const hour = String(Number(read('hour')) % 24).padStart(2, '0');
+  return `${read('weekday')} ${read('day')} ${read('month')}, ${hour}:${read('minute')} ${read('timeZoneName')}`;
+}

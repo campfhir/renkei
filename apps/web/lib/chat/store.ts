@@ -13,6 +13,7 @@ import { resolveTenantBlobStore } from '@renkei/blob-store';
 import { isUuid } from '@/lib/uuid';
 import { parseToolConfig, toolConfigJson, type ChatToolConfig } from './tool-config';
 import { createKey, deleteKey, wrapKeyUnderProject } from './chat-keys';
+import { preferredChatModelId } from './preferred-model';
 
 export interface ChatRow {
   id: string;
@@ -105,6 +106,7 @@ export async function listChatsById(chatIds: string[]): Promise<ChatRow[]> {
 export async function createChat(input: {
   ownerSubject: string;
   projectId: string | null;
+  /** Null takes the project's model, else the owner's preferred one (preferred-model.ts). */
   llmModelId: string | null;
   toolConfig: ChatToolConfig | null;
   thinkingEnabled: boolean;
@@ -116,7 +118,8 @@ export async function createChat(input: {
   const id = await getDataStore().chats.create({
     ownerSubject: input.ownerSubject,
     projectId: input.projectId,
-    llmModelId: input.llmModelId,
+    llmModelId:
+      input.llmModelId ?? (await preferredChatModelId(input.ownerSubject, input.projectId)),
     toolConfig: input.toolConfig ? toolConfigJson(input.toolConfig) : null,
     thinkingEnabled: input.thinkingEnabled,
     autoMode: input.autoMode ?? false,

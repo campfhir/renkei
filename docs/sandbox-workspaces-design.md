@@ -106,33 +106,35 @@ chatting person's own Bitbucket grant, and a commit is authored as them.
 Local tools of the chat (`apps/web/lib/code/tools.ts`), added to a turn
 when the project's checkout is ready (`lib/code/turn.ts`):
 
-| Tool                       | Kind | What it does                                                                                                     |
-| -------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------- |
-| `code_ls`                  | Read | One directory's entries.                                                                                         |
-| `code_find`                | Read | Paths matching a glob (`.gitignore` honoured).                                                                   |
-| `code_grep`                | Read | Regex search of contents, as `path:line: text`.                                                                  |
-| `code_read_file`           | Read | A file's text with line numbers, in line ranges.                                                                 |
-| `code_write_file`          | Act  | Create or replace a file.                                                                                        |
-| `code_edit_file`           | Act  | Replace one exact snippet (must be unique, or `replaceAll`).                                                     |
-| `code_delete_file`         | Act  | Remove a file, or a folder and everything under it.                                                              |
-| `code_move_file`           | Act  | Rename or move a file or folder; refuses an existing destination.                                                |
-| `code_run`                 | Act  | A bash command in the checkout, with the project's environment; exit code and both streams.                      |
-| `code_git_status`          | Read | Branch, changed files, a diff summary or the full diff, recent log.                                              |
-| `code_git_commit`          | Act  | Stage (all or listed paths) and commit as the person, optionally on a new branch.                                |
-| `code_git_push`            | Act  | Push the current branch to origin with the person's grant; `forceWithLease` after a rebase, never a plain force. |
-| `code_git_pull`            | Act  | Fast-forward from origin, or fetch and switch to another remote branch.                                          |
-| `code_git_log`             | Read | The history as records: a revision or range, paths, `grep`/`author`, paged.                                      |
-| `code_git_fetch`           | Act  | Fetch origin (one branch or all) with the person's grant; `prune`.                                               |
-| `code_git_branch`          | Act  | List local and remote-tracking branches; create, switch (a remote one by name), delete.                          |
-| `code_git_rebase`          | Act  | Rebase onto a revision; stops on conflicts and names the files; continue, skip, abort.                           |
-| `code_git_merge`           | Act  | Merge a revision in (`--no-ff`, squash, a message); the same conflict shape.                                     |
-| `code_git_reset`           | Act  | Move the branch (soft, mixed, hard, keep) or unstage paths.                                                      |
-| `code_git_stash`           | Act  | Push, list, show, pop, apply, drop — by position.                                                                |
-| `code_git_clean`           | Act  | Remove untracked files; a dry run unless `dryRun: false`; `ignored` for ignored ones too.                        |
-| `code_git_sparse_checkout` | Act  | Narrow the working tree to named directories (cone mode), add, list, disable.                                    |
-| `code_env_names`           | Read | The names of the project's environment variables — never a value.                                                |
-| `code_service_*`           |      | Containers beside the checkout, where the deployment offers them — see "Services" below.                         |
-| `code_preview_*`           |      | The project's own server, run in the checkout and served through the app — see "Previews" below.                 |
+| Tool                          | Kind | What it does                                                                                                     |
+| ----------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------- |
+| `code_ls`                     | Read | One directory's entries.                                                                                         |
+| `code_find`                   | Read | Paths matching a glob (`.gitignore` honoured).                                                                   |
+| `code_grep`                   | Read | Regex search of contents, as `path:line: text`.                                                                  |
+| `code_read_file`              | Read | A file's text with line numbers, in line ranges.                                                                 |
+| `code_write_file`             | Act  | Create or replace a file.                                                                                        |
+| `code_edit_file`              | Act  | Replace one exact snippet (must be unique, or `replaceAll`).                                                     |
+| `code_delete_file`            | Act  | Remove a file, or a folder and everything under it.                                                              |
+| `code_move_file`              | Act  | Rename or move a file or folder; refuses an existing destination.                                                |
+| `code_run`                    | Act  | A bash command in the checkout, with the project's environment; exit code and both streams.                      |
+| `code_git_status`             | Read | Branch, changed files, a diff summary or the full diff, recent log.                                              |
+| `code_git_commit`             | Act  | Stage (all or listed paths) and commit as the person, optionally on a new branch.                                |
+| `code_git_push`               | Act  | Push the current branch to origin with the person's grant; `forceWithLease` after a rebase, never a plain force. |
+| `code_git_pull`               | Act  | Fast-forward from origin, or fetch and switch to another remote branch.                                          |
+| `code_git_log`                | Read | The history as records: a revision or range, paths, `grep`/`author`, paged.                                      |
+| `code_git_fetch`              | Act  | Fetch origin (one branch or all) with the person's grant; `prune`.                                               |
+| `code_git_branch`             | Act  | List local and remote-tracking branches; create, switch (a remote one by name), delete.                          |
+| `code_git_rebase`             | Act  | Rebase onto a revision; stops on conflicts and names the files; continue, skip, abort.                           |
+| `code_git_merge`              | Act  | Merge a revision in (`--no-ff`, squash, a message); the same conflict shape.                                     |
+| `code_git_reset`              | Act  | Move the branch (soft, mixed, hard, keep) or unstage paths.                                                      |
+| `code_git_stash`              | Act  | Push, list, show, pop, apply, drop — by position.                                                                |
+| `code_git_clean`              | Act  | Remove untracked files; a dry run unless `dryRun: false`; `ignored` for ignored ones too.                        |
+| `code_git_sparse_checkout`    | Act  | Narrow the working tree to named directories (cone mode), add, list, disable.                                    |
+| `code_env_names`              | Read | The names of the project's environment variables — never a value.                                                |
+| `code_pipeline_variables`     | Read | The variables the host's pipelines get (repository and environments); secured ones by name, value omitted.       |
+| `code_pipeline_set_variables` | Act  | Add, change or remove plain pipeline variables by name; never a secured one, never a secret-looking name.        |
+| `code_service_*`              |      | Containers beside the checkout, where the deployment offers them — see "Services" below.                         |
+| `code_preview_*`              |      | The project's own server, run in the checkout and served through the app — see "Previews" below.                 |
 
 A pull request is `bitbucket_create_pull_request`, as before. The worker
 verbs behind these (`/v1/workspaces/*`, `/v1/env/*` on

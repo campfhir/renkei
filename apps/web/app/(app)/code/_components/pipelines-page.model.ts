@@ -267,12 +267,12 @@ function isHere(candidate: Scope | null, scope: Scope): boolean {
 }
 
 /** The open box, when it is this set's. */
-export function draftFor(state: PipelinesState, scope: Scope): Draft | null {
+export function draftFor(state: Pick<PipelinesState, 'draft'>, scope: Scope): Draft | null {
   return isHere(state.draft, scope) ? state.draft : null;
 }
 
 /** The last save's outcome, when it was this set's. */
-export function outcomeFor(state: PipelinesState, scope: Scope): Outcome | null {
+export function outcomeFor(state: Pick<PipelinesState, 'outcome'>, scope: Scope): Outcome | null {
   return isHere(state.outcome, scope) ? state.outcome : null;
 }
 

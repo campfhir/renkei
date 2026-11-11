@@ -2,7 +2,7 @@
  * The audit trails are append-only in the database itself: a trigger
  * refuses UPDATE and DELETE on the delegate's access log (migration 144)
  * on the PHI access trail (migration 141) and on the platform audit events
- * (migration 175), so a process that can write
+ * (migration 177), so a process that can write
  * a trail cannot rewrite it. No store method updates or deletes either, so
  * this is checked here, against Postgres, with the package's own
  * connection.
@@ -90,7 +90,7 @@ run('append-only audit trails', () => {
     expect(after?.action).toBe('read');
   });
 
-  it('refuses to update or delete a platform audit event (migration 175)', async () => {
+  it('refuses to update or delete a platform audit event (migration 177)', async () => {
     const id = randomUUID();
     await getDataStore().auditEvents.record({
       id,

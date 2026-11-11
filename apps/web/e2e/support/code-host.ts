@@ -60,7 +60,15 @@ const HOSTS = {
   },
   github: {
     admin: '/api/admin/connectors/github',
-    registration: { clientId: 'e2e-github-client', clientSecret: 'e2e-github-secret' },
+    registration: {
+      clientId: 'e2e-github-client',
+      clientSecret: 'e2e-github-secret',
+      // The catalog's non-default bundle too — Configure Actions, which
+      // the Actions page's switch and variables stand on.
+      scopes:
+        'repository repository:write pullrequest pullrequest:write actions actions:write ' +
+        'actions:configure',
+    },
     authorize: '/api/github/authorize',
   },
 } as const;
@@ -95,7 +103,15 @@ export async function prepareCodeHost(request: APIRequestContext): Promise<void>
       await request.get(`${MEMORY_BASE_URL}${host.admin}`, { headers }),
       `GET ${host.admin}`
     );
-    if (field(current, 'enabled') !== true || field(current, 'hasClientSecret') !== true) {
+    const scopes = field(current, 'scopes');
+    const wantsScopes = 'scopes' in host.registration ? host.registration.scopes : null;
+    // A registration written before it named scopes (or an older list) is
+    // written again: the same values, from every spec.
+    if (
+      field(current, 'enabled') !== true ||
+      field(current, 'hasClientSecret') !== true ||
+      (wantsScopes !== null && host.admin.endsWith('/github') && scopes !== wantsScopes)
+    ) {
       await ok(
         await request.put(`${MEMORY_BASE_URL}${host.admin}`, {
           headers,

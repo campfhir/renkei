@@ -224,7 +224,7 @@ What this does and does not give you:
 - The runtime role cannot disable or drop a trigger, `UPDATE`, `DELETE` or
   `TRUNCATE` a trail, create tables, or touch the migration ledger. A
   compromised service container cannot rewrite the PHI access trail or the
-  audit log. The trigger on `audit_events` (migration 175) is the second
+  audit log. The trigger on `audit_events` (migration 177) is the second
   line and also covers a deployment that keeps the single role.
 - **The owner can still do all of it**, and `POSTGRES_PASSWORD` stays in
   `.env`, in the `postgres` container and in the `migrate` container.
@@ -1218,7 +1218,7 @@ up. Retention is a deliberate act of the owner (or a superuser), never the
 application's: `ALTER TABLE phi_access_events DISABLE TRIGGER
 phi_access_events_no_update_delete;`, prune, then `ENABLE` it again — and
 prefer archiving the pruned rows first. The platform audit log
-(`audit_events`, trigger from migration 175) and the delegate's access log
+(`audit_events`, trigger from migration 177) and the delegate's access log
 follow the same rules. A failed insert is logged at `warn`
 (`component=phi-access`); the read it describes still returns.
 

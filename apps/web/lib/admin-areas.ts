@@ -104,6 +104,12 @@ export function adminSections(): AdminSection[] {
           detail:
             'Token spend by surface and by model; who is using it, and which agents do the most work per token. Pick a person to see their usage, groups and agents.',
         },
+        {
+          href: `${admin}/token-limits`,
+          label: 'Token limits',
+          detail:
+            'How many tokens one person may spend in a week and a month, their agents included; limits on single models; who is unlimited, and boosts.',
+        },
       ],
     },
     {

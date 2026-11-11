@@ -80,6 +80,12 @@ export async function POST(
         );
       case 'MODEL_ERROR':
         return jsonError(409, 'model-error', resent.err.message ?? 'The model is not usable.');
+      case 'TOKEN_LIMIT':
+        return jsonError(
+          429,
+          'token-limit',
+          resent.err.message ?? 'You have reached your token limit.'
+        );
       case 'CONTENT_KEY':
         logger.error(
           '{actor} resent a message{edited}, but the content encryption key is not configured; nothing was sent: {error}',

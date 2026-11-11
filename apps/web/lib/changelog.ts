@@ -46,6 +46,71 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-11',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'Export downloads and token limits work better on phones',
+        detail:
+          "Your data's export buttons now open the share sheet in the home-screen app on the first tap, waiting until the file is ready. Token limit fields take a text keyboard so you can type 1M, and a monthly limit below the weekly one is refused.",
+      },
+      {
+        kind: 'changed',
+        title: "The chat's model picker scrolls and can be searched",
+        detail:
+          'The model menu stays inside the screen on a phone with the list scrolling inside it, and a long roster gets a search box that finds a model by name, provider or id.',
+      },
+      {
+        kind: 'changed',
+        title: 'Removing a model offers a replacement and tells the people on it',
+        detail:
+          'Removing a model from the roster shows who is on it and lets an operator pick what replaces it; their preferred chat model, projects, chats and agents move to it, and each person gets a notification that their model changed.',
+      },
+      {
+        kind: 'added',
+        title: 'A preferred chat model, and a model per project',
+        detail:
+          "Preferences has a Chat model section, and a chat or code project can name its own model in About: a new chat starts on its project's model, else your preferred one, else the organization default.",
+      },
+      {
+        kind: 'added',
+        title: 'Token limits per person',
+        detail:
+          'An organization can cap the tokens each person spends in a week and a month, their agents included, with its own limit for a costly model and a reset day, time and time zone of its choosing. Operators can make a person unlimited or grant a boost; My usage shows progress against each limit, and a chat marks a model that has reached its limit before you send.',
+      },
+      {
+        kind: 'added',
+        title: 'Salesforce Admin can propose formula fields',
+        detail:
+          'Ask for a calculated field, such as whole years since an enrollment date, and it is proposed for review like any other new field. Salesforce checks the formula before anyone approves it, and the field is read only wherever it is given to people.',
+      },
+      {
+        kind: 'added',
+        title: 'Salesforce Admin can change existing reports, and reports can roll with the date',
+        detail:
+          "Ask for a change to an existing Salesforce report (columns, filters, date range, groupings, name) or report type (fields added or taken out, renamed) and it is proposed for review like any other change. A report's date range can now be relative, such as the last 12 months or this week, so it moves forward by itself.",
+      },
+      {
+        kind: 'added',
+        title: 'GitHub projects get the full Actions page',
+        detail:
+          "A GitHub code project's Actions page now works like Bitbucket's Pipelines: turn Actions on or off, write and commit workflow files (starting from your organization's templates), and read and edit repository and environment variables, with secrets listed by name and added on GitHub. Reconnect GitHub with Configure Actions enabled to use the switch and variables.",
+      },
+      {
+        kind: 'added',
+        title: "A chat can set up a pipeline's variables, and Pipelines opens beside the chat",
+        detail:
+          "In a code project, a chat can now read the variables your pipelines get and add or change the plain ones while it drafts a pipeline, so the workflow arrives with the values it needs. Secured values stay yours: it sees them only by name, cannot change or remove them, and asks you to add any token or key on the Pipelines page. Open Pipelines (Actions on GitHub) from the chat's More menu to see what it wrote and change anything, in the same screen as the project page.",
+      },
+      {
+        kind: 'added',
+        title: 'Search and pages on the Code projects list',
+        detail:
+          'Your code projects and the ones shared with you are now two tables you can search by name, repository, description or owner and page through, ten at a time. Shared projects show their owner, and projects without a description get one from their README.',
+      },
+    ],
+  },
+  {
     date: '2026-11-10',
     entries: [
       {

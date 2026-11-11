@@ -23,12 +23,15 @@ import {
   keyedSiblings as keyedSiblingsOf,
   listRequest,
   modelFormsReducer,
+  removalView,
+  removeRequest,
   rowView,
   saveRequest,
   showsEmpty,
   testRequest,
   type AvailableModelRow,
   type ModelRow,
+  type ModelUsage,
 } from './model-forms.model';
 
 const inputClass =
@@ -120,18 +123,28 @@ export default function ModelForms() {
     await reload();
   };
 
-  const remove = async (row: ModelRow) => {
-    if (
-      !window.confirm(
-        `Remove “${row.label}”? Agents pinned to it fall back to the organization default.`
-      )
-    ) {
+  // Remove opens a dialog: who is still on the model, and what replaces it for them.
+  const askRemove = async (row: ModelRow) => {
+    dispatch({ type: 'removeAsked', row });
+    const result = await getJson<ModelUsage>(`/api/admin/llm-models/${row.id}/usage`);
+    if (result.error || !result.data) {
+      dispatch({ type: 'removeFailed', error: result.error ?? 'Could not check who uses it' });
+    } else dispatch({ type: 'usageLoaded', usage: result.data });
+  };
+
+  const remove = async () => {
+    if (!state.removing) return;
+    const request = removeRequest(state.removing);
+    dispatch({ type: 'removeSent' });
+    const result = await sendJsonFull(request.path, request.method);
+    if (result.error) {
+      dispatch({ type: 'removeFailed', error: result.error });
       return;
     }
-    const result = await sendJsonFull(`/api/admin/llm-models/${row.id}`, 'DELETE');
-    if (result.error) dispatch({ type: 'removeFailed', error: result.error });
-    else await reload();
+    dispatch({ type: 'removed' });
+    await reload();
   };
+  const removal = removalView(state);
 
   if (isLoading(state)) {
     return (
@@ -207,13 +220,79 @@ export default function ModelForms() {
                 <RemoveButton
                   label="Remove"
                   accessibleLabel={`Remove ${row.label}`}
-                  onClick={() => remove(row)}
+                  onClick={() => void askRemove(row)}
                 />
               </div>
             </div>
           </div>
         );
       })}
+
+      {removal && state.removing ? (
+        <Modal
+          title={removal.title}
+          onClose={() => dispatch({ type: 'removeCancelled' })}
+          dismissible={!state.removing.sending}
+        >
+          <div className="space-y-3 text-sm">
+            {removal.summary === null && !state.removing.error ? (
+              <p role="status" className="text-gray-500 dark:text-gray-400">
+                Checking who uses it…
+              </p>
+            ) : null}
+            {removal.summary ? <p>{removal.summary}</p> : null}
+            {removal.inUse ? (
+              <div>
+                <label className={labelClass} htmlFor="model-replacement">
+                  Replace it with
+                </label>
+                <select
+                  id="model-replacement"
+                  value={state.removing.replacementId}
+                  disabled={state.removing.sending}
+                  onChange={(event) =>
+                    dispatch({ type: 'replacementPicked', value: event.target.value })
+                  }
+                  className={inputClass}
+                >
+                  {removal.options.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <p className={hintClass}>
+                  Their preferred chat model, projects, chats and agents move to this model, and
+                  each of them gets a notification saying their model changed.
+                </p>
+              </div>
+            ) : null}
+            {state.removing.error ? (
+              <p role="alert" className="text-red-600 dark:text-red-400">
+                {state.removing.error}
+              </p>
+            ) : null}
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => dispatch({ type: 'removeCancelled' })}
+                disabled={state.removing.sending}
+                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void remove()}
+                disabled={!removal.canConfirm}
+                className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {removal.confirmLabel}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
 
       {editingId !== null ? (
         <Modal

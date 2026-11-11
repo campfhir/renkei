@@ -53,6 +53,8 @@ const LABELS: Record<string, CodeToolLabel> = {
   code_service_start: { label: 'Start service' },
   code_service_stop: { label: 'Stop service' },
   code_service_logs: { label: 'Service logs' },
+  code_pipeline_variables: { label: 'Pipeline variables' },
+  code_pipeline_set_variables: { label: 'Set pipeline variables' },
   code_delegate: { label: 'Sub-agent' },
   chat_delegate: { label: 'Sub-agent' },
   chat_show_mockup: {

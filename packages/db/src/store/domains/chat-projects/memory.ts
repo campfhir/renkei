@@ -68,6 +68,7 @@ export function memoryChatProjects(tables: MemoryTables): ChatProjectStore {
         repo_full_name: null,
         repo_branch: null,
         workspace_id: null,
+        llm_model_id: null,
         published_to_org: false,
         created_at: now,
         updated_at: now,
@@ -83,7 +84,7 @@ export function memoryChatProjects(tables: MemoryTables): ChatProjectStore {
           ...(patch.toolConfig !== undefined
             ? { tool_config: patch.toolConfig == null ? null : toJson(patch.toolConfig) }
             : {}),
-          updated_at: new Date(),
+          ...(patch.keepUpdatedAt ? {} : { updated_at: new Date() }),
         }).length > 0
       );
     },

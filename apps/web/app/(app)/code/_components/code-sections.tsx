@@ -18,11 +18,11 @@
  * requests (pulls-summary.tsx / pulls-page.tsx) and its recent commits
  * (commits-summary.tsx / commits-page.tsx), both read through the
  * host-agnostic RepoHostAdapter (lib/code/repo-host.ts); a card for its
- * CI — the rich Bitbucket Pipelines page (pipelines-summary.tsx /
- * pipelines-page.tsx: the switch, the config file, the variables) or,
- * for a GitHub project, the smaller Actions counterpart
- * (actions-summary.tsx / actions-page.tsx: recent runs only, since
- * GitHub's own UI already owns configuring them); and a card summarizing
+ * CI — Bitbucket Pipelines (pipelines-summary.tsx / pipelines-page.tsx:
+ * the switch, the config file, the variables) or, for a GitHub project,
+ * its Actions counterpart (actions-summary.tsx / actions-page.tsx: the
+ * switch, the workflow files, the variables, secrets by name), drawn
+ * from the same parts (pipeline-parts.tsx); and a card summarizing
  * its services — the containers beside the checkout — opening its
  * Services page (services-summary.tsx, services-page.tsx); and last the
  * environment: the names of the variables the project's commands run
@@ -179,7 +179,11 @@ export function CodeRail({
       <PullsSummary href={`/code/${projectId}/pulls`} projectId={projectId} />
       <CommitsSummary href={`/code/${projectId}/commits`} projectId={projectId} />
       {isGitHub ? (
-        <ActionsSummary href={`/code/${projectId}/actions`} projectId={projectId} />
+        <ActionsSummary
+          href={`/code/${projectId}/actions`}
+          projectId={projectId}
+          branch={code.branch}
+        />
       ) : (
         <PipelinesSummary
           href={`/code/${projectId}/pipelines`}

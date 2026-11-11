@@ -130,9 +130,11 @@ export async function POST(
     const message =
       created.err.type === 'DAILY_RUN_CAP'
         ? 'This organization has reached its daily run limit.'
-        : created.err.type === 'QUEUE_ERROR'
-          ? 'The run could not be queued — try again shortly.'
-          : 'The run could not be started.';
+        : created.err.type === 'TOKEN_LIMIT'
+          ? (created.err.message ?? "This agent's owner has reached their token limit.")
+          : created.err.type === 'QUEUE_ERROR'
+            ? 'The run could not be queued — try again shortly.'
+            : 'The run could not be started.';
     return NextResponse.json({ error: message }, { status: 409 });
   }
 
