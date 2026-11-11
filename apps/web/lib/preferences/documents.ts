@@ -41,15 +41,16 @@ import {
 import { isRecord } from '@renkei/guards';
 
 export async function readAllPreferences(subject: string) {
-  const [notifications, theme, voice, image, chatModel, coachMarks, chatArchive] = await Promise.all([
-    getNotificationPrefs(subject, { fresh: true }),
-    getThemePrefs(subject, { fresh: true }),
-    getVoicePrefs(subject, { fresh: true }),
-    getImagePrefs(subject, { fresh: true }),
-    getChatModelPrefs(subject, { fresh: true }),
-    getCoachMarkPrefs(subject, { fresh: true }),
-    getChatArchivePrefs(subject, { fresh: true }),
-  ]);
+  const [notifications, theme, voice, image, chatModel, coachMarks, chatArchive] =
+    await Promise.all([
+      getNotificationPrefs(subject, { fresh: true }),
+      getThemePrefs(subject, { fresh: true }),
+      getVoicePrefs(subject, { fresh: true }),
+      getImagePrefs(subject, { fresh: true }),
+      getChatModelPrefs(subject, { fresh: true }),
+      getCoachMarkPrefs(subject, { fresh: true }),
+      getChatArchivePrefs(subject, { fresh: true }),
+    ]);
   return { notifications, theme, voice, image, chatModel, coachMarks, chatArchive };
 }
 

@@ -56,7 +56,9 @@ describe('saving', () => {
     const state = open('opus');
     expect(canSave(state)).toBe(false);
     expect(canSave(after(state, { type: 'picked', value: 'haiku' }))).toBe(true);
-    expect(canSave(after(state, { type: 'picked', value: 'haiku' }, { type: 'picked', value: 'opus' }))).toBe(false);
+    expect(
+      canSave(after(state, { type: 'picked', value: 'haiku' }, { type: 'picked', value: 'opus' }))
+    ).toBe(false);
   });
 
   it('sends the picked model as the chat model preference, and null for the default', () => {

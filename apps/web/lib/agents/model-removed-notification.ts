@@ -125,7 +125,13 @@ export async function notifyModelRemoved(input: {
         void sendPush(
           person.subject,
           keyResult.val,
-          { title: 'Your model changed', body: headline, tag: id, refUrl: null, notificationId: id },
+          {
+            title: 'Your model changed',
+            body: headline,
+            tag: id,
+            refUrl: null,
+            notificationId: id,
+          },
           {
             log: (message, meta) =>
               logger.warn(message, { component: 'agents/model-removed-notification', ...meta }),

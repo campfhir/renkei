@@ -132,7 +132,12 @@ describe('removing a model', () => {
 
   it('one person is one person', () => {
     const one = run(
-      [{ type: 'usageLoaded', usage: { people: 1, preferences: 0, projects: 0, chats: 1, agents: 0 } }],
+      [
+        {
+          type: 'usageLoaded',
+          usage: { people: 1, preferences: 0, projects: 0, chats: 1, agents: 0 },
+        },
+      ],
       asked
     );
     expect(removalView(one)?.summary).toBe('1 person is on this model: 1 chat.');
@@ -141,7 +146,12 @@ describe('removing a model', () => {
 
   it('a model nobody is on is simply removed', () => {
     const unused = run(
-      [{ type: 'usageLoaded', usage: { people: 0, preferences: 0, projects: 0, chats: 0, agents: 0 } }],
+      [
+        {
+          type: 'usageLoaded',
+          usage: { people: 0, preferences: 0, projects: 0, chats: 0, agents: 0 },
+        },
+      ],
       asked
     );
     expect(removalView(unused)).toMatchObject({

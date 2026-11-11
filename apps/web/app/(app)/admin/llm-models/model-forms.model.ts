@@ -654,11 +654,7 @@ export function removalView(state: ModelFormsState): RemovalView | null {
       },
       ...others.map((model) => ({ value: model.id, label: `${model.label} · ${model.model}` })),
     ],
-    confirmLabel: removing.sending
-      ? 'Removing…'
-      : inUse
-        ? `Remove and notify ${people}`
-        : 'Remove',
+    confirmLabel: removing.sending ? 'Removing…' : inUse ? `Remove and notify ${people}` : 'Remove',
     canConfirm: usage !== null && !removing.sending,
   };
 }
