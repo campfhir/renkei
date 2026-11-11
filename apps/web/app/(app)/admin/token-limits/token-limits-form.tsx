@@ -1,6 +1,6 @@
 'use client';
 
-import { useReducer } from 'react';
+import { useMemo, useReducer } from 'react';
 import { sendJsonFull } from '@/lib/fetch-json';
 import { formatReset, formatTokens, limitProgress } from '@/lib/token-limits/format';
 import {
@@ -15,6 +15,7 @@ import {
   isDirty,
   limitsAnything,
   saveRequest,
+  timeZoneOptions,
   tokenLimitsReducer,
   visiblePeople,
   type Person,
@@ -120,6 +121,16 @@ export function TokenLimitsForm({ initial }: { initial: TokenLimitsView }) {
   const [state, dispatch] = useReducer(tokenLimitsReducer, initial, initTokenLimits);
   const { draft, view } = state;
   const people = visiblePeople(state);
+  const zone = view.policy.timeZone;
+  // The browser's list of zones; the stored one is offered even if it is not on it.
+  const zones = useMemo(
+    () =>
+      timeZoneOptions(
+        zone,
+        typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : []
+      ),
+    [zone]
+  );
 
   async function save() {
     const request = saveRequest(state);
@@ -218,7 +229,7 @@ export function TokenLimitsForm({ initial }: { initial: TokenLimitsView }) {
               >
                 <span>
                   +{formatTokens(boost.tokens)} for the {boost.period}, until{' '}
-                  {formatReset(boost.expiresAt)}
+                  {formatReset(boost.expiresAt, zone)}
                   {boost.note ? ` — ${boost.note}` : ''}
                 </span>
                 <button
@@ -337,7 +348,7 @@ export function TokenLimitsForm({ initial }: { initial: TokenLimitsView }) {
           </Row>
           <Row
             label="Monthly limit"
-            hint="The same per calendar month, which resets on the 1st at 00:00 UTC. Leave empty for no monthly limit."
+            hint="The same per calendar month, which resets on the 1st at 00:00 in the time zone below. Leave empty for no monthly limit."
           >
             <AmountInput
               label="Monthly limit"
@@ -347,7 +358,7 @@ export function TokenLimitsForm({ initial }: { initial: TokenLimitsView }) {
           </Row>
           <Row
             label="The week resets on"
-            hint={`The day and time of day, in UTC, the weekly count starts over. This week resets ${formatReset(view.weekResetsAt)}.`}
+            hint={`The day and time of day the weekly count starts over, on a clock in the time zone below. This week resets ${formatReset(view.weekResetsAt, zone)}.`}
           >
             <span className="flex items-center gap-2">
               <select
@@ -369,15 +380,33 @@ export function TokenLimitsForm({ initial }: { initial: TokenLimitsView }) {
               </select>
               <input
                 type="time"
-                aria-label="Weekly reset time (UTC)"
+                aria-label="Weekly reset time"
                 value={draft.weekResetTime}
                 onChange={(event) =>
                   dispatch({ type: 'limitsChanged', patch: { weekResetTime: event.target.value } })
                 }
                 className="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
               />
-              <span className="text-xs text-gray-500">UTC</span>
             </span>
+          </Row>
+          <Row
+            label="Time zone"
+            hint={`The zone the resets are told in: the week's day and time, and the month's 1st at midnight. Where clocks change for daylight saving, the reset keeps its time of day. This month resets ${formatReset(view.monthResetsAt, zone)}.`}
+          >
+            <select
+              aria-label="Reset time zone"
+              value={draft.timeZone}
+              onChange={(event) =>
+                dispatch({ type: 'limitsChanged', patch: { timeZone: event.target.value } })
+              }
+              className="max-w-[16rem] rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
+            >
+              {zones.map((name) => (
+                <option key={name} value={name}>
+                  {name.replace(/_/g, ' ')}
+                </option>
+              ))}
+            </select>
           </Row>
         </div>
       </section>

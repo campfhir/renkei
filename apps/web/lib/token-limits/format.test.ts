@@ -101,6 +101,17 @@ describe('what the model picker says of a model at a limit', () => {
     ).toBe('Monthly limit for this model reached · resets Tue 1 Dec, 00:00 UTC');
   });
 
+  it('tells the reset on the organization’s clock', () => {
+    expect(
+      limitReachedNote({
+        period: 'week',
+        llmModelId: 'm',
+        resetsAt: '2026-11-16T05:00:00.000Z',
+        timeZone: 'America/New_York',
+      })
+    ).toBe('Weekly limit for this model reached · resets Mon 16 Nov, 00:00 EST');
+  });
+
   it('says so when it is the person’s overall limit', () => {
     expect(
       limitReachedNote({ period: 'week', llmModelId: null, resetsAt: '2026-11-16T00:00:00.000Z' })
@@ -111,4 +122,8 @@ describe('what the model picker says of a model at a limit', () => {
 it('a reset is written with its zone', () => {
   expect(formatReset('2026-11-16T00:00:00.000Z')).toBe('Mon 16 Nov, 00:00 UTC');
   expect(formatReset('nonsense')).toBe('');
+  expect(formatReset('2026-11-16T05:00:00.000Z', 'America/New_York')).toBe('Mon 16 Nov, 00:00 EST');
+  expect(formatReset('2026-07-06T04:00:00.000Z', 'America/New_York')).toBe('Mon 6 Jul, 00:00 EDT');
+  // A zone this runtime does not know still says something true.
+  expect(formatReset('2026-11-16T00:00:00.000Z', 'Mars/Olympus')).toBe('Mon 16 Nov, 00:00 UTC');
 });

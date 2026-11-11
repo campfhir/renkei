@@ -3,7 +3,7 @@
  * weekly and monthly limits, and whether new work may start for them.
  *
  * Three things meet here. The limits are organization settings
- * (`tokenLimitWeekly`, `tokenLimitMonthly`, the weekly reset's day and time,
+ * (`tokenLimitWeekly`, `tokenLimitMonthly`, the weekly reset's day, time and zone,
  * `modelTokenLimits`). What a person has spent is the token ledger
  * (llm_calls), which already attributes an agent's calls to its owner — so
  * a person's limit covers their chats and their agents alike. And an
@@ -26,10 +26,7 @@ import { getDataStore, type ModelSpend, type TokenLimitBoostRecord } from '@renk
 import { ok, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { getOrgSettings, type ModelTokenLimit, type OrgSettings } from './index';
-
-const MINUTE_MS = 60_000;
-const DAY_MS = 24 * 60 * MINUTE_MS;
-const WEEK_MS = 7 * DAY_MS;
+import { isTimeZone, zoneAbbreviation, zonedParts, zonedTime } from './zone-time';
 
 export const WEEKDAY_NAMES = [
   'Sunday',
@@ -47,8 +44,10 @@ export interface TokenLimitPolicy {
   monthly: number;
   /** 0 Sunday … 6 Saturday. */
   weekResetDay: number;
-  /** Minutes after 00:00 UTC. */
+  /** Minutes after midnight, on a clock in `timeZone`. */
   weekResetMinute: number;
+  /** The IANA zone the resets are told in: the week's day and time, and the month's 1st at 00:00. */
+  timeZone: string;
   models: Record<string, ModelTokenLimit>;
 }
 
@@ -58,6 +57,7 @@ export function tokenLimitPolicy(settings: OrgSettings): TokenLimitPolicy {
     monthly: Math.max(0, Math.trunc(settings.tokenLimitMonthly)),
     weekResetDay: ((Math.trunc(settings.tokenLimitWeekResetDay) % 7) + 7) % 7,
     weekResetMinute: Math.min(Math.max(0, Math.trunc(settings.tokenLimitWeekResetMinute)), 1439),
+    timeZone: isTimeZone(settings.tokenLimitTimeZone) ? settings.tokenLimitTimeZone : 'UTC',
     models: settings.modelTokenLimits,
   };
 }
@@ -67,21 +67,47 @@ export function policyLimitsAnything(policy: TokenLimitPolicy): boolean {
   return policy.weekly > 0 || policy.monthly > 0 || Object.keys(policy.models).length > 0;
 }
 
+/**
+ * The week `now` falls in: from the latest reset at or before it to the
+ * next, the reset being `resetDay` at `resetMinute` past midnight on a
+ * clock in `timeZone`. The next reset is the same wall time seven days on,
+ * so a week that holds a daylight-saving change is an hour off 168.
+ */
+export function weekBounds(
+  now: Date,
+  resetDay: number,
+  resetMinute: number,
+  timeZone = 'UTC'
+): { startsAt: Date; resetsAt: Date } {
+  const wall = zonedParts(now, timeZone);
+  const hour = Math.floor(resetMinute / 60);
+  const minute = resetMinute % 60;
+  const resetOn = (day: number) => zonedTime(timeZone, wall.year, wall.month, day, hour, minute);
+  let day = wall.day - ((wall.weekday - resetDay + 7) % 7);
+  // The reset day is today, and its time has not come: the week began seven days ago.
+  if (resetOn(day).getTime() > now.getTime()) day -= 7;
+  return { startsAt: resetOn(day), resetsAt: resetOn(day + 7) };
+}
+
 /** The latest weekly reset at or before `now`. */
-export function weekStart(now: Date, resetDay: number, resetMinute: number): Date {
-  const midnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  const daysBack = (now.getUTCDay() - resetDay + 7) % 7;
-  const candidate = midnight - daysBack * DAY_MS + resetMinute * MINUTE_MS;
-  return new Date(candidate > now.getTime() ? candidate - WEEK_MS : candidate);
+export function weekStart(
+  now: Date,
+  resetDay: number,
+  resetMinute: number,
+  timeZone = 'UTC'
+): Date {
+  return weekBounds(now, resetDay, resetMinute, timeZone).startsAt;
 }
 
-/** The 1st of `now`'s month, 00:00 UTC. */
-export function monthStart(now: Date): Date {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+/** The 1st of `now`'s month at 00:00, on a clock in `timeZone`. */
+export function monthStart(now: Date, timeZone = 'UTC'): Date {
+  const wall = zonedParts(now, timeZone);
+  return zonedTime(timeZone, wall.year, wall.month, 1);
 }
 
-export function nextMonthStart(now: Date): Date {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+export function nextMonthStart(now: Date, timeZone = 'UTC'): Date {
+  const wall = zonedParts(now, timeZone);
+  return zonedTime(timeZone, wall.year, wall.month + 1, 1);
 }
 
 export interface TokenLimitPeriods {
@@ -90,10 +116,12 @@ export interface TokenLimitPeriods {
 }
 
 export function tokenLimitPeriods(policy: TokenLimitPolicy, now: Date): TokenLimitPeriods {
-  const startsAt = weekStart(now, policy.weekResetDay, policy.weekResetMinute);
   return {
-    week: { startsAt, resetsAt: new Date(startsAt.getTime() + WEEK_MS) },
-    month: { startsAt: monthStart(now), resetsAt: nextMonthStart(now) },
+    week: weekBounds(now, policy.weekResetDay, policy.weekResetMinute, policy.timeZone),
+    month: {
+      startsAt: monthStart(now, policy.timeZone),
+      resetsAt: nextMonthStart(now, policy.timeZone),
+    },
   };
 }
 
@@ -117,6 +145,8 @@ export interface ModelProgress {
 export interface TokenLimitStatus {
   /** No limit applies to this person; the numbers are still what they used. */
   exempt: boolean;
+  /** The zone the resets are told in. */
+  timeZone: string;
   week: PeriodProgress;
   month: PeriodProgress;
   /** One entry per model the organization limits. */
@@ -147,6 +177,7 @@ export function buildTokenLimitStatus(inputs: TokenLimitInputs): TokenLimitStatu
     running.filter((boost) => boost.period === period).reduce((sum, b) => sum + b.tokens, 0);
   return {
     exempt: inputs.exempt,
+    timeZone: policy.timeZone,
     week: {
       limit: limitOf(policy.weekly),
       boost: boosted('week'),
@@ -179,6 +210,8 @@ export interface TokenLimitBlock {
   limit: number;
   used: number;
   resetsAt: Date;
+  /** The zone the reset is told in; UTC when left out. */
+  timeZone?: string;
 }
 
 /**
@@ -201,6 +234,7 @@ export function tokenLimitBlock(
         limit: progress.limit + progress.boost,
         used: progress.used,
         resetsAt: progress.resetsAt,
+        timeZone: status.timeZone,
       };
     }
   }
@@ -216,6 +250,7 @@ export function tokenLimitBlock(
         limit: progress.limit,
         used: progress.used,
         resetsAt: status[period].resetsAt,
+        timeZone: status.timeZone,
       };
     }
   }
@@ -232,8 +267,8 @@ export function formatTokenCount(tokens: number): string {
   return String(tokens);
 }
 
-/** "Monday 16 November at 00:00 UTC". */
-export function formatResetAt(at: Date): string {
+/** "Monday 16 November at 00:00 UTC", on a clock in `timeZone` and naming it ("… at 09:00 EST"). */
+export function formatResetAt(at: Date, timeZone = 'UTC'): string {
   const months = [
     'January',
     'February',
@@ -249,9 +284,10 @@ export function formatResetAt(at: Date): string {
     'December',
   ];
   const two = (value: number) => String(value).padStart(2, '0');
-  return `${WEEKDAY_NAMES[at.getUTCDay()]} ${at.getUTCDate()} ${months[at.getUTCMonth()]} at ${two(
-    at.getUTCHours()
-  )}:${two(at.getUTCMinutes())} UTC`;
+  const wall = zonedParts(at, timeZone);
+  return `${WEEKDAY_NAMES[wall.weekday]} ${wall.day} ${months[wall.month - 1]} at ${two(
+    wall.hour
+  )}:${two(wall.minute)} ${zoneAbbreviation(at, timeZone)}`;
 }
 
 /**
@@ -266,7 +302,7 @@ export function tokenLimitMessage(
   const whose = options.whose ?? 'You have';
   const period = block.period === 'week' ? 'weekly' : 'monthly';
   const used = `${formatTokenCount(block.used)} of ${formatTokenCount(block.limit)}`;
-  const reset = `It resets ${formatResetAt(block.resetsAt)}.`;
+  const reset = `It resets ${formatResetAt(block.resetsAt, block.timeZone)}.`;
   if (block.llmModelId !== null) {
     const model = options.modelLabel ? `the model ${options.modelLabel}` : 'this model';
     return `${whose} reached the ${period} token limit for ${model} (${used}). ${reset} Another model can still be used.`;

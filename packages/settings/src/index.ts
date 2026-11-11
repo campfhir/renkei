@@ -12,6 +12,7 @@
 import { configCacheTtlMs, getDataStore } from '@renkei/db';
 import { ok, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+import { isTimeZone } from './zone-time';
 
 /**
  * The write-time log levels an org may choose, restricted to the names
@@ -382,12 +383,18 @@ export interface OrgSettings {
    * can exempt a person or grant a boost (./token-limits.ts).
    */
   tokenLimitWeekly: number;
-  /** The same per calendar month, which resets on the 1st at 00:00 UTC; 0 sets none. */
+  /** The same per calendar month, which resets on the 1st at 00:00 in `tokenLimitTimeZone`; 0 sets none. */
   tokenLimitMonthly: number;
   /** The day the week resets on: 0 Sunday … 6 Saturday. Monday by default. */
   tokenLimitWeekResetDay: number;
-  /** The time of day the week resets at, in minutes after 00:00 UTC. */
+  /** The time of day the week resets at, in minutes after midnight in `tokenLimitTimeZone`. */
   tokenLimitWeekResetMinute: number;
+  /**
+   * The IANA time zone the resets are told in ("America/New_York"): the
+   * week's day and time, and the month's 1st at 00:00. UTC by default. A
+   * zone with daylight saving keeps the reset at the same wall-clock time.
+   */
+  tokenLimitTimeZone: string;
   /**
    * Per-person limits on single models, by model id (llm_model_configs):
    * for the expensive ones. Each is on top of the limits above — a turn or
@@ -480,6 +487,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   tokenLimitMonthly: 0,
   tokenLimitWeekResetDay: 1,
   tokenLimitWeekResetMinute: 0,
+  tokenLimitTimeZone: 'UTC',
   modelTokenLimits: {},
 };
 
@@ -683,6 +691,9 @@ export async function getOrgSettings(): Promise<Result<OrgSettings, 'DB_ERROR'>>
     tokenLimitWeekResetMinute: Number(
       coerce(stored.get('token_limit_week_reset_minute'), d.tokenLimitWeekResetMinute)
     ),
+    tokenLimitTimeZone: isTimeZone(stored.get('token_limit_time_zone'))
+      ? String(stored.get('token_limit_time_zone'))
+      : d.tokenLimitTimeZone,
     modelTokenLimits: coerceModelTokenLimits(stored.get('model_token_limits'), d.modelTokenLimits),
   };
 
@@ -787,6 +798,7 @@ export async function setOrgSettings(
     ['token_limit_monthly', updates.tokenLimitMonthly],
     ['token_limit_week_reset_day', updates.tokenLimitWeekResetDay],
     ['token_limit_week_reset_minute', updates.tokenLimitWeekResetMinute],
+    ['token_limit_time_zone', updates.tokenLimitTimeZone],
     ['model_token_limits', updates.modelTokenLimits],
   ];
 
@@ -847,3 +859,4 @@ export function invalidateSettingsCache(): void {
 
 export { getEffectiveLogLevel, watchLogLevel } from './log-level-sync';
 export * from './token-limits';
+export { isTimeZone } from './zone-time';

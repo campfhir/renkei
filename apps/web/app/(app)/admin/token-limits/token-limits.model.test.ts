@@ -11,6 +11,7 @@ import {
   minuteToTime,
   saveRequest,
   timeToMinute,
+  timeZoneOptions,
   tokenLimitsReducer,
   visiblePeople,
   type Person,
@@ -38,7 +39,14 @@ function person(subject: string, overrides: Partial<Person> = {}): Person {
 
 function view(overrides: Partial<TokenLimitsView> = {}): TokenLimitsView {
   return {
-    policy: { weekly: 0, monthly: 0, weekResetDay: 1, weekResetMinute: 0, models: {} },
+    policy: {
+      weekly: 0,
+      monthly: 0,
+      weekResetDay: 1,
+      weekResetMinute: 0,
+      timeZone: 'UTC',
+      models: {},
+    },
     weekResetsAt: '2026-11-16T00:00:00.000Z',
     monthResetsAt: '2026-12-01T00:00:00.000Z',
     models: [
@@ -61,6 +69,7 @@ describe('the organization limits', () => {
   it('opens on what is stored: no limits, the week resetting Monday at 00:00 UTC', () => {
     const state = initTokenLimits(view());
     expect(state.draft).toMatchObject({
+      timeZone: 'UTC',
       weekly: '',
       monthly: '',
       weekResetDay: 1,
@@ -94,7 +103,14 @@ describe('the organization limits', () => {
 
   it('clearing a limit removes it', () => {
     const stored = view({
-      policy: { weekly: 5_000_000, monthly: 0, weekResetDay: 1, weekResetMinute: 0, models: {} },
+      policy: {
+        weekly: 5_000_000,
+        monthly: 0,
+        weekResetDay: 1,
+        weekResetMinute: 0,
+        timeZone: 'UTC',
+        models: {},
+      },
     });
     const state = fold(initTokenLimits(stored), { type: 'limitsChanged', patch: { weekly: '' } });
     expect(saveRequest(state)).toEqual({ weekly: 0 });
@@ -106,6 +122,31 @@ describe('the organization limits', () => {
       patch: { weekResetDay: 5, weekResetTime: '17:30' },
     });
     expect(saveRequest(state)).toEqual({ weekResetDay: 5, weekResetMinute: 1050 });
+  });
+
+  it('the resets move to the time zone chosen, and only that is sent', () => {
+    const state = fold(initTokenLimits(view()), {
+      type: 'limitsChanged',
+      patch: { timeZone: 'America/New_York' },
+    });
+    expect(canSave(state)).toBe(true);
+    expect(saveRequest(state)).toEqual({ timeZone: 'America/New_York' });
+  });
+
+  it('the zone picker offers UTC first, and keeps a stored zone the browser does not list', () => {
+    const supported = ['America/New_York', 'Europe/Paris'];
+    expect(timeZoneOptions('UTC', supported)).toEqual(['UTC', 'America/New_York', 'Europe/Paris']);
+    expect(timeZoneOptions('Europe/Paris', supported)).toEqual([
+      'UTC',
+      'America/New_York',
+      'Europe/Paris',
+    ]);
+    expect(timeZoneOptions('Etc/GMT+5', supported)).toEqual([
+      'Etc/GMT+5',
+      'UTC',
+      'America/New_York',
+      'Europe/Paris',
+    ]);
   });
 
   it('typing a limit back to what is stored leaves nothing to save', () => {
@@ -130,6 +171,7 @@ describe('the organization limits', () => {
             monthly: 0,
             weekResetDay: 1,
             weekResetMinute: 0,
+            timeZone: 'UTC',
             models: {},
           },
         }),
@@ -179,6 +221,7 @@ describe('limits on a model', () => {
         monthly: 0,
         weekResetDay: 1,
         weekResetMinute: 0,
+        timeZone: 'UTC',
         models: { [OPUS]: { weekly: 500_000, monthly: 2_000_000 } },
       },
     });
@@ -197,6 +240,7 @@ describe('limits on a model', () => {
         monthly: 0,
         weekResetDay: 1,
         weekResetMinute: 0,
+        timeZone: 'UTC',
         models: { [OPUS]: { weekly: 500_000, monthly: 0 }, [GONE]: { weekly: 1, monthly: 0 } },
       },
     });
@@ -335,6 +379,7 @@ describe('people', () => {
       monthly: 0,
       weekResetDay: 1,
       weekResetMinute: 0,
+      timeZone: 'UTC',
       models: {},
     };
     expect(boostHasEffect(policy, 'week')).toBe(true);

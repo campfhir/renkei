@@ -91,36 +91,44 @@ export function limitReachedNote(block: {
   /** Null when it is the person's overall limit, not this model's. */
   llmModelId: string | null;
   resetsAt: string;
+  /** The zone the organization's resets are told in; UTC when left out. */
+  timeZone?: string;
 }): string {
   const period = block.period === 'week' ? 'weekly' : 'monthly';
   const which =
     block.llmModelId === null
       ? `Your ${period} token limit is reached`
       : `${period === 'weekly' ? 'Weekly' : 'Monthly'} limit for this model reached`;
-  return `${which} · resets ${formatReset(block.resetsAt)}`;
+  return `${which} · resets ${formatReset(block.resetsAt, block.timeZone)}`;
 }
 
-/** "Mon 16 Nov, 00:00 UTC": limits reset on the organization's clock, so the zone is always said. */
-export function formatReset(iso: string): string {
+/**
+ * "Mon 16 Nov, 00:00 UTC", or on the clock of the zone the organization's
+ * resets are told in ("Mon 16 Nov, 00:00 EST"). The zone is always said: a
+ * reset is the organization's time, not the reader's.
+ */
+export function formatReset(iso: string, timeZone = 'UTC'): string {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return '';
-  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const months = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
-  ];
-  const two = (value: number) => String(value).padStart(2, '0');
-  return `${days[at.getUTCDay()]} ${at.getUTCDate()} ${months[at.getUTCMonth()]}, ${two(
-    at.getUTCHours()
-  )}:${two(at.getUTCMinutes())} UTC`;
+  const partsIn = (zone: string) =>
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: zone,
+      hourCycle: 'h23',
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZoneName: 'short',
+    }).formatToParts(at);
+  let parts: Intl.DateTimeFormatPart[];
+  try {
+    parts = partsIn(timeZone);
+  } catch {
+    // A zone name this browser does not know: UTC is still true.
+    parts = partsIn('UTC');
+  }
+  const read = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
+  const hour = String(Number(read('hour')) % 24).padStart(2, '0');
+  return `${read('weekday')} ${read('day')} ${read('month')}, ${hour}:${read('minute')} ${read('timeZoneName')}`;
 }

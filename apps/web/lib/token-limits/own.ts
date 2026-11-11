@@ -32,6 +32,8 @@ export interface OwnModelLimit {
 export interface OwnTokenLimits {
   /** No limit applies to this person. */
   exempt: boolean;
+  /** The IANA zone the resets are told in. */
+  timeZone: string;
   week: OwnPeriodLimit;
   month: OwnPeriodLimit;
   /** The models the organization limits by themselves, by label. */
@@ -65,6 +67,7 @@ export async function modelLimitNotes(
           period: block.period,
           llmModelId: block.llmModelId,
           resetsAt: block.resetsAt.toISOString(),
+          timeZone: status.val.timeZone,
         })
       );
     }
@@ -87,6 +90,7 @@ export async function readOwnTokenLimits(subject: string): Promise<OwnTokenLimit
   }
   return {
     exempt,
+    timeZone: status.val.timeZone,
     week: {
       used: week.used,
       limit: week.limit,

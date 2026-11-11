@@ -1,6 +1,7 @@
 /**
  * The organization's token limits: the most tokens one person may spend in
- * a week and in a month (their agents included), when the week resets, and
+ * a week and in a month (their agents included), when and in which time
+ * zone the week resets, and
  * limits on single models. Read and written here for the Token limits page;
  * a person's exemption and boosts are the routes beside this one.
  *
@@ -14,6 +15,7 @@ import { isRecord } from '@renkei/guards';
 import { getDataStore } from '@renkei/db';
 import {
   getOrgSettings,
+  isTimeZone,
   setOrgSettings,
   type ModelTokenLimit,
   type OrgSettings,
@@ -86,6 +88,17 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     if (value !== current.val[key]) {
       updates[key] = value;
       changed[field] = { from: current.val[key], to: value };
+    }
+  }
+
+  if ('timeZone' in body) {
+    // An IANA name this server's Intl knows: the resets are computed here.
+    if (!isTimeZone(body.timeZone)) {
+      return NextResponse.json({ error: 'timeZone must be a time zone name' }, { status: 400 });
+    }
+    if (body.timeZone !== current.val.tokenLimitTimeZone) {
+      updates.tokenLimitTimeZone = body.timeZone;
+      changed.timeZone = { from: current.val.tokenLimitTimeZone, to: body.timeZone };
     }
   }
 

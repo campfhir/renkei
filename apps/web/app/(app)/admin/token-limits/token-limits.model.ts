@@ -24,8 +24,10 @@ export interface Policy {
   monthly: number;
   /** 0 Sunday … 6 Saturday. */
   weekResetDay: number;
-  /** Minutes after 00:00 UTC. */
+  /** Minutes after midnight, on a clock in `timeZone`. */
   weekResetMinute: number;
+  /** The IANA zone the resets are told in. */
+  timeZone: string;
   models: Record<string, ModelLimit>;
 }
 
@@ -77,8 +79,9 @@ export interface Draft {
   weekly: string;
   monthly: string;
   weekResetDay: number;
-  /** "HH:MM", UTC. */
+  /** "HH:MM", on a clock in `timeZone`. */
   weekResetTime: string;
+  timeZone: string;
   models: Record<string, { weekly: string; monthly: string }>;
 }
 
@@ -120,6 +123,15 @@ export type TokenLimitsAction =
   | { type: 'personStored'; view: TokenLimitsView }
   | { type: 'personFailed'; error: string | null };
 
+/**
+ * The zones the picker offers: the stored one first when the browser's own
+ * list lacks it (so it is never silently replaced), then UTC, then the
+ * browser's list.
+ */
+export function timeZoneOptions(stored: string, supported: readonly string[]): string[] {
+  return [...new Set([...(supported.includes(stored) ? [] : [stored]), 'UTC', ...supported])];
+}
+
 export function minuteToTime(minute: number): string {
   const two = (value: number) => String(value).padStart(2, '0');
   return `${two(Math.floor(minute / 60))}:${two(minute % 60)}`;
@@ -148,6 +160,7 @@ function draftOf(view: TokenLimitsView): Draft {
     monthly: tokensFieldText(view.policy.monthly),
     weekResetDay: view.policy.weekResetDay,
     weekResetTime: minuteToTime(view.policy.weekResetMinute),
+    timeZone: view.policy.timeZone,
     models,
   };
 }
@@ -237,7 +250,14 @@ export function draftPolicy(state: TokenLimitsState): Policy | null {
       models[modelId] = { weekly: modelWeekly, monthly: modelMonthly };
     }
   }
-  return { weekly, monthly, weekResetDay: state.draft.weekResetDay, weekResetMinute, models };
+  return {
+    weekly,
+    monthly,
+    weekResetDay: state.draft.weekResetDay,
+    weekResetMinute,
+    timeZone: state.draft.timeZone,
+    models,
+  };
 }
 
 /** Whether a typed amount is one; the field is marked when it is not. */
@@ -250,6 +270,7 @@ export interface SaveRequest {
   monthly?: number;
   weekResetDay?: number;
   weekResetMinute?: number;
+  timeZone?: string;
   /** Only the models whose limit changed; null takes a model's limit away. */
   models?: Record<string, ModelLimit | null>;
 }
@@ -270,6 +291,7 @@ export function saveRequest(state: TokenLimitsState): SaveRequest | null {
   if (next.weekResetMinute !== stored.weekResetMinute) {
     request.weekResetMinute = next.weekResetMinute;
   }
+  if (next.timeZone !== stored.timeZone) request.timeZone = next.timeZone;
   const models: Record<string, ModelLimit | null> = {};
   for (const modelId of new Set([...Object.keys(stored.models), ...Object.keys(next.models)])) {
     const before = stored.models[modelId];

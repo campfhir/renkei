@@ -9,7 +9,7 @@ import {
   resetDataStore,
   type MemoryDataStore,
 } from '@renkei/db';
-import { invalidateSettingsCache, setOrgSettings } from './index';
+import { DEFAULT_ORG_SETTINGS, invalidateSettingsCache, isTimeZone, setOrgSettings } from './index';
 import {
   buildTokenLimitStatus,
   checkTokenLimit,
@@ -17,6 +17,9 @@ import {
   formatTokenCount,
   getTokenLimitStatus,
   monthStart,
+  nextMonthStart,
+  tokenLimitPolicy,
+  weekBounds,
   tokenLimitBlock,
   tokenLimitMessage,
   tokenLimitPeriods,
@@ -34,6 +37,7 @@ const policy: TokenLimitPolicy = {
   monthly: 3000,
   weekResetDay: 1,
   weekResetMinute: 0,
+  timeZone: 'UTC',
   models: {},
 };
 
@@ -86,6 +90,77 @@ describe('when a period begins', () => {
   });
 });
 
+describe('resets told in the organization’s time zone', () => {
+  const NEW_YORK = 'America/New_York';
+  const KOLKATA = 'Asia/Kolkata';
+
+  it('Monday at midnight in New York is 05:00 UTC in winter', () => {
+    expect(weekStart(now, 1, 0, NEW_YORK)).toEqual(utc('2026-11-09T05:00:00'));
+    expect(weekBounds(now, 1, 0, NEW_YORK).resetsAt).toEqual(utc('2026-11-16T05:00:00'));
+  });
+
+  it('early Monday UTC is still Sunday in New York: last week has not ended there', () => {
+    expect(weekStart(utc('2026-11-16T03:00:00'), 1, 0, NEW_YORK)).toEqual(
+      utc('2026-11-09T05:00:00')
+    );
+    expect(weekStart(utc('2026-11-16T05:00:00'), 1, 0, NEW_YORK)).toEqual(
+      utc('2026-11-16T05:00:00')
+    );
+  });
+
+  it('a zone ahead of UTC resets before UTC midnight', () => {
+    // Monday 09:00 in Kolkata (UTC+5:30) is 03:30 UTC.
+    expect(weekStart(now, 1, 9 * 60, KOLKATA)).toEqual(utc('2026-11-09T03:30:00'));
+  });
+
+  it('the reset keeps its wall-clock time across a daylight-saving change', () => {
+    // Clocks in New York go back on Sunday 1 November 2026.
+    const before = weekBounds(utc('2026-10-28T12:00:00'), 1, 9 * 60, NEW_YORK);
+    expect(before.startsAt).toEqual(utc('2026-10-26T13:00:00'));
+    expect(before.resetsAt).toEqual(utc('2026-11-02T14:00:00'));
+    // And forward on Sunday 8 March 2026.
+    const spring = weekBounds(utc('2026-03-04T12:00:00'), 1, 9 * 60, NEW_YORK);
+    expect(spring.startsAt).toEqual(utc('2026-03-02T14:00:00'));
+    expect(spring.resetsAt).toEqual(utc('2026-03-09T13:00:00'));
+  });
+
+  it('the month begins on the 1st at midnight there', () => {
+    expect(monthStart(now, NEW_YORK)).toEqual(utc('2026-11-01T04:00:00'));
+    expect(nextMonthStart(now, NEW_YORK)).toEqual(utc('2026-12-01T05:00:00'));
+    // 02:00 UTC on 1 December is still November in New York.
+    expect(monthStart(utc('2026-12-01T02:00:00'), NEW_YORK)).toEqual(utc('2026-11-01T04:00:00'));
+    expect(nextMonthStart(utc('2026-12-31T23:00:00'), KOLKATA)).toEqual(utc('2027-01-31T18:30:00'));
+  });
+
+  it('a reset is written on that zone’s clock, with its name', () => {
+    expect(formatResetAt(utc('2026-11-16T05:00:00'), NEW_YORK)).toBe(
+      'Monday 16 November at 00:00 EST'
+    );
+    expect(formatResetAt(utc('2026-07-06T04:00:00'), NEW_YORK)).toBe('Monday 6 July at 00:00 EDT');
+  });
+
+  it('a zone name Intl does not know falls back to UTC', () => {
+    const base = { ...DEFAULT_ORG_SETTINGS, tokenLimitTimeZone: 'Mars/Olympus' };
+    expect(tokenLimitPolicy(base).timeZone).toBe('UTC');
+    expect(isTimeZone('America/New_York')).toBe(true);
+    expect(isTimeZone('UTC')).toBe(true);
+    expect(isTimeZone('')).toBe(false);
+  });
+
+  it('a refusal names the reset in that zone', () => {
+    expect(
+      tokenLimitMessage({
+        period: 'week',
+        llmModelId: null,
+        limit: 1000,
+        used: 1000,
+        resetsAt: utc('2026-11-16T05:00:00'),
+        timeZone: NEW_YORK,
+      })
+    ).toContain('It resets Monday 16 November at 00:00 EST.');
+  });
+});
+
 describe('where a person stands', () => {
   it('every model counts toward the person, chats and agents alike', () => {
     const status = buildTokenLimitStatus(
@@ -129,6 +204,7 @@ describe('where a person stands', () => {
       limit: 1000,
       used: 1000,
       resetsAt: utc('2026-11-16T00:00:00'),
+      timeZone: 'UTC',
     });
   });
 

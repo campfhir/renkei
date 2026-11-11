@@ -8,6 +8,7 @@ function Meter({
   limit,
   boost = 0,
   resetsAt,
+  timeZone,
 }: {
   title: string;
   /** The model this meter is for, said to a screen reader; the person's overall limit without it. */
@@ -16,6 +17,7 @@ function Meter({
   limit: number | null;
   boost?: number;
   resetsAt: string;
+  timeZone: string;
 }) {
   const progress = limitProgress(used, limit, boost);
   const tone = progress.reached ? 'bg-red-500' : progress.near ? 'bg-amber-500' : 'bg-blue-600';
@@ -44,8 +46,8 @@ function Meter({
         {progress.limit === null
           ? 'No limit'
           : progress.reached
-            ? `Limit reached — resets ${formatReset(resetsAt)}`
-            : `Resets ${formatReset(resetsAt)}`}
+            ? `Limit reached — resets ${formatReset(resetsAt, timeZone)}`
+            : `Resets ${formatReset(resetsAt, timeZone)}`}
         {boost > 0 && progress.limit !== null ? ` · includes a ${formatTokens(boost)} boost` : ''}
       </p>
     </div>
@@ -94,6 +96,7 @@ export default function TokenLimitsCard({ limits }: { limits: OwnTokenLimits }) 
               limit={limits.week.limit}
               boost={limits.week.boost}
               resetsAt={limits.week.resetsAt}
+              timeZone={limits.timeZone}
             />
             <Meter
               title="This month"
@@ -101,6 +104,7 @@ export default function TokenLimitsCard({ limits }: { limits: OwnTokenLimits }) 
               limit={limits.month.limit}
               boost={limits.month.boost}
               resetsAt={limits.month.resetsAt}
+              timeZone={limits.timeZone}
             />
           </div>
           {limits.models.length > 0 && (
@@ -120,6 +124,7 @@ export default function TokenLimitsCard({ limits }: { limits: OwnTokenLimits }) 
                           used={model.week.used}
                           limit={model.week.limit}
                           resetsAt={limits.week.resetsAt}
+                          timeZone={limits.timeZone}
                         />
                       )}
                       {model.month.limit !== null && (
@@ -129,6 +134,7 @@ export default function TokenLimitsCard({ limits }: { limits: OwnTokenLimits }) 
                           used={model.month.used}
                           limit={model.month.limit}
                           resetsAt={limits.month.resetsAt}
+                          timeZone={limits.timeZone}
                         />
                       )}
                     </div>

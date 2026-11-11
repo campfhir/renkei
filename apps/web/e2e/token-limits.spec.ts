@@ -41,6 +41,9 @@ test('a model limit stops new chat turns, shows on My usage, and an operator lif
     await expect(main.getByRole('heading', { name: 'Token limits' })).toBeVisible(COLD);
     const save = main.getByRole('button', { name: 'Save limits' });
     await expect(save).toBeDisabled();
+    // The resets' time zone is the organization's to choose. It is shared by
+    // every test on this server, so it is looked at here and left alone.
+    await expect(main.getByRole('combobox', { name: 'Reset time zone' })).toHaveValue('UTC');
     // Typed again until the form answers: a value filled before the page
     // hydrates is put back to what the server rendered.
     const weekly = main.getByRole('textbox', { name: `Weekly limit for ${label}` });
