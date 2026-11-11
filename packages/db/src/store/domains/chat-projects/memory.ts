@@ -68,6 +68,7 @@ export function memoryChatProjects(tables: MemoryTables): ChatProjectStore {
         repo_full_name: null,
         repo_branch: null,
         workspace_id: null,
+        llm_model_id: null,
         published_to_org: false,
         created_at: now,
         updated_at: now,

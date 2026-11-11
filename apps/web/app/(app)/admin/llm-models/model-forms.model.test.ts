@@ -19,6 +19,8 @@ import {
   keyedSiblings,
   listRequest,
   modelFormsReducer,
+  removalView,
+  removeRequest,
   rowView,
   saveRequest,
   showsEmpty,
@@ -92,9 +94,157 @@ describe('the roster', () => {
     expect(showsEmpty(adding())).toBe(false);
   });
 
-  it('a refused remove says why above the list', () => {
+  it('a refused remove with no dialog open says why above the list', () => {
     const state = run([{ type: 'removeFailed', error: 'Not found' }], adding(row('a')));
     expect(state.loadError).toBe('Not found');
+  });
+});
+
+describe('removing a model', () => {
+  const roster = [
+    row('a', { label: 'Fable' }),
+    row('b', { label: 'Haiku', isDefault: true }),
+    row('c', { label: 'Opus' }),
+    row('d', { label: 'Off', enabled: false }),
+    row('e', { label: 'Painter', settings: { apiSurface: 'images' } }),
+  ];
+  const listed = run([{ type: 'loaded', models: roster }]);
+  const asked = run([{ type: 'removeAsked', row: roster[0]! }], listed);
+  const usage = { people: 3, names: [], preferences: 1, projects: 2, chats: 5, agents: 1 };
+  const counted = run([{ type: 'usageLoaded', usage }], asked);
+
+  it('Remove opens a dialog that waits to hear who is on the model', () => {
+    const view = removalView(asked);
+    expect(view?.title).toBe('Remove “Fable”');
+    expect(view?.summary).toBeNull();
+    expect(view?.canConfirm).toBe(false);
+  });
+
+  it('says who is on it and what of theirs, and that they will be told', () => {
+    const view = removalView(counted);
+    expect(view?.summary).toBe(
+      '3 people are on this model: 1 preferred chat model, 2 projects, 5 chats and 1 agent.'
+    );
+    expect(view?.inUse).toBe(true);
+    expect(view?.confirmLabel).toBe('Remove and notify 3 people');
+    expect(view?.canConfirm).toBe(true);
+  });
+
+  it('one person is one person', () => {
+    const one = run(
+      [
+        {
+          type: 'usageLoaded',
+          usage: { people: 1, names: [], preferences: 0, projects: 0, chats: 1, agents: 0 },
+        },
+      ],
+      asked
+    );
+    expect(removalView(one)?.summary).toBe('1 person is on this model: 1 chat.');
+    expect(removalView(one)?.confirmLabel).toBe('Remove and notify 1 person');
+  });
+
+  it('names the people on it when they are three or fewer', () => {
+    const few = (names: string[]) =>
+      removalView(
+        run([{ type: 'usageLoaded', usage: { ...usage, people: names.length, names } }], asked)
+      )?.summary;
+    expect(few(['Ada'])).toMatch(/^Ada is on this model: /);
+    expect(few(['Ada', 'Bob'])).toMatch(/^Ada and Bob are on this model: /);
+    expect(few(['Ada', 'Bob', 'Cat'])).toMatch(/^Ada, Bob and Cat are on this model: /);
+  });
+
+  it('names three and counts the rest when there are more', () => {
+    const many = (people: number) =>
+      removalView(
+        run(
+          [{ type: 'usageLoaded', usage: { ...usage, people, names: ['Ada', 'Bob', 'Cat'] } }],
+          asked
+        )
+      );
+    expect(many(4)?.summary).toMatch(/^Ada, Bob, Cat and 1 other are on this model: /);
+    expect(many(240)?.summary).toMatch(/^Ada, Bob, Cat and 237 others are on this model: /);
+    expect(many(240)?.confirmLabel).toBe('Remove and notify 240 people');
+  });
+
+  it('someone with no name on record is counted, not named', () => {
+    const view = removalView(
+      run([{ type: 'usageLoaded', usage: { ...usage, people: 2, names: ['Ada'] } }], asked)
+    );
+    expect(view?.summary).toMatch(/^Ada and 1 other are on this model: /);
+  });
+
+  it('a model nobody is on is simply removed', () => {
+    const unused = run(
+      [
+        {
+          type: 'usageLoaded',
+          usage: { people: 0, names: [], preferences: 0, projects: 0, chats: 0, agents: 0 },
+        },
+      ],
+      asked
+    );
+    expect(removalView(unused)).toMatchObject({
+      summary: 'Nobody is on this model.',
+      inUse: false,
+      confirmLabel: 'Remove',
+      canConfirm: true,
+    });
+  });
+
+  it('offers the organization default first, then the other models that can answer a chat', () => {
+    expect(removalView(counted)?.options).toEqual([
+      { value: '', label: 'Organization default (Haiku)' },
+      { value: 'b', label: 'Haiku · claude-sonnet-5' },
+      { value: 'c', label: 'Opus · claude-sonnet-5' },
+    ]);
+  });
+
+  it('removing the default itself offers no default by name', () => {
+    const removingDefault = run([{ type: 'removeAsked', row: roster[1]! }], listed);
+    expect(removalView(removingDefault)?.options[0]).toEqual({
+      value: '',
+      label: 'No replacement — the organization default, once there is one',
+    });
+  });
+
+  it('sends the delete alone for the default, and names the replacement when one is picked', () => {
+    expect(removeRequest(counted.removing!)).toEqual({
+      method: 'DELETE',
+      path: '/api/admin/llm-models/a',
+    });
+    const picked = run([{ type: 'replacementPicked', value: 'c' }], counted);
+    expect(removeRequest(picked.removing!)).toEqual({
+      method: 'DELETE',
+      path: '/api/admin/llm-models/a?replaceWith=c',
+    });
+  });
+
+  it('Cancel closes the dialog and removes nothing; a removal on its way cannot be cancelled', () => {
+    expect(run([{ type: 'removeCancelled' }], counted).removing).toBeNull();
+    const sent = run([{ type: 'removeSent' }], counted);
+    expect(removalView(sent)).toMatchObject({ confirmLabel: 'Removing…', canConfirm: false });
+    expect(run([{ type: 'removeCancelled' }], sent).removing).not.toBeNull();
+  });
+
+  it('a refused removal keeps the dialog and the pick, and says why', () => {
+    const refused = run(
+      [
+        { type: 'replacementPicked', value: 'c' },
+        { type: 'removeSent' },
+        { type: 'removeFailed', error: 'The replacement must be another enabled chat model.' },
+      ],
+      counted
+    );
+    expect(refused.removing).toMatchObject({
+      replacementId: 'c',
+      sending: false,
+      error: 'The replacement must be another enabled chat model.',
+    });
+  });
+
+  it('a removal that lands closes the dialog', () => {
+    expect(run([{ type: 'removeSent' }, { type: 'removed' }], counted).removing).toBeNull();
   });
 });
 

@@ -129,7 +129,11 @@ export const chatClient = {
    * in a worktree of its own, so any number may be open at once.
    */
   createChat: (input: { projectId?: string | null }) =>
-    sendJsonFull<{ chatId: string; code?: string }>(`${base()}/chats`, 'POST', input),
+    sendJsonFull<{ chatId: string; llmModelId?: string | null; code?: string }>(
+      `${base()}/chats`,
+      'POST',
+      input
+    ),
 
   getChat: (chatId: string) =>
     getJson<{ chat: ChatView; messages: ChatMessageView[] }>(`${base()}/chats/${chatId}`),

@@ -1,7 +1,7 @@
 import { sql, type Kysely, type SqlBool } from 'kysely';
 import type { DB } from '../../../db.types';
 import { isLabelConflict, llmModelFromRow, llmModelValues } from './record';
-import type { LlmModelStore } from './types';
+import type { LlmModelStore, LlmModelUse } from './types';
 
 // The twins of @renkei/agent-llm's chat/image split.
 const imageSurface = sql<SqlBool>`coalesce(settings->>'apiSurface', '') in ('images', 'flux')`;
@@ -99,12 +99,50 @@ export function postgresLlmModels(db: () => Kysely<DB>): LlmModelStore {
       const row = await query.orderBy('label', 'asc').orderBy('id').executeTakeFirst();
       return row ? llmModelFromRow(row) : null;
     },
-    async delete(id) {
-      const result = await db()
-        .deleteFrom('llm_model_configs')
-        .where('id', '=', id)
-        .executeTakeFirst();
-      return Number(result.numDeletedRows ?? 0) > 0;
+    async delete(id, replacementId) {
+      return db()
+        .transaction()
+        .execute(async (trx) => {
+          if (replacementId) {
+            // Before the delete: its foreign keys would null these first.
+            for (const table of ['chat_projects', 'chats', 'agents'] as const) {
+              await trx
+                .updateTable(table)
+                .set({ llm_model_id: replacementId })
+                .where('llm_model_id', '=', id)
+                .execute();
+            }
+          }
+          const result = await trx
+            .deleteFrom('llm_model_configs')
+            .where('id', '=', id)
+            .executeTakeFirst();
+          return Number(result.numDeletedRows ?? 0) > 0;
+        });
+    },
+    async usedBy(id) {
+      const [projects, chats, agents] = await Promise.all(
+        (['chat_projects', 'chats', 'agents'] as const).map((table) =>
+          db()
+            .selectFrom(table)
+            .select(['owner_subject', (eb) => eb.fn.countAll<string>().as('count')])
+            .where('llm_model_id', '=', id)
+            .groupBy('owner_subject')
+            .execute()
+        )
+      );
+      const uses = new Map<string, LlmModelUse>();
+      const use = (subject: string) => {
+        const found = uses.get(subject) ?? { subject, projects: 0, chats: 0, agents: 0 };
+        uses.set(subject, found);
+        return found;
+      };
+      for (const row of projects ?? []) use(row.owner_subject).projects = Number(row.count);
+      for (const row of chats ?? []) use(row.owner_subject).chats = Number(row.count);
+      for (const row of agents ?? []) use(row.owner_subject).agents = Number(row.count);
+      return [...uses.values()].sort((a, b) =>
+        a.subject < b.subject ? -1 : a.subject > b.subject ? 1 : 0
+      );
     },
   };
 }

@@ -43,6 +43,8 @@ export interface ProjectRow {
   repo: ProjectRepo | null;
   /** A code project's base clone on the sandbox worker, once cloned; each chat works in a worktree of it (chats.workspace_id). */
   workspaceId: string | null;
+  /** The model the project's new chats start on; null for none of its own. */
+  llmModelId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -68,6 +70,7 @@ function rowOf(raw: ChatProjectRecord): ProjectRow {
           }
         : null,
     workspaceId: raw.workspaceId,
+    llmModelId: raw.llmModelId,
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
   };
@@ -149,6 +152,8 @@ export interface ProjectPatch {
   repo?: ProjectRepo;
   /** The checkout on the worker: set when a clone starts, cleared when it is dropped. */
   workspaceId?: string | null;
+  /** The model the project's new chats start on, or null for none of its own. */
+  llmModelId?: string | null;
   /** Leave `updatedAt` (and so the lists' order) as it is: for a change nobody made by hand. */
   keepUpdatedAt?: boolean;
 }
@@ -192,6 +197,7 @@ export async function updateProject(
         }
       : {}),
     ...(patch.workspaceId !== undefined ? { workspaceId: patch.workspaceId } : {}),
+    ...(patch.llmModelId !== undefined ? { llmModelId: patch.llmModelId } : {}),
     ...(patch.keepUpdatedAt ? { keepUpdatedAt: true } : {}),
   });
 }

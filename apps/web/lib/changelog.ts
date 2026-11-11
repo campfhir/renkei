@@ -49,6 +49,24 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-11',
     entries: [
       {
+        kind: 'changed',
+        title: "The chat's model picker scrolls and can be searched",
+        detail:
+          'The model menu stays inside the screen on a phone with the list scrolling inside it, and a long roster gets a search box that finds a model by name, provider or id.',
+      },
+      {
+        kind: 'changed',
+        title: 'Removing a model offers a replacement and tells the people on it',
+        detail:
+          'Removing a model from the roster shows who is on it and lets an operator pick what replaces it; their preferred chat model, projects, chats and agents move to it, and each person gets a notification that their model changed.',
+      },
+      {
+        kind: 'added',
+        title: 'A preferred chat model, and a model per project',
+        detail:
+          "Preferences has a Chat model section, and a chat or code project can name its own model in About: a new chat starts on its project's model, else your preferred one, else the organization default.",
+      },
+      {
         kind: 'added',
         title: 'Token limits per person',
         detail:

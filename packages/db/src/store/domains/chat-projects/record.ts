@@ -21,6 +21,7 @@ export function projectFromRow(row: Selectable<ChatProjects>): ChatProjectRecord
     repoFullName: row.repo_full_name,
     repoBranch: row.repo_branch,
     workspaceId: row.workspace_id,
+    llmModelId: row.llm_model_id,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
   };
@@ -70,5 +71,6 @@ export function projectPatchValues(patch: ChatProjectPatch) {
         }
       : {}),
     ...(patch.workspaceId !== undefined ? { workspace_id: patch.workspaceId } : {}),
+    ...(patch.llmModelId !== undefined ? { llm_model_id: patch.llmModelId } : {}),
   };
 }

@@ -231,7 +231,12 @@ function QuickChat({ onClose }: { onClose: () => void }) {
         dispatch({ type: 'failed', stage: 'setup', error: loaded.error ?? null });
         return;
       }
-      dispatch({ type: 'ready', chatId: made, setup: loaded.data });
+      dispatch({
+        type: 'ready',
+        chatId: made,
+        setup: loaded.data,
+        modelId: created.data.llmModelId ?? null,
+      });
     })();
     return () => {
       cancelled = true;

@@ -24,6 +24,17 @@ export interface LlmModelConfigInput {
   isDefault: boolean;
 }
 
+/** One person whose projects, chats or agents name a model. */
+export interface LlmModelUse {
+  subject: string;
+  /** How many of their projects (chat and code) start their chats on it. */
+  projects: number;
+  /** How many of their chats are set to it. */
+  chats: number;
+  /** How many of their agents are pinned to it. */
+  agents: number;
+}
+
 export interface LlmModelStore {
   /** Every model, by label (ties by id). */
   list(): Promise<LlmModelConfigRecord[]>;
@@ -38,8 +49,17 @@ export interface LlmModelStore {
     id: string,
     input: LlmModelConfigInput
   ): Promise<'updated' | 'not-found' | 'duplicate-label'>;
-  /** False when there was no such model. */
-  delete(id: string): Promise<boolean>;
+  /**
+   * Delete one; false when there was no such model. The projects, chats and
+   * agents that named it move to `replacementId` in the same step; without one
+   * they name no model, which reads as the org default.
+   */
+  delete(id: string, replacementId?: string | null): Promise<boolean>;
+  /**
+   * Who owns a project or chat set to this model or an agent pinned to it,
+   * with how many of each, by subject.
+   */
+  usedBy(id: string): Promise<LlmModelUse[]>;
   /**
    * The enabled CHAT model (settings.apiSurface not 'images'/'flux') with
    * this id; with null, the org default among them (ties by id). Null when

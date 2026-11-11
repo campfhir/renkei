@@ -15,10 +15,12 @@ jest.mock('@renkei/agent-llm', () => ({
 }));
 
 import { NextRequest } from 'next/server';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { decrypt, encrypt, parseEncryptionKey } from '@renkei/crypto';
-import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
+import { createMemoryDataStore, getDataStore, registerDataStore, resetDataStore } from '@renkei/db';
+import { getChatModelPrefs, patchChatModelPrefs } from '@renkei/user-prefs';
 import { DELETE, PUT } from './route';
+import { GET as USAGE } from './usage/route';
 
 const { checkAccess: mockCheckAccess } = jest.requireMock<{ checkAccess: jest.Mock }>(
   '@/lib/access'
@@ -246,5 +248,144 @@ describe('DELETE .../llm-models/[modelId]', () => {
       params: paramsOf('00000000-0000-4000-8000-000000000f09'),
     });
     expect(response.status).toBe(404);
+  });
+});
+
+describe('DELETE with people still on the model', () => {
+  const deleteReq = (replaceWith?: string) =>
+    new NextRequest(
+      new Request(
+        `http://x/api/admin/llm-models/${ROW_1}${replaceWith ? `?replaceWith=${replaceWith}` : ''}`,
+        { method: 'DELETE' }
+      )
+    );
+  const other: ModelConfigRow = { ...baseRow, id: ROW_2, label: 'Other', is_default: true };
+
+  /** ann prefers the model and has a project and a chat on it; bob has a chat. */
+  async function inUse() {
+    const db = fakeDb([{ ...baseRow }, other]);
+    const store = getDataStore();
+    const ann = `auth0|ann-${randomUUID()}`;
+    const bob = `auth0|bob-${randomUUID()}`;
+    await patchChatModelPrefs(ann, { modelId: ROW_1 });
+    const project = await store.chatProjects.create({
+      ownerSubject: ann,
+      name: 'p',
+      description: null,
+      toolConfig: null,
+    });
+    await store.chatProjects.update(project, { llmModelId: ROW_1 });
+    const chatOf = (ownerSubject: string) =>
+      store.chats.create({
+        ownerSubject,
+        projectId: null,
+        llmModelId: ROW_1,
+        toolConfig: null,
+        thinkingEnabled: false,
+        autoMode: false,
+        temporary: false,
+      });
+    const annChat = await chatOf(ann);
+    const bobChat = await chatOf(bob);
+    const headlines = async (subject: string) =>
+      (await store.notifications.list(subject, { limit: 10 })).map((row) => row.headline);
+    return { db, store, ann, bob, project, annChat, bobChat, headlines };
+  }
+
+  it('moves what was set to it to the replacement and tells each person', async () => {
+    const world = await inUse();
+
+    const response = await DELETE(deleteReq(ROW_2), { params: paramsOf() });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ deleted: true, notified: 2 });
+    expect((await world.store.chatProjects.get(world.project))?.llmModelId).toBe(ROW_2);
+    expect((await world.store.chats.get(world.annChat))?.llmModelId).toBe(ROW_2);
+    expect((await world.store.chats.get(world.bobChat))?.llmModelId).toBe(ROW_2);
+    expect((await getChatModelPrefs(world.ann, { fresh: true })).modelId).toBe(ROW_2);
+    expect(await world.headlines(world.ann)).toEqual([
+      'An administrator removed the model "Prod Claude". "Other" replaced it for your preferred chat model, 1 project and 1 chat.',
+    ]);
+    expect(await world.headlines(world.bob)).toEqual([
+      'An administrator removed the model "Prod Claude". "Other" replaced it for 1 chat.',
+    ]);
+  });
+
+  it('with no replacement leaves them on the organization default, and still tells them', async () => {
+    const world = await inUse();
+
+    const response = await DELETE(deleteReq(), { params: paramsOf() });
+
+    expect(response.status).toBe(200);
+    expect((await world.store.chatProjects.get(world.project))?.llmModelId).toBeNull();
+    expect((await world.store.chats.get(world.bobChat))?.llmModelId).toBeNull();
+    expect((await getChatModelPrefs(world.ann, { fresh: true })).modelId).toBeNull();
+    expect(await world.headlines(world.bob)).toEqual([
+      'An administrator removed the model "Prod Claude". The organization\'s default model replaced it for 1 chat.',
+    ]);
+  });
+
+  it('refuses a replacement that is the model itself, switched off or unknown, and removes nothing', async () => {
+    const world = await inUse();
+    await world.store.llmModels.update(ROW_2, {
+      label: 'Other',
+      provider: 'anthropic',
+      model: 'x',
+      baseUrl: null,
+      settings: {},
+      encryptedSecrets: baseRow.encrypted_secrets,
+      enabled: false,
+      isDefault: false,
+    });
+
+    for (const replaceWith of [ROW_1, ROW_2, '00000000-0000-4000-8000-000000000f09']) {
+      const response = await DELETE(deleteReq(replaceWith), { params: paramsOf() });
+      expect(response.status).toBe(400);
+    }
+    expect(world.db.rows).toHaveLength(2);
+    expect(await world.headlines(world.ann)).toEqual([]);
+  });
+
+  it('usage counts who a removal would touch, and what of theirs', async () => {
+    const world = await inUse();
+    await world.store.identities.upsert({
+      subject: world.ann,
+      email: 'ann@example.test',
+      displayName: 'Ann Example',
+      idpGroups: [],
+    });
+
+    const response = await USAGE(deleteReq(), { params: paramsOf() });
+
+    // bob has no identity on record: counted, not named.
+    expect(await response.json()).toEqual({
+      people: 2,
+      names: ['Ann Example'],
+      preferences: 1,
+      projects: 1,
+      chats: 2,
+      agents: 0,
+    });
+  });
+
+  it('usage names at most three of the people on a model', async () => {
+    fakeDb([{ ...baseRow }]);
+    const store = getDataStore();
+    const run = randomUUID();
+    for (const n of [1, 2, 3, 4, 5]) {
+      const subject = `auth0|many-${run}-${n}`;
+      await store.identities.upsert({
+        subject,
+        email: `p${n}@example.test`,
+        displayName: `P${n}`,
+        idpGroups: [],
+      });
+      await patchChatModelPrefs(subject, { modelId: ROW_1 });
+    }
+
+    const body = await (await USAGE(deleteReq(), { params: paramsOf() })).json();
+
+    expect(body.people).toBe(5);
+    expect(body.names).toEqual(['P1', 'P2', 'P3']);
   });
 });

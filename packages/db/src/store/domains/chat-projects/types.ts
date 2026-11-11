@@ -20,6 +20,8 @@ export interface ChatProjectRecord {
   repoFullName: string | null;
   repoBranch: string | null;
   workspaceId: string | null;
+  /** The model the project's new chats start on; null for none of its own. */
+  llmModelId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -44,6 +46,8 @@ export interface ChatProjectPatch {
   toolConfig?: unknown;
   repo?: { provider: string; fullName: string; branch: string | null };
   workspaceId?: string | null;
+  /** The project's model, or null for none of its own. */
+  llmModelId?: string | null;
 }
 
 export interface ProjectMemoryRecord {

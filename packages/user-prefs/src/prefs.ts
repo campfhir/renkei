@@ -646,6 +646,27 @@ export function parseImagePrefs(stored: unknown): ImagePrefs {
 }
 
 /**
+ * Which model a person's new chats start on, when the org offers several.
+ * A model row id; null means "no preference" and a new chat takes the
+ * organization's default. A project with a model of its own comes first
+ * (a chat project or a code project); this is what its chats fall back to.
+ * Checked against the org's live chat models where it is used, never here:
+ * a model the admin has since disabled just falls back to the default.
+ */
+export const CHAT_MODEL_KEY = 'chat_model';
+
+export interface ChatModelPrefs {
+  modelId: string | null;
+}
+
+export const DEFAULT_CHAT_MODEL_PREFS: ChatModelPrefs = { modelId: null };
+
+/** Survives whatever jsonb hands back; anything unrecognisable is the default. */
+export function parseChatModelPrefs(stored: unknown): ChatModelPrefs {
+  return parseImagePrefs(stored);
+}
+
+/**
  * Whether the coach marks — the guided tours that walk somebody through a
  * workflow (apps/web/lib/coach-marks) — may start on their own when this
  * person lands on a page with one they have not seen. A fifth scope, read
@@ -739,6 +760,16 @@ export function parseVoicePatch(raw: unknown): PrefsPatch<VoicePrefs> {
 /** Some image preferences (see parsePrefsPatch). */
 export function parseImagePatch(raw: unknown): PrefsPatch<ImagePrefs> {
   return parsePrefsPatch(raw, DEFAULT_IMAGE_PREFS, parseImagePrefs, 'image preference');
+}
+
+/** Some chat model preferences (see parsePrefsPatch). */
+export function parseChatModelPatch(raw: unknown): PrefsPatch<ChatModelPrefs> {
+  return parsePrefsPatch(
+    raw,
+    DEFAULT_CHAT_MODEL_PREFS,
+    parseChatModelPrefs,
+    'chat model preference'
+  );
 }
 
 /** Some tour preferences (see parsePrefsPatch). */

@@ -3,8 +3,8 @@
  * the session and never from the request, so there is no shape of body that
  * edits somebody else's settings.
  *
- * `notifications`, `theme`, `voice`, `image`, `coachMarks` and `chatArchive`
- * are independent documents. GET reads all six; PATCH changes some fields
+ * `notifications`, `theme`, `voice`, `image`, `chatModel`, `coachMarks` and
+ * `chatArchive` are independent documents. GET reads them all; PATCH changes some fields
  * of any of them — `{ theme: { mode: 'dark' } }` changes the mode and
  * nothing else — merged into what is stored in one atomic write per
  * document. A PATCH is idempotent (the same request twice leaves the same

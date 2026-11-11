@@ -17,6 +17,7 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse, after } from 'next/server';
 import { isUuid } from '@/lib/uuid';
+import { preferredChatModelId } from '@/lib/chat/preferred-model';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { loadChatSidebar } from '@/lib/chat/sidebar';
 import { createChat } from '@/lib/chat/store';
@@ -51,8 +52,11 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (temporary && projectId) {
     return jsonError(400, 'temporary-project', TEMPORARY_OUTSIDE_PROJECTS);
   }
+  // No model asked for: the project's own, else the person's preferred one.
   const llmModelId =
-    typeof body.llmModelId === 'string' && isUuid(body.llmModelId) ? body.llmModelId : null;
+    typeof body.llmModelId === 'string' && isUuid(body.llmModelId)
+      ? body.llmModelId
+      : await preferredChatModelId(session.subject, projectId);
   const toolConfig = body.toolConfig === undefined ? null : parseToolConfig(body.toolConfig);
   const input = {
     ownerSubject: session.subject,
@@ -79,5 +83,5 @@ export async function POST(request: NextRequest): Promise<Response> {
       })
     );
   }
-  return NextResponse.json({ chatId }, { status: 201 });
+  return NextResponse.json({ chatId, llmModelId }, { status: 201 });
 }

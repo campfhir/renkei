@@ -14,6 +14,7 @@
  * through the API and any number may be open at once.
  */
 
+import ProjectModel from './project-model';
 import { useCallback, useEffect, useId, useReducer, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -586,6 +587,7 @@ export default function ProjectView({
                       </span>
                     ) : null}
                   </div>
+                  <ProjectModel project={project} />
                   <div className="flex items-center gap-2">
                     {saveError ? <p className="text-sm text-red-600">{saveError}</p> : null}
                     {savedAt && !dirty ? <p className="text-xs text-gray-500">Saved.</p> : null}
