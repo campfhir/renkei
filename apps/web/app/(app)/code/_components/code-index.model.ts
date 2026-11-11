@@ -5,8 +5,8 @@
  * has). The page loads every project the person can open; this narrows
  * and slices them, and says where the links go. Pure.
  *
- * Each table has a fixed height: five of mine, three shared with me, a
- * short page padded with blank rows (`fillerCount`) so neither table moves.
+ * Both tables page ten at a time; how many rows show at once (five of
+ * mine, three shared) is the component's height, the rest scrolling inside.
  */
 
 import type { ProjectListItem } from '@/lib/chat/sidebar';
@@ -14,8 +14,7 @@ import { listPage, pageFromParam, type ListPage } from '../../agents/agents-page
 
 export { pageFromParam };
 
-export const MINE_PAGE_SIZE = 5;
-export const SHARED_PAGE_SIZE = 3;
+export const PAGE_SIZE = 10;
 
 export interface CodeIndexQuery {
   /** The search text, trimmed; empty for none. */
@@ -53,8 +52,6 @@ export function matchingProjects(projects: ProjectListItem[], q: string): Projec
 }
 
 export interface CodeIndexGroup {
-  /** Rows to a page: what the table is padded to. */
-  size: number;
   paging: ListPage<ProjectListItem>;
   /** Why the table is empty, when it is: nothing exists yet, or the search found nothing. */
   empty: 'none' | 'no-match' | null;
@@ -65,16 +62,10 @@ export interface CodeIndexView {
   shared: CodeIndexGroup;
 }
 
-function groupOf(
-  all: ProjectListItem[],
-  q: string,
-  page: number,
-  size: number
-): CodeIndexGroup {
+function groupOf(all: ProjectListItem[], q: string, page: number): CodeIndexGroup {
   const matches = matchingProjects(all, q);
   return {
-    paging: listPage(matches, page, size),
-    size,
+    paging: listPage(matches, page, PAGE_SIZE),
     empty: matches.length > 0 ? null : all.length === 0 ? 'none' : 'no-match',
   };
 }
@@ -85,14 +76,12 @@ export function codeIndexView(projects: ProjectListItem[], query: CodeIndexQuery
     mine: groupOf(
       projects.filter((project) => project.role === 'owner'),
       query.q,
-      query.page,
-      MINE_PAGE_SIZE
+      query.page
     ),
     shared: groupOf(
       projects.filter((project) => project.role !== 'owner'),
       query.q,
-      query.sharedPage,
-      SHARED_PAGE_SIZE
+      query.sharedPage
     ),
   };
 }
@@ -110,9 +99,4 @@ export function codeIndexHref({ q, page, sharedPage }: CodeIndexQuery): string {
 /** Who a shared project belongs to, as the Owner column says it. */
 export function ownerLabel(project: ProjectListItem): string {
   return project.ownerName ?? 'Someone';
-}
-
-/** Blank rows that pad a page with rows to the table's full height (none when there are no rows: the empty message shows). */
-export function fillerCount(group: CodeIndexGroup): number {
-  return group.paging.rows.length === 0 ? 0 : Math.max(0, group.size - group.paging.rows.length);
 }

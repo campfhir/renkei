@@ -6,7 +6,6 @@ import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { DataFrame, DataTable, Pager, Th } from '@/components/data-table';
 import {
   codeIndexHref,
-  fillerCount,
   ownerLabel,
   type CodeIndexGroup,
   type CodeIndexQuery,
@@ -101,17 +100,16 @@ function ProjectTable({ title, label, group, showOwner, empty, hrefFor }: {
   hrefFor: (page: number) => string;
 }) {
   const { paging } = group;
-  const fillers = Array.from({ length: fillerCount(group) }, (_, index) => index);
-  const columns = showOwner ? 3 : 2;
   return (
     <section aria-label={title}>
       <h2 className="mb-2 text-xs font-semibold tracking-wide text-gray-500 uppercase">{title}</h2>
       <DataFrame
         label={label}
         stickyFooter={false}
+        bodyHeight={showOwner ? SHARED_BODY : MINE_BODY}
         empty={
           group.empty ? (
-            <p className={`p-4 text-sm text-gray-500 ${showOwner ? EMPTY_SHARED : EMPTY_MINE}`}>
+            <p className="p-4 text-sm text-gray-500">
               {group.empty === 'no-match' ? 'No projects match your search.' : empty}
             </p>
           ) : undefined
@@ -129,20 +127,12 @@ function ProjectTable({ title, label, group, showOwner, empty, hrefFor }: {
             {paging.rows.map((project) => (
               <Row key={project.id} project={project} showOwner={showOwner} />
             ))}
-            {fillers.map((index) => (
-              <tr key={`filler-${index}`} aria-hidden="true" className={ROW_HEIGHT}>
-                <td colSpan={columns} />
-              </tr>
-            ))}
           </DataTable>
         }
         cards={
           <>
             {paging.rows.map((project) => (
               <Card key={project.id} project={project} showOwner={showOwner} />
-            ))}
-            {fillers.map((index) => (
-              <li key={`filler-${index}`} aria-hidden="true" className={CARD_HEIGHT} />
             ))}
           </>
         }
@@ -163,14 +153,16 @@ function ProjectTable({ title, label, group, showOwner, empty, hrefFor }: {
 
 /**
  * Every row and card is a fixed height — long names and descriptions
- * truncate — so a page of ten is always the same height and the pager
- * under it holds its place; short last pages are padded to match.
+ * truncate — so a table's visible height is a whole number of them: five
+ * rows of mine, three shared with me (a page is ten; the rest scrolls
+ * inside, the headings and the pager staying put). From `sm` up the body is
+ * the table's heading (about 2.1rem) and its rows (3.5rem each); below it,
+ * the cards (5.75rem each, 0.5rem apart and around).
  */
 const ROW_HEIGHT = 'h-14';
-/** An empty table is as tall as a full one: heading (~2.1rem) plus its rows (3.5rem each). */
-const EMPTY_MINE = 'min-h-[19.6rem]';
-const EMPTY_SHARED = 'min-h-[12.6rem]';
 const CARD_HEIGHT = 'h-[5.75rem]';
+const MINE_BODY = 'h-[31.75rem] sm:h-[19.6rem]';
+const SHARED_BODY = 'h-[19.25rem] sm:h-[12.6rem]';
 
 /** One project as a table row: from the `sm` breakpoint up. */
 function Row({ project, showOwner }: { project: ProjectListItem; showOwner: boolean }) {
