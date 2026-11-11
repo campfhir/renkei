@@ -12,8 +12,6 @@ import { renderProfileMarkdown } from '@/lib/data-portability/profile-markdown';
 import { attachmentDisposition } from '@/lib/data-portability/http';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { isDownloadPrefetch } from '@/lib/download-prefetch';
-import { logger } from '@/lib/logger';
-import { who } from '@/lib/log-actor';
 
 export const maxDuration = 300;
 
@@ -23,19 +21,12 @@ export async function GET(request: NextRequest): Promise<Response> {
   const { session } = ready.context;
   const data = await collectExportData(session.subject, new Date());
   const text = renderProfileMarkdown(data);
-  if (isDownloadPrefetch(request)) {
-    // Fetched ahead of a tap for the share sheet: the tap's POST below is the export.
-    logger.info(
-      '{actor} opened a page that prepared their profile export; nothing was audited yet',
-      { component: 'api/account/export/profile', ...who(session), format: 'profile' }
-    );
-  } else {
-    recordAuditEvent({
-      actorSubject: session.subject,
-      action: 'user.data_exported',
-      details: { format: 'profile', memoryEntries: data.memory.entries.length },
-    });
-  }
+  // A fetch ahead of a tap is audited as prepared, not exported (see ../route.ts).
+  recordAuditEvent({
+    actorSubject: session.subject,
+    action: isDownloadPrefetch(request) ? 'user.data_export_prepared' : 'user.data_exported',
+    details: { format: 'profile', memoryEntries: data.memory.entries.length },
+  });
   return new Response(text, {
     status: 200,
     headers: {

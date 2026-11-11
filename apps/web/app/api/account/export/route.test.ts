@@ -171,12 +171,15 @@ describe('an export fetched ahead of a tap (the share sheet in a home-screen app
   const ahead = (path: string) =>
     new NextRequest(`http://test.local${path}`, { headers: { 'x-renkei-prefetch': '1' } });
 
-  it('hands over the file but is not an export yet: nothing is audited', async () => {
+  it('hands over the file and is audited as prepared, not as exported', async () => {
     const zip = await GET(ahead('/api/account/export'));
     const profile = await profileGET(ahead('/api/account/export/profile'));
     expect(zip.status).toBe(200);
     expect(profile.status).toBe(200);
-    expect(mockAudit).not.toHaveBeenCalled();
+    expect(mockAudit.mock.calls.map(([event]) => [event.action, event.details.format])).toEqual([
+      ['user.data_export_prepared', 'zip'],
+      ['user.data_export_prepared', 'profile'],
+    ]);
   });
 
   it('is audited when the tap that takes it is reported', async () => {

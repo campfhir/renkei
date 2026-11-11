@@ -14,8 +14,6 @@ import { exportFileName, exportFiles } from '@/lib/data-portability/export-bundl
 import { attachmentDisposition } from '@/lib/data-portability/http';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { isDownloadPrefetch } from '@/lib/download-prefetch';
-import { logger } from '@/lib/logger';
-import { who } from '@/lib/log-actor';
 
 export const maxDuration = 300;
 
@@ -31,26 +29,20 @@ export async function GET(request: NextRequest): Promise<Response> {
     compression: 'DEFLATE',
     compressionOptions: { level: 6 },
   });
-  if (isDownloadPrefetch(request)) {
-    // Fetched ahead of a tap for the share sheet: not an export yet. The
-    // link reports the tap with the POST below; this line is the trace.
-    logger.info('{actor} opened a page that prepared their data export; nothing was audited yet', {
-      component: 'api/account/export',
-      ...who(session),
+  // A fetch ahead of a tap (the share sheet in a home-screen app) is audited
+  // as what it is: the export left the server and reached this person's
+  // device, and whether they kept it is not known until the tap's POST
+  // below. A plain download is the export itself.
+  recordAuditEvent({
+    actorSubject: session.subject,
+    action: isDownloadPrefetch(request) ? 'user.data_export_prepared' : 'user.data_exported',
+    details: {
       format: 'zip',
-    });
-  } else {
-    recordAuditEvent({
-      actorSubject: session.subject,
-      action: 'user.data_exported',
-      details: {
-        format: 'zip',
-        chats: data.chats.length,
-        memoryEntries: data.memory.entries.length,
-        projects: data.projects.length,
-      },
-    });
-  }
+      chats: data.chats.length,
+      memoryEntries: data.memory.entries.length,
+      projects: data.projects.length,
+    },
+  });
   return new Response(Buffer.from(bytes), {
     status: 200,
     headers: {

@@ -3,8 +3,9 @@
  * (components/download-link.tsx: an iOS home-screen app needs the bytes in
  * hand before the share sheet may open). A route whose download is an audit
  * event reads it to tell "fetched in case" from "taken": the fetch ahead
- * writes no event, and the link reports the tap itself with a POST to the
- * same address.
+ * is audited as prepared (the bytes reached the device; whether they were
+ * kept is not known), and the link reports the tap itself with a POST to
+ * the same address, which is audited as the export.
  */
 export const DOWNLOAD_PREFETCH_HEADER = 'x-renkei-prefetch';
 

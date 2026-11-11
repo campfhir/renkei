@@ -26,6 +26,13 @@ export type AuditAction =
   | 'user.sessions_revoked'
   /** A person downloaded their own data (details: format — zip or profile — and counts). */
   | 'user.data_exported'
+  /**
+   * A person's export was fetched ahead of a tap (the share sheet in a
+   * home-screen app): it reached their device, and they may or may not have
+   * kept it. A `user.data_exported` with `via: 'share-sheet'` follows when
+   * they did (details: format and counts).
+   */
+  | 'user.data_export_prepared'
   /** A person imported chats or memories from another assistant (details: sources and counts). */
   | 'user.data_imported'
   | 'connector.connected'
