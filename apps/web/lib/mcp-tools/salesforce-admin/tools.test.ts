@@ -1645,6 +1645,27 @@ describe('salesforce_admin_propose_report', () => {
     ]);
   });
 
+  it('saves a rolling date range as a filter on the date column, and says it rolls', async () => {
+    const result = await call('salesforce_admin_propose_report', {
+      name: 'Pipeline, rolling year',
+      reportType: 'Opportunity',
+      columns: [{ field: 'OPPORTUNITY_NAME' }],
+      dateFilter: { column: 'close_date', relative: 'last 12 months' },
+      folder: 'Program Reports',
+    });
+    expect(result.isError).toBeUndefined();
+    const xml = (await received()).files['reports/Program_Reports/Pipeline_rolling_year.report'];
+    expect(xml).toMatch(
+      /<column>CLOSE_DATE<\/column>[\s\S]*<operator>equals<\/operator>\s*<value>LAST_N_MONTHS:12<\/value>/
+    );
+    expect(xml).not.toContain('<timeFrameFilter>');
+    expect(stored().payload.components[0].rows).toContainEqual({
+      label: 'Date range',
+      value:
+        'CLOSE_DATE: last 12 months (LAST_N_MONTHS:12), counted from the day the report is run',
+    });
+  });
+
   it('creates a new folder with a report on a custom report type', async () => {
     const result = await call('salesforce_admin_propose_report', {
       name: 'All Visits',
@@ -1843,6 +1864,37 @@ describe('salesforce_admin_propose_report_type_changes', () => {
     ).toEqual([
       'The report type Elsewhere__c is gone — someone deleted it since this was proposed.',
     ]);
+  });
+
+  it('takes a field out and renames the report type, leaving the rest as it was', async () => {
+    const result = await call('salesforce_admin_propose_report_type_changes', {
+      reportType: 'Site_Visits__c',
+      remove: [{ fields: ['Site_Visit__c$Stage__c'] }],
+      label: 'Field Visits',
+    });
+    expect(result.isError).toBeUndefined();
+    const xml = (await received()).files['reportTypes/Site_Visits.reportType'];
+    expect(xml).not.toContain('<field>Stage__c</field>');
+    expect(xml).toContain('<field>Name</field>');
+    expect(xml).toContain('<label>Field Visits</label>');
+    expect(stored().title).toContain('change the report type Site_Visits__c');
+    expect(stored().payload.components[0].rows.map((row: { label: string }) => row.label)).toEqual([
+      'Label',
+      expect.stringContaining('Section'),
+    ]);
+  });
+
+  it('refuses taking out a field the report type does not offer, and a change of nothing', async () => {
+    const absent = await call('salesforce_admin_propose_report_type_changes', {
+      reportType: 'Site_Visits',
+      remove: [{ fields: ['Region__c'] }],
+    });
+    expect(text(absent)).toContain('Region__c (Site_Visit__c) is not in the report type');
+    const nothing = await call('salesforce_admin_propose_report_type_changes', {
+      reportType: 'Site_Visits',
+    });
+    expect(text(nothing)).toContain('Nothing in that changes the report type');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
   });
 
   it('refuses a field already offered, one the object lacks, and a report type that is not there', async () => {

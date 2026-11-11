@@ -8,6 +8,9 @@ import {
   reportFileColumn,
   reportFileColumnsFromLayout,
   mergeReportTypeColumns,
+  editReportType,
+  relativeDateLiteral,
+  relativeDateWords,
   reportTypeTables,
   type ReportObjectInfo,
 } from './report-metadata';
@@ -392,6 +395,92 @@ describe('reportFileColumn', () => {
   });
 });
 
+describe('a relative date range', () => {
+  const report = {
+    name: 'Referrals, rolling year',
+    reportType: 'Referrals__c',
+    columns: ['Referral$Name'],
+  };
+
+  it('reads the value a filter takes, or the words for it, and nothing else', () => {
+    expect(relativeDateLiteral('LAST_N_MONTHS:12')).toBe('LAST_N_MONTHS:12');
+    expect(relativeDateLiteral('last 12 months')).toBe('LAST_N_MONTHS:12');
+    expect(relativeDateLiteral('Last N Days: 365')).toBe('LAST_N_DAYS:365');
+    expect(relativeDateLiteral('30 days ago')).toBe('N_DAYS_AGO:30');
+    expect(relativeDateLiteral('this fiscal year')).toBe('THIS_FISCAL_YEAR');
+    expect(relativeDateLiteral('LAST_N_MONTHS:0')).toBeNull();
+    expect(relativeDateLiteral('LAST_N_FORTNIGHTS:2')).toBeNull();
+    expect(relativeDateLiteral('2025-11-11')).toBeNull();
+    expect(relativeDateWords('LAST_N_MONTHS:12')).toBe('last 12 months');
+    expect(relativeDateWords('N_DAYS_AGO:30')).toBe('30 days ago');
+    expect(relativeDateWords('THIS_YEAR')).toBe('this year');
+  });
+
+  it('is saved as a filter on the date column, with no fixed time frame', () => {
+    const checked = checkReportSpec(
+      { ...report, dateFilter: { column: 'Referral$CreatedDate', relative: 'last 12 months' } },
+      { existing: 'F' }
+    );
+    expect(checked.ok).toBe(true);
+    if (!checked.ok) return;
+    expect(checked.value.dateFilter).toEqual({
+      column: 'Referral$CreatedDate',
+      interval: 'INTERVAL_CUSTOM',
+      relative: 'LAST_N_MONTHS:12',
+    });
+    const xml = buildReportPackage(checked.value).files['reports/F/Referrals_rolling_year.report'];
+    expect(xml).toMatch(
+      /<column>Referral\$CreatedDate<\/column>[\s\S]*<operator>equals<\/operator>\s*<value>LAST_N_MONTHS:12<\/value>/
+    );
+    expect(xml).not.toContain('<timeFrameFilter>');
+    expect(xml).not.toContain('<booleanFilter>');
+  });
+
+  it('is ANDed with the filter logic the report already has', () => {
+    const checked = checkReportSpec(
+      {
+        ...report,
+        filters: [
+          { column: 'Referral$Status', operator: 'equals', value: 'Open' },
+          { column: 'Referral$Status', operator: 'equals', value: 'Held' },
+        ],
+        filterLogic: '1 OR 2',
+        dateFilter: { column: 'Referral$CreatedDate', relative: 'LAST_N_DAYS:365' },
+      },
+      { existing: 'F' }
+    );
+    expect(checked.ok).toBe(true);
+    if (!checked.ok) return;
+    const xml = buildReportPackage(checked.value).files['reports/F/Referrals_rolling_year.report'];
+    expect(xml).toContain('<booleanFilter>(1 OR 2) AND 3</booleanFilter>');
+    expect(xml.match(/<criteriaItems>/g)).toHaveLength(3);
+  });
+
+  it('refuses a range that is not one, and one given with an interval or dates too', () => {
+    const unknown = checkReportSpec(
+      { ...report, dateFilter: { column: 'Referral$CreatedDate', relative: 'the past while' } },
+      { existing: 'F' }
+    );
+    expect(unknown.ok === false && unknown.errors[0]).toContain(
+      '"the past while" is not a relative date range'
+    );
+    const both = checkReportSpec(
+      {
+        ...report,
+        dateFilter: {
+          column: 'Referral$CreatedDate',
+          relative: 'LAST_N_MONTHS:12',
+          start: '2025-11-11',
+        },
+      },
+      { existing: 'F' }
+    );
+    expect(both.ok === false && both.errors).toEqual([
+      'A date range is relative, an interval, or start and end dates: one of them.',
+    ]);
+  });
+});
+
 describe('mergeReportTypeColumns', () => {
   const live = {
     fullName: 'Referrals',
@@ -483,5 +572,118 @@ describe('mergeReportTypeColumns', () => {
         },
       })
     ).toEqual(['Account', 'Account.Referrals1__r', 'Account.Referrals1__r.Notes__r']);
+  });
+});
+
+describe('editReportType', () => {
+  const live = {
+    baseObject: 'Referral',
+    category: 'other',
+    deployed: 'true',
+    description: 'Referrals',
+    label: 'Referrals',
+    sections: [
+      {
+        columns: [
+          { checkedByDefault: 'true', field: 'Name', table: 'Referral' },
+          { checkedByDefault: 'false', field: 'Referral_Stage__c', table: 'Referral' },
+        ],
+        masterLabel: 'Referrals',
+      },
+      {
+        columns: {
+          checkedByDefault: 'false',
+          field: 'Client.Medicare_Status__c',
+          table: 'Referral',
+        },
+        masterLabel: 'Account',
+      },
+    ],
+  };
+
+  it('takes a field out, and its section with it when that was the last one', () => {
+    const edited = editReportType(live, {
+      removes: [
+        { table: 'referral', field: 'referral_stage__c' },
+        { table: 'Referral', field: 'Client.Medicare_Status__c' },
+      ],
+    });
+    expect(edited.ok).toBe(true);
+    if (!edited.ok) return;
+    expect(edited.metadata.sections).toEqual([
+      {
+        columns: [{ checkedByDefault: 'true', field: 'Name', table: 'Referral' }],
+        masterLabel: 'Referrals',
+      },
+    ]);
+    expect(edited.rows).toEqual([
+      {
+        label: 'Section “Referrals”',
+        value: 'takes out referral_stage__c — reports showing it lose that column',
+      },
+      {
+        label: 'Section “Account”',
+        value:
+          'takes out Client.Medicare_Status__c; the section, now empty, goes too — reports showing it lose that column',
+      },
+    ]);
+  });
+
+  it('renames, re-describes and takes it out of use, adding in the same change', () => {
+    const edited = editReportType(live, {
+      label: 'PACE Referrals',
+      description: 'Referrals with Medi-Cal status',
+      deployed: false,
+      adds: [
+        {
+          section: 'Account',
+          table: 'Referral',
+          field: 'Client.PersonContact.Does_the_Candidate_Have_Medi_Cal__c',
+          checked: false,
+        },
+      ],
+    });
+    expect(edited.ok).toBe(true);
+    if (!edited.ok) return;
+    expect(edited.metadata).toMatchObject({
+      label: 'PACE Referrals',
+      description: 'Referrals with Medi-Cal status',
+      deployed: 'false',
+    });
+    // The elements stay in the order they were read in.
+    expect(Object.keys(edited.metadata)).toEqual(Object.keys(live));
+    expect(edited.rows.map((row) => row.label)).toEqual([
+      'Label',
+      'Description',
+      'Available to users',
+      'Section “Account”',
+    ]);
+  });
+
+  it('puts a description the read did not carry where the schema has it', () => {
+    const { description: _gone, ...bare } = live;
+    const edited = editReportType(bare, { description: 'Now described' });
+    expect(edited.ok && Object.keys(edited.metadata)).toEqual(Object.keys(live));
+  });
+
+  it('refuses a field it does not offer, its last column, and what is already so', () => {
+    const absent = editReportType(live, { removes: [{ table: 'Referral', field: 'Nope__c' }] });
+    expect(absent.ok === false && absent.errors).toEqual([
+      'Nope__c (Referral) is not in the report type, so it cannot be taken out.',
+    ]);
+    const all = editReportType(live, {
+      removes: [
+        { table: 'Referral', field: 'Name' },
+        { table: 'Referral', field: 'Referral_Stage__c' },
+        { table: 'Referral', field: 'Client.Medicare_Status__c' },
+      ],
+    });
+    expect(all.ok === false && all.errors).toEqual([
+      'A report type with no columns offers nothing to report on.',
+    ]);
+    expect(editReportType(live, { label: 'Referrals', deployed: true })).toEqual({
+      ok: false,
+      errors: ['Nothing in that changes the report type.'],
+    });
   });
 });

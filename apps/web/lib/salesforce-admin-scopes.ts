@@ -59,7 +59,7 @@ export const SALESFORCE_ADMIN_SCOPE_OPTIONS: ScopeOption[] = [
       'validation deploy in the org and applied only by the person, in their browser. Nothing ' +
       'on the MCP surface changes the org.',
     userHint:
-      'Propose new objects, fields, changes to fields and picklists (standard ones too), record types, validation rules, report types (new ones, or fields added to existing ones) and reports. Each is checked by Salesforce and waits for you to review and apply it in Renkei.',
+      'Propose new objects, fields, changes to fields and picklists (standard ones too), record types, validation rules, report types (new ones, or changes to existing ones) and reports. Each is checked by Salesforce and waits for you to review and apply it in Renkei.',
     group: 'build',
     defaultChecked: true,
   },

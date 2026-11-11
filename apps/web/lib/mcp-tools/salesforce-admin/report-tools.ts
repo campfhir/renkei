@@ -30,12 +30,14 @@ import {
   reportColumnOf,
   reportFileColumn,
   reportFileColumnsFromLayout,
-  mergeReportTypeColumns,
+  editReportType,
   metadataFile,
   packageXml,
   reportTypeTables,
+  relativeDateWords,
   type DescribeSObject,
   type ReportTypeColumnAdd,
+  type ReportTypeColumnRemove,
   type ReportObjectInfo,
   type ReportSpec,
   type ReportTypeSpec,
@@ -295,8 +297,9 @@ function reportComponents(spec: ReportSpec, folderLabel: string): ComponentView[
   if (spec.dateFilter)
     rows.push({
       label: 'Date range',
-      value:
-        spec.dateFilter.interval === 'INTERVAL_CUSTOM'
+      value: spec.dateFilter.relative
+        ? `${spec.dateFilter.column}: ${relativeDateWords(spec.dateFilter.relative)} (${spec.dateFilter.relative}), counted from the day the report is run`
+        : spec.dateFilter.interval === 'INTERVAL_CUSTOM'
           ? `${spec.dateFilter.column}: ${spec.dateFilter.start ?? '…'} to ${spec.dateFilter.end ?? '…'}`
           : `${spec.dateFilter.column}: ${spec.dateFilter.interval.replace(/^INTERVAL_/, '').toLowerCase()}`,
     });
@@ -374,7 +377,8 @@ export function registerAdminReportTools(
         const fileNames = custom ? await reportFileColumns(context, access, described) : null;
         if (custom) {
           lines.push(
-            'Columns are listed as a report on this type names them (the table, a $, then the field or lookup path): use them as they are in salesforce_admin_propose_report.'
+            'Columns are listed as a report on this type names them (the table, a $, then the field or lookup path): use them as they are in salesforce_admin_propose_report.',
+            'A field it lacks is added to this report type itself, with salesforce_admin_propose_report_type_changes; a second report type is not needed.'
           );
         }
         for (const section of described.sections) {
@@ -448,7 +452,9 @@ export function registerAdminReportTools(
     {
       title: 'Salesforce Admin · Act — Propose a report type',
       description:
-        'Propose a new custom report type: the object it reports on, up to three child ' +
+        'Propose a new custom report type (to change one that exists — add fields to it, take ' +
+        'fields out, rename it — use salesforce_admin_propose_report_type_changes, not a second ' +
+        'type): the object it reports on, up to three child ' +
         'relationships joined down from it (each "only with them" or "with or without them"), ' +
         'and the sections of columns reports built on it can use — by default one section per ' +
         'object with every field, the name shown by default. Reports name it <apiName>__c. ' +
@@ -571,14 +577,17 @@ export function registerAdminReportTools(
   server.registerTool(
     'salesforce_admin_propose_report_type_changes',
     {
-      title: 'Salesforce Admin · Act — Propose fields for a report type',
+      title: 'Salesforce Admin · Act — Propose changes to a report type',
       description:
-        'Add fields to an existing custom report type, so reports built on it can show them: a ' +
-        'field of the report type’s object, a field reached through a lookup (Client.Medicare__pc ' +
-        'on a Referral is the client account’s Medicare #), or one of a joined object — into an ' +
-        'existing section, by its label, or a new one. Nothing already in the report type moves ' +
-        'or goes: it deploys whole, read as it is now, with only the additions merged in, and ' +
-        'applying is refused if anyone changed it in the meantime. Checked by a validation deploy ' +
+        'Change an existing custom report type. `add` fields, so reports built on it can show ' +
+        'them: a field of the report type’s object, a field reached through a lookup ' +
+        '(Client.Medicare__pc on a Referral is the client account’s Medicare #), or one of a ' +
+        'joined object — into an existing section, by its label, or a new one. `remove` fields ' +
+        'it offers (reports showing one lose that column). Change its `label`, `description`, or ' +
+        'whether it is `deployed`. Nothing else in the report type moves or goes: it deploys ' +
+        'whole, read as it is now, with only these changes merged in, and applying is refused if ' +
+        'anyone changed it in the meantime. Its object and joins cannot change; a standard ' +
+        'report type cannot be changed at all. Checked by a validation deploy ' +
         'that changes nothing; the person reviews and applies it from the link this returns.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
@@ -613,8 +622,33 @@ export function registerAdminReportTools(
                 .describe('Which of them a new report shows by default.'),
             })
           )
-          .min(1)
-          .max(10),
+          .max(10)
+          .optional(),
+        remove: z
+          .array(
+            z.object({
+              object: z
+                .string()
+                .optional()
+                .describe('Whose fields: the base object (default), or a joined relationship.'),
+              fields: z
+                .array(z.string().min(1))
+                .min(1)
+                .max(100)
+                .describe(
+                  'Fields the report type offers, as its layout names them: Referral_Stage__c, Client.Medicare__pc (a column listed as Referral$Client.Medicare__pc is taken too).'
+                ),
+            })
+          )
+          .max(10)
+          .optional()
+          .describe('Fields to take out of the report type.'),
+        label: z.string().min(1).max(50).optional().describe('A new label.'),
+        description: z.string().min(1).max(255).optional().describe('A new description.'),
+        deployed: z
+          .boolean()
+          .optional()
+          .describe('true: available to report builders; false: back in development.'),
         reason: reasonField,
         replaces: replacesField,
       }),
@@ -648,9 +682,8 @@ export function registerAdminReportTools(
         tables.push({ table, info });
       }
       const errors: string[] = [];
-      const adds: ReportTypeColumnAdd[] = [];
-      for (const item of args.add) {
-        const wanted = (item.object ?? tables[0]?.table ?? '').toLowerCase();
+      const tableOf = (object: string | undefined) => {
+        const wanted = (object ?? tables[0]?.table ?? '').toLowerCase();
         const found = tables.find(
           ({ table, info }) =>
             table.toLowerCase() === wanted ||
@@ -659,10 +692,25 @@ export function registerAdminReportTools(
         );
         if (!found) {
           errors.push(
-            `The report type’s objects are ${tables.map((t) => t.table).join(', ')}, not ${item.object}.`
+            `The report type’s objects are ${tables.map((t) => t.table).join(', ')}, not ${object}.`
           );
-          continue;
         }
+        return found;
+      };
+      const removes: ReportTypeColumnRemove[] = [];
+      for (const item of args.remove ?? []) {
+        const found = tableOf(item.object);
+        if (!found) continue;
+        for (const name of item.fields) {
+          // A column as a report names it (Referral$Client.Name) is its field.
+          const at = name.indexOf('$');
+          removes.push({ table: found.table, field: (at < 0 ? name : name.slice(at + 1)).trim() });
+        }
+      }
+      const adds: ReportTypeColumnAdd[] = [];
+      for (const item of args.add ?? []) {
+        const found = tableOf(item.object);
+        if (!found) continue;
         const checked = new Set((item.checked ?? []).map((name) => name.toLowerCase()));
         for (const name of item.fields) {
           const field = reportColumnOf(found.info, name);
@@ -679,15 +727,26 @@ export function registerAdminReportTools(
         }
       }
       if (errors.length > 0) return bullets(errors);
-      const merged = mergeReportTypeColumns(live.metadata, adds);
+      const merged = editReportType(live.metadata, {
+        adds,
+        removes,
+        label: args.label,
+        description: args.description,
+        deployed: args.deployed,
+      });
       if (!merged.ok) return bullets(merged.errors);
 
       const name = live.name;
       const members = [{ type: 'ReportType', member: name }];
       const label = str(live.metadata.label) || name;
+      const onlyAdds =
+        removes.length === 0 &&
+        args.label === undefined &&
+        args.description === undefined &&
+        args.deployed === undefined;
       return proposeAndValidate(context, access, {
         kind: REPORT_TYPE_KIND,
-        title: `${label}: add fields to the report type ${name}__c`,
+        title: `${label}: ${onlyAdds ? 'add fields to' : 'change'} the report type ${name}__c`,
         reason: args.reason,
         replaces: args.replaces,
         payload: {
@@ -713,7 +772,7 @@ export function registerAdminReportTools(
         summary: [
           `• ${name}__c — “${label}”:`,
           ...merged.rows.map((row) => `  ${row.label}: ${row.value}`),
-          'Everything else in the report type stays as it is. Once applied, reports on it can use the new columns.',
+          `Everything else in the report type stays as it is.${adds.length > 0 ? ' Once applied, reports on it can use the new columns.' : ''}`,
         ],
       });
     }
@@ -727,8 +786,9 @@ export function registerAdminReportTools(
         'Propose a new report in a report folder — an existing one (salesforce_admin_list_report_folders) ' +
         'or a new one created with it: its report type, format (Tabular; Summary, grouped by up ' +
         'to three fields; Matrix, grouped by rows and columns), columns with their summaries ' +
-        '(Sum, Average…), filters and filter logic, a date range, which records (scope), and ' +
-        'sort. Column, grouping and filter names are the report type’s, as ' +
+        '(Sum, Average…), filters and filter logic, a date range — fixed dates, a named interval, ' +
+        'or a relative one that rolls forward with the day the report is run (dateFilter.relative: ' +
+        'LAST_N_DAYS:365 is a rolling year) — which records (scope), and sort. Column, grouping and filter names are the report type’s, as ' +
         'salesforce_admin_list_report_types lists them (on a custom report type: ' +
         'Object__c$Field__c). Checked by a validation deploy that changes nothing; the person ' +
         'reviews and applies it from the link this returns.',
@@ -768,7 +828,7 @@ export function registerAdminReportTools(
               value: z
                 .string()
                 .describe(
-                  'The value; several as a comma-separated list; dates YYYY-MM-DD or THIS_MONTH style.'
+                  'The value; several as a comma-separated list; a date as YYYY-MM-DD, or relative to the day the report is run: TODAY, THIS_MONTH, LAST_N_DAYS:90, LAST_N_MONTHS:12, N_DAYS_AGO:30 (greaterOrEqual N_DAYS_AGO:30 is "in the last 30 days and after").'
                 ),
             })
           )
@@ -784,8 +844,15 @@ export function registerAdminReportTools(
               .describe('Default INTERVAL_CUSTOM, with dates.'),
             start: z.string().optional().describe('YYYY-MM-DD, for INTERVAL_CUSTOM.'),
             end: z.string().optional().describe('YYYY-MM-DD, for INTERVAL_CUSTOM.'),
+            relative: z
+              .string()
+              .optional()
+              .describe(
+                'In place of interval and dates: a range counted from the day the report is run, so it rolls forward by itself. LAST_N_DAYS:365 (a rolling year up to today), LAST_N_MONTHS:12 (the twelve whole calendar months before this one), LAST_N_WEEKS:4, NEXT_N_DAYS:30, THIS_YEAR, LAST_QUARTER, THIS_FISCAL_YEAR… It is saved as a filter on the column.'
+              ),
           })
-          .optional(),
+          .optional()
+          .describe('The date range: one of relative, interval, or start and end.'),
         scope: z
           .string()
           .optional()
