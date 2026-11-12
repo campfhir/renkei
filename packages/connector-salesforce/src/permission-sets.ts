@@ -151,3 +151,93 @@ export function withoutRights(
   if (!next.create || !next.edit || !next.delete || !next.viewAll) next.modifyAll = false;
   return next;
 }
+
+type Json = Record<string, unknown>;
+
+const entries = (value: unknown): Json[] =>
+  (Array.isArray(value) ? value : value === undefined || value === null ? [] : [value]).filter(
+    (entry): entry is Json => typeof entry === 'object' && entry !== null && !Array.isArray(entry)
+  );
+
+const named = (entry: Json, key: string, name: string): boolean =>
+  typeof entry[key] === 'string' && entry[key].toLowerCase() === name.toLowerCase();
+
+/** Access to write into a permission set's whole definition; `null` takes the entry out. */
+export interface PermissionSetAccessChanges {
+  /** `Object.Field` → what it may do, or null for no access. */
+  fields?: { field: string; access: { read: boolean; edit: boolean } | null }[];
+  objects?: { object: string; rights: ObjectRights | null }[];
+  /** A tab by its name (a custom object's API name), shown or not. */
+  tabs?: { tab: string; shown: boolean }[];
+  /** Record types to make usable, as `Object.RecordType`. */
+  recordTypes?: string[];
+}
+
+/**
+ * A permission set's whole definition (as readMetadata gives it) with
+ * access changed in place: for the sets Salesforce will not take a row at
+ * a time — one in a permission set group — and for what has no row
+ * (record types). Everything not named stays exactly as read. Pure.
+ */
+export function mergePermissionSetAccess(
+  metadata: Json,
+  changes: PermissionSetAccessChanges
+): Json {
+  const next: Json = { ...metadata };
+  if (changes.fields?.length) {
+    let fields = entries(metadata.fieldPermissions);
+    for (const { field, access } of changes.fields) {
+      fields = fields.filter((entry) => !named(entry, 'field', field));
+      if (access && (access.read || access.edit)) {
+        fields.push({ editable: access.edit, field, readable: true });
+      }
+    }
+    next.fieldPermissions = fields;
+  }
+  if (changes.objects?.length) {
+    let objects = entries(metadata.objectPermissions);
+    for (const { object, rights } of changes.objects) {
+      objects = objects.filter((entry) => !named(entry, 'object', object));
+      if (rights?.read) {
+        objects.push({
+          allowCreate: rights.create,
+          allowDelete: rights.delete,
+          allowEdit: rights.edit,
+          allowRead: true,
+          modifyAllRecords: rights.modifyAll,
+          object,
+          viewAllRecords: rights.viewAll,
+        });
+      }
+    }
+    next.objectPermissions = objects;
+  }
+  if (changes.tabs?.length) {
+    let tabs = entries(metadata.tabSettings);
+    for (const { tab, shown } of changes.tabs) {
+      tabs = tabs.filter((entry) => !named(entry, 'tab', tab));
+      if (shown) tabs.push({ tab, visibility: 'Visible' });
+    }
+    next.tabSettings = tabs;
+  }
+  if (changes.recordTypes?.length) {
+    let visible = entries(metadata.recordTypeVisibilities);
+    for (const recordType of changes.recordTypes) {
+      visible = visible.filter((entry) => !named(entry, 'recordType', recordType));
+      visible.push({ recordType, visible: true });
+    }
+    next.recordTypeVisibilities = visible;
+  }
+  return next;
+}
+
+/** How many field and object entries of a set's whole definition grant something. */
+export function permissionSetGrantCounts(metadata: Json): { fields: number; objects: number } {
+  const on = (value: unknown) => value === true || value === 'true';
+  return {
+    fields: entries(metadata.fieldPermissions).filter(
+      (entry) => on(entry.readable) || on(entry.editable)
+    ).length,
+    objects: entries(metadata.objectPermissions).filter((entry) => on(entry.allowRead)).length,
+  };
+}

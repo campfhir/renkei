@@ -153,6 +153,10 @@ let layoutUsed: boolean;
 let opensApp: boolean;
 /** The system permissions the set or profile being changed has on. */
 let systemOn: string[];
+/** The permission set groups the set being changed belongs to. */
+let inGroups: string[];
+/** How many field and object grants the org says the set has. */
+let grantRows: { fields: number; objects: number };
 /** The tabs it shows now. */
 let tabRows: Record<string, unknown>[];
 /** Fields the org gained after the describe was first read. */
@@ -569,6 +573,19 @@ function fakeOrg(method: string, path: string, query: string): Response {
       }));
     return answer(200, { totalSize: rows.length, done: true, records: rows });
   }
+  if (
+    method === 'GET' &&
+    path === `${V}/query` &&
+    /COUNT\(Id\) n FROM (FieldPermissions|ObjectPermissions)/.test(q)
+  ) {
+    // The org's own count of what the set grants.
+    const fields = /FROM FieldPermissions/.test(q);
+    return answer(200, {
+      totalSize: 1,
+      done: true,
+      records: [{ n: fields ? grantRows.fields : grantRows.objects }],
+    });
+  }
   if (method === 'GET' && path === `${V}/query` && /FROM ObjectPermissions/.test(q)) {
     return answer(200, { totalSize: objectRows.length, done: true, records: objectRows });
   }
@@ -642,6 +659,13 @@ function fakeOrg(method: string, path: string, query: string): Response {
       records: known
         ? [{ Id: PROFILE_SET, ProfileId: '00e000000000001AAA', Profile: { Name: 'Standard User' } }]
         : [],
+    });
+  }
+  if (method === 'GET' && path === `${V}/query` && /FROM PermissionSetGroupComponent/.test(q)) {
+    return answer(200, {
+      totalSize: inGroups.length,
+      done: true,
+      records: inGroups.map((label) => ({ PermissionSetGroup: { MasterLabel: label } })),
     });
   }
   if (
@@ -835,6 +859,8 @@ beforeEach(() => {
   layoutUsed = true;
   opensApp = false;
   systemOn = [];
+  inGroups = [];
+  grantRows = { fields: 0, objects: 1 };
   tabRows = [];
   deployedSince = [];
   layoutMetadata = {
@@ -2361,6 +2387,75 @@ describe('salesforce_admin_list_permission_sets, with security', () => {
     expect(text(result)).toContain('System permissions:\n• View Setup and Configuration');
     expect(text(result)).toContain('Login hours: Mon 08:00–18:00');
     expect(text(result)).toContain('• 203.0.113.0–203.0.113.255 (Office)');
+  });
+});
+
+describe('a permission set in a permission set group', () => {
+  beforeEach(() => {
+    inGroups = ['PACE Staff'];
+  });
+
+  it('deploys whole, as read, with the access added — Salesforce takes no row for it', async () => {
+    const result = await call('salesforce_admin_propose_permission_set', {
+      permissionSet: 'Program Staff',
+      fields: [{ object: 'Site_Visit__c', field: 'Visit_Date__c' }],
+    });
+    expect(result.isError).toBeUndefined();
+    const { files } = await received();
+    expect(Object.keys(files).sort()).toEqual([
+      'package.xml',
+      'permissionsets/Program_Staff.permissionset',
+    ]);
+    const set = files['permissionsets/Program_Staff.permissionset'];
+    // What it granted stays; the field joins it.
+    expect(set).toContain('<name>ViewSetup</name>');
+    expect(set).toContain('<recordType>Opportunity.Grant</recordType>');
+    expect(set).toContain('<object>Site_Visit__c</object>');
+    expect(set).toMatch(
+      /<editable>false<\/editable>\s*<field>Site_Visit__c.Visit_Date__c<\/field>\s*<readable>true<\/readable>/
+    );
+    // Nothing is left to write as a row, which Salesforce would refuse.
+    expect(stored().payload.dataSteps).toEqual([]);
+    expect(stored().payload.preconditions).toEqual([
+      expect.objectContaining({ kind: 'component-unchanged', type: 'PermissionSet' }),
+    ]);
+    expect(text(result)).toContain('is in the permission set group PACE Staff');
+    expect(text(result)).toContain('Everyone in the group gets the change');
+  });
+
+  it('is not deployed when Salesforce hands over less than the set grants', async () => {
+    grantRows = { fields: 40, objects: 1 };
+    const result = await call('salesforce_admin_propose_permission_set', {
+      permissionSet: 'Program Staff',
+      fields: [{ object: 'Site_Visit__c', field: 'Visit_Date__c' }],
+    });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain('0 of its 40 field grants');
+    expect(text(result)).toContain('would take the rest away');
+    expect(deploys()).toHaveLength(0);
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
+  });
+
+  it('gets access to new fields in the same deploy as the fields', async () => {
+    const result = await call('salesforce_admin_propose_fields', {
+      object: 'Site_Visit__c',
+      fields: [{ label: 'Outcome', type: 'Text', length: 80 }],
+      grantTo: [{ permissionSet: 'Program Staff' }],
+    });
+    expect(result.isError).toBeUndefined();
+    const { files } = await received();
+    expect(files['permissionsets/Program_Staff.permissionset']).toContain(
+      '<field>Site_Visit__c.Outcome__c</field>'
+    );
+    expect(files['package.xml']).toContain('<name>PermissionSet</name>');
+    expect(stored().payload.dataSteps).toEqual([]);
+  });
+
+  it('is named with its groups when the set is read', async () => {
+    const result = await call('salesforce_admin_list_permission_sets', {
+      permissionSet: 'Program Staff',
+    });
+    expect(text(result)).toContain('In the permission set group: PACE Staff');
   });
 });
 
