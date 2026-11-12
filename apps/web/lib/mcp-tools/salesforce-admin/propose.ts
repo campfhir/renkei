@@ -28,9 +28,11 @@ import { errText, sfQuery, str } from '../salesforce/client';
 import { globalDescribe, resolveObject } from '../salesforce/schema';
 import { objectField } from '../salesforce/fields';
 import {
+  entityKey,
   FIELDS_KIND,
   readValidationRule,
   resolveAccessHolder,
+  toolingQuery,
   VALIDATION_RULE_KIND,
   type ComponentView,
   type DataStep,
@@ -134,6 +136,23 @@ export function registerAdminProposalTools(
       );
       if (!existing.ok) return errText(existing.error);
       const taken = existing.records.map((row) => str(row.QualifiedApiName));
+      // …and the custom fields FieldDefinition leaves out for this person:
+      // one created with no access given to anyone is still a name taken.
+      const table = await entityKey(context, access, describe.name);
+      const custom = table
+        ? await toolingQuery(
+            context,
+            access,
+            `SELECT DeveloperName FROM CustomField WHERE TableEnumOrId = ${soqlString(table)}`
+          )
+        : null;
+      if (custom?.ok) {
+        for (const row of custom.records) {
+          const name = `${str(row.DeveloperName)}__c`;
+          if (str(row.DeveloperName) && !taken.some((t) => t.toLowerCase() === name.toLowerCase()))
+            taken.push(name);
+        }
+      }
 
       const objects = await globalDescribe(context, access);
       if (typeof objects === 'string') return errText(objects);

@@ -557,15 +557,17 @@ function fakeOrg(method: string, path: string, query: string): Response {
     });
   }
   if (method === 'GET' && path === `${V}/tooling/query` && /FROM CustomField/.test(q)) {
-    const name = /DeveloperName = '([^']+)'/.exec(q)?.[1] ?? '';
-    const metadata = fieldMetadata[`${name}__c`];
-    return answer(200, {
-      totalSize: metadata ? 1 : 0,
-      done: true,
-      records: metadata
-        ? [{ Id: '00N000000000001AAA', FullName: `Site_Visit__c.${name}__c`, Metadata: metadata }]
-        : [],
-    });
+    // SOQL compares names without regard to case; no name asked for is every field.
+    const asked = /DeveloperName = '([^']+)'/.exec(q)?.[1];
+    const rows = Object.entries(fieldMetadata)
+      .filter(([name]) => !asked || name.toLowerCase() === `${asked}__c`.toLowerCase())
+      .map(([name, metadata]) => ({
+        Id: '00N000000000001AAA',
+        DeveloperName: name.replace(/__c$/, ''),
+        FullName: `Site_Visit__c.${name}`,
+        Metadata: metadata,
+      }));
+    return answer(200, { totalSize: rows.length, done: true, records: rows });
   }
   if (method === 'GET' && path === `${V}/query` && /FROM ObjectPermissions/.test(q)) {
     return answer(200, { totalSize: objectRows.length, done: true, records: objectRows });
@@ -1190,6 +1192,44 @@ describe('a field the person’s field-level access hides', () => {
     expect(text(result)).toContain('Site_Visit__c.Years_Enrolled__c exists');
     expect(text(result)).toContain('no field-level access');
     expect(deploys()).toHaveLength(0);
+  });
+
+  it('can be given to a permission set — the way out of being hidden', async () => {
+    const result = await call('salesforce_admin_propose_permission_set', {
+      permissionSet: 'Program Staff',
+      fields: [{ object: 'Site_Visit__c', field: 'years_enrolled__c' }],
+    });
+    expect(result.isError).toBeUndefined();
+    expect(stored().payload.dataSteps).toContainEqual(
+      expect.objectContaining({
+        kind: 'field-permission',
+        object: 'Site_Visit__c',
+        field: 'Years_Enrolled__c',
+        read: true,
+        edit: false,
+      })
+    );
+  });
+
+  it('can be placed on a page layout', async () => {
+    const result = await call('salesforce_admin_propose_layout_changes', {
+      object: 'Site_Visit__c',
+      layout: 'Site Visit Layout',
+      add: [{ field: 'years_enrolled__c', behavior: 'Readonly' }],
+    });
+    expect(result.isError).toBeUndefined();
+    const layout = (await received()).files['layouts/Site_Visit__c-Site Visit Layout.layout'];
+    expect(layout).toContain('<field>Years_Enrolled__c</field>');
+  });
+
+  it('is a name taken: a new field cannot be proposed over it', async () => {
+    const result = await call('salesforce_admin_propose_fields', {
+      object: 'Site_Visit__c',
+      fields: [{ label: 'Years Enrolled', type: 'Number' }],
+    });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain('Years Enrolled');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
   });
 
   it('counts as existing when a proposal checks the org has not changed', async () => {

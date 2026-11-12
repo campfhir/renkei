@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'fixed',
+        title: 'Salesforce Admin can give access to a field nobody can see yet',
+        detail:
+          'Proposing permission-set or profile access to a newly created field no longer fails with "has no field". The same field can now be placed on a page layout, and its name counts as taken when a new field is proposed.',
+      },
+      {
+        kind: 'fixed',
         title: 'An approved Salesforce change still shows what it changed',
         detail:
           'The review page keeps the proposed components after approval, beside what each step did. Renkei can check where a change request has got to, and it finds a field that was just created even when no permission set gives you access to it yet, saying so instead of reporting the field missing.',
