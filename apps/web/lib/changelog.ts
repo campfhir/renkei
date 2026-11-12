@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-12',
     entries: [
       {
+        kind: 'added',
+        title: "Salesforce Admin can change a formula field's formula",
+        detail:
+          'Asked to fix a formula field, the agent now proposes the new formula — and, if needed, how blank fields count, what it returns and its digits — for you to review and apply, instead of sending you to Setup.',
+      },
+      {
         kind: 'fixed',
         title: 'Notification toasts are easier to tap on a phone',
         detail:
