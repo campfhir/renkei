@@ -144,7 +144,8 @@ export function BulkDeleteModal({
   onClose,
 }: {
   items: LibraryItem[];
-  onDone: () => void;
+  /** The deletes were answered: the ids of the files they removed. */
+  onDone: (removed: string[]) => void;
   onClose: () => void;
 }) {
   const [state, dispatch] = useReducer(bulkDeleteReducer, initialBulkDelete);
@@ -175,7 +176,7 @@ export function BulkDeleteModal({
     dispatch({ type: 'sent' });
     const outcomes = await eachInTurn(view.toRemove, (id) => chatClient.deleteArtifact(id));
     dispatch({ type: 'answered', outcomes });
-    onDone();
+    onDone(outcomes.filter((outcome) => outcome.error === null).map((outcome) => outcome.id));
     if (outcomes.some((outcome) => outcome.error !== null)) return;
     onClose();
   };

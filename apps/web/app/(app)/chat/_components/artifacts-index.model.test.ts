@@ -30,6 +30,7 @@ import {
   originWord,
   ownerLabel,
   pager,
+  pageCheck,
   pickedItems,
   rowOrigin,
   rowPress,
@@ -270,10 +271,12 @@ describe('select mode', () => {
   const b = file('b', { ocrSupported: true, contentType: 'application/pdf' });
   const c = file('c', { ocrSupported: true, ocr: running });
 
+  const ids = (state: IndexState) => state.picked.map((item) => item.id);
+
   it('a press on a row ticks it and leaves the details alone', () => {
     const selecting = run([{ type: 'selectModeToggled' }], start([a]));
     const ticked = run([rowPress(selecting, a, false)], selecting);
-    expect(ticked.picked).toEqual(['a']);
+    expect(ids(ticked)).toEqual(['a']);
     expect(ticked.selected).toBeNull();
     expect(run([rowPress(ticked, a, false)], ticked).picked).toEqual([]);
   });
@@ -287,8 +290,8 @@ describe('select mode', () => {
     });
     const two = run(
       [
-        { type: 'pickToggled', id: 'a' },
-        { type: 'pickToggled', id: 'b' },
+        { type: 'pickToggled', item: a },
+        { type: 'pickToggled', item: b },
       ],
       selecting
     );
@@ -296,22 +299,89 @@ describe('select mode', () => {
   });
 
   it('Run OCR asks only for the ticked files it can read and that are not being read', () => {
-    const all = run([{ type: 'pickedAll', ids: ['a', 'b', 'c'] }]);
+    const all = run([{ type: 'pagePickToggled', items: [a, b, c] }]);
     expect(toolbar(all, [a, b, c]).ocrTargets).toEqual([b]);
   });
 
-  it('select all ticks the page; clear and leaving select mode untick everything', () => {
-    const all = run([{ type: 'pickedAll', ids: ['a', 'b'] }]);
-    expect(pickedItems(all, [a, b])).toEqual([a, b]);
+  it('the box at the top ticks the whole page, and unticks it once every file on it is ticked', () => {
+    const none = run([{ type: 'selectModeToggled' }]);
+    expect(pageCheck(none, [a, b])).toEqual({
+      checked: false,
+      indeterminate: false,
+      disabled: false,
+      label: 'Select all on this page',
+    });
+    const one = run([{ type: 'pickToggled', item: a }], none);
+    expect(pageCheck(one, [a, b])).toMatchObject({ checked: false, indeterminate: true });
+    const all = run([{ type: 'pagePickToggled', items: [a, b] }], one);
+    expect(ids(all)).toEqual(['a', 'b']);
+    expect(pageCheck(all, [a, b])).toMatchObject({
+      checked: true,
+      indeterminate: false,
+      label: 'Unselect all on this page',
+    });
+    expect(run([{ type: 'pagePickToggled', items: [a, b] }], all).picked).toEqual([]);
+  });
+
+  it('an empty page has nothing for the box to tick', () => {
+    const none = run([{ type: 'selectModeToggled' }]);
+    expect(pageCheck(none, [])).toMatchObject({ checked: false, disabled: true });
+    expect(run([{ type: 'pagePickToggled', items: [] }], none)).toBe(none);
+  });
+
+  it('ticks stay while the next page shows, and the bulk acts take every ticked file', () => {
+    const d = file('d');
+    const firstPage = run([
+      { type: 'selectModeToggled' },
+      { type: 'pagePickToggled', items: [a, b] },
+    ]);
+    // The next page: d is ticked there too.
+    const secondPage = run(
+      [
+        { type: 'pageArrived', items: [c, d] },
+        { type: 'pickToggled', item: d },
+      ],
+      firstPage
+    );
+    expect(ids(secondPage)).toEqual(['a', 'b', 'd']);
+    expect(pickedItems(secondPage, [c, d])).toEqual([a, b, d]);
+    expect(toolbar(secondPage, [c, d]).label).toBe('3 selected · 1 on this page');
+    // The box speaks for this page only: it ticks c, and leaves a and b ticked.
+    expect(pageCheck(secondPage, [c, d]).indeterminate).toBe(true);
+    const whole = run([{ type: 'pagePickToggled', items: [c, d] }], secondPage);
+    expect(ids(whole)).toEqual(['a', 'b', 'c', 'd']);
+    // Unticking this page leaves the first page's ticks alone.
+    expect(ids(run([{ type: 'pagePickToggled', items: [c, d] }], whole))).toEqual(['a', 'b']);
+  });
+
+  it('ticks stay through a search or a filter change', () => {
+    const ticked = run([{ type: 'selectModeToggled' }, { type: 'pickToggled', item: a }]);
+    const searched = run([{ type: 'filtered', patch: { query: 'zzz' } }], ticked);
+    expect(toolbar(searched, []).label).toBe('1 selected · 0 on this page');
+    expect(pickedItems(searched, [])).toEqual([a]);
+  });
+
+  it('a ticked file is acted on as the page shows it now', () => {
+    const ticked = run([{ type: 'selectModeToggled' }, { type: 'pickToggled', item: b }]);
+    const reading = { ...b, ocr: running };
+    // Read on this page: the toolbar sees the read in flight at once.
+    expect(toolbar(ticked, [reading]).ocrTargets).toEqual([]);
+    // And it is remembered that way once the page turns.
+    const later = run([{ type: 'pageArrived', items: [reading] }], ticked);
+    expect(pickedItems(later, [])).toEqual([reading]);
+  });
+
+  it('files a bulk delete removed are no longer ticked', () => {
+    const all = run([{ type: 'pagePickToggled', items: [a, b, c] }]);
+    expect(ids(run([{ type: 'picksRemoved', ids: ['a', 'c'] }], all))).toEqual(['b']);
+  });
+
+  it('clear and leaving select mode untick everything, on every page', () => {
+    const all = run([{ type: 'pagePickToggled', items: [a, b] }]);
     expect(run([{ type: 'pickCleared' }], all).picked).toEqual([]);
     const on = run([{ type: 'selectModeToggled' }], all);
     expect(on.selecting).toBe(true);
     expect(on.picked).toEqual([]);
-  });
-
-  it('only ticked files on this page are acted on', () => {
-    const state = run([{ type: 'pickedAll', ids: ['a', 'gone'] }]);
-    expect(pickedItems(state, [a, b])).toEqual([a]);
   });
 
   it('opens and closes the bulk dialogs', () => {
@@ -405,7 +475,7 @@ describe('acts and their errors', () => {
     const refused = run([{ type: 'detachFailed', error: 'Only editors detach' }], sent);
     expect(refused.error).toBe('Only editors detach');
     expect(detachSends(refused, 'guide:billing')).toBe(true);
-    expect(run([{ type: 'pageArrived' }], sent).detaching).toBeNull();
+    expect(run([{ type: 'pageArrived', items: [] }], sent).detaching).toBeNull();
   });
 
   it('a drag shows the drop target only where uploads are possible', () => {

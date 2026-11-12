@@ -376,7 +376,7 @@ test('the library: the real page lists what each person holds, and a file opens 
   await shot(page, testInfo, 'artifacts-02-details');
 });
 
-test('the library: the list scrolls in its own box, the filters and the pager staying put', async ({
+test('the library: the list scrolls in its own box, the filters and the pager staying put, and ticks carry across pages', async ({
   page,
   request,
   person,
@@ -405,6 +405,30 @@ test('the library: the list scrolls in its own box, the filters and the pager st
   );
   expect(pageScroll).toBeLessThanOrEqual(0);
   await shot(page, testInfo, 'artifacts-17-paged');
+
+  // Ticks are kept across pages, and the bulk acts at the top of the list
+  // take every ticked file: one from each page, deleted together. Which
+  // rule ticks what is artifacts-index.model.test.ts's.
+  await list.getByRole('button', { name: 'Select', exact: true }).click();
+  const bar = list.getByRole('toolbar', { name: 'Selected artifacts' });
+  const pageBox = bar.getByRole('checkbox', { name: 'Select all on this page' });
+  await expect(pageBox).toBeInViewport();
+  await list.getByLabel('Select backlog-01.txt').check();
+  await expect(bar.getByText('1 selected', { exact: true })).toBeVisible();
+  await pager.getByRole('button', { name: 'Next page' }).click();
+  await expect(pager.getByText('26–34 of 34')).toBeVisible();
+  await expect(bar.getByText('1 selected · 0 on this page')).toBeVisible();
+  await list.getByLabel('Select backlog-30.txt').check();
+  await expect(bar.getByText('2 selected · 1 on this page')).toBeVisible();
+  await shot(page, testInfo, 'artifacts-18-picked-across-pages');
+
+  await bar.getByRole('button', { name: 'Delete…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Delete 2 files?' });
+  await dialog.getByRole('button', { name: 'Delete 2' }).click();
+  await expect(dialog).toBeHidden();
+  await expect(pager.getByText('26–32 of 32')).toBeVisible();
+  await expect(bar.getByText('Tap files to select')).toBeVisible();
+  await expect(list.getByLabel('Select backlog-30.txt')).toHaveCount(0);
 });
 
 test('the library: a real upload lands, reads back, is sealed at rest, and gets its digest', async ({

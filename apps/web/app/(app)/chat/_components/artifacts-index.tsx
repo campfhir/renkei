@@ -62,6 +62,8 @@ import {
   originWord,
   ownerLabel,
   pager,
+  isPicked,
+  pageCheck,
   pickedItems as pickedOn,
   rowOrigin,
   rowPress,
@@ -172,7 +174,7 @@ export default function ArtifactsIndex({
   // A new page of the library is the server's answer to a detach, so the
   // one in flight is over.
   useEffect(() => {
-    dispatch({ type: 'pageArrived' });
+    dispatch({ type: 'pageArrived', items: page.artifacts });
   }, [page]);
 
   // A filter change starts over at the first page of what it shows; the
@@ -552,7 +554,10 @@ export default function ArtifactsIndex({
       {bulk === 'delete' && pickedItems.length > 0 ? (
         <BulkDeleteModal
           items={pickedItems}
-          onDone={reload}
+          onDone={(removed) => {
+            dispatch({ type: 'picksRemoved', ids: removed });
+            reload();
+          }}
           onClose={() => dispatch({ type: 'bulkClosed' })}
         />
       ) : null}
@@ -627,6 +632,7 @@ export default function ArtifactsIndex({
 
   const pages = pager(page);
   const bar = toolbar(state, items);
+  const all = pageCheck(state, items);
 
   return (
     <div
@@ -732,12 +738,68 @@ export default function ArtifactsIndex({
             aria-busy={isPending}
             className={`flex min-h-0 min-w-0 flex-1 flex-col rounded-lg border border-gray-200 transition-opacity dark:border-gray-800 ${isPending ? 'opacity-60' : ''}`}
           >
-            <div className="flex h-9 shrink-0 items-center justify-end border-b border-gray-200 px-3 dark:border-gray-800">
+            {/* At the top of the list: in select mode the box that ticks
+                this page, what is ticked over every page and what to do
+                with it, so the rows below stay put as files are ticked. */}
+            <div
+              role={selecting ? 'toolbar' : undefined}
+              aria-label={selecting ? 'Selected artifacts' : undefined}
+              className="flex min-h-9 shrink-0 flex-wrap items-center gap-2 border-b border-gray-200 px-3 py-1.5 text-sm dark:border-gray-800"
+            >
+              {selecting ? (
+                <>
+                  <input
+                    type="checkbox"
+                    checked={all.checked}
+                    disabled={all.disabled}
+                    ref={(box) => {
+                      if (box) box.indeterminate = all.indeterminate;
+                    }}
+                    onChange={() => dispatch({ type: 'pagePickToggled', items })}
+                    aria-label={all.label}
+                    title={all.label}
+                    className="h-4 w-4 shrink-0 rounded border-gray-300 disabled:opacity-40"
+                  />
+                  <span className="font-medium">{bar.label}</span>
+                  <button
+                    type="button"
+                    disabled={!bar.anyPicked}
+                    onClick={() => dispatch({ type: 'bulkOpened', bulk: 'add' })}
+                    className={`${smallButton} disabled:opacity-40`}
+                  >
+                    Add to project…
+                  </button>
+                  <button
+                    type="button"
+                    disabled={bar.ocrTargets.length === 0}
+                    onClick={() => void runOcrOn(bar.ocrTargets)}
+                    className={`${smallButton} disabled:opacity-40`}
+                  >
+                    Run OCR
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!bar.anyPicked}
+                    onClick={() => dispatch({ type: 'bulkOpened', bulk: 'delete' })}
+                    className={`${smallButton} disabled:opacity-40`}
+                  >
+                    Delete…
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => dispatch({ type: 'pickCleared' })}
+                    disabled={!bar.anyPicked}
+                    className="text-xs text-gray-500 hover:underline disabled:opacity-40 disabled:hover:no-underline"
+                  >
+                    Clear
+                  </button>
+                </>
+              ) : null}
               <button
                 type="button"
                 aria-pressed={selecting}
                 onClick={() => dispatch({ type: 'selectModeToggled' })}
-                className={smallButton}
+                className={`${smallButton} ml-auto`}
               >
                 {selecting ? 'Done selecting' : 'Select'}
               </button>
@@ -758,7 +820,7 @@ export default function ArtifactsIndex({
                     ? 'OCR running'
                     : statusFor(item.extractStatus, item.contentType);
                   const isSelected = item.id === selected;
-                  const ticked = state.picked.includes(item.id);
+                  const ticked = isPicked(state, item.id);
                   const shownProjects = rowProjects(item.projects);
                   // In select mode the whole row is the checkmark: a click
                   // ticks or unticks it and never opens the details.
@@ -774,7 +836,7 @@ export default function ArtifactsIndex({
                           <input
                             type="checkbox"
                             checked={ticked}
-                            onChange={() => dispatch({ type: 'pickToggled', id: item.id })}
+                            onChange={() => dispatch({ type: 'pickToggled', item })}
                             aria-label={`Select ${item.filename}`}
                             className="ml-3 h-4 w-4 shrink-0 rounded border-gray-300"
                           />
@@ -849,56 +911,6 @@ export default function ArtifactsIndex({
                 })}
               </ul>
             )}
-            {selecting ? (
-              // Below the list, so the rows above it stay where they are when
-              // a file is ticked; on a phone it wraps under the list.
-              <div
-                role="toolbar"
-                aria-label="Selected artifacts"
-                className="flex shrink-0 flex-wrap items-center gap-2 border-t border-gray-200 px-3 py-2 text-sm dark:border-gray-800"
-              >
-                <span className="font-medium">{bar.label}</span>
-                <button
-                  type="button"
-                  disabled={!bar.anyPicked}
-                  onClick={() => dispatch({ type: 'bulkOpened', bulk: 'add' })}
-                  className={`${smallButton} disabled:opacity-40`}
-                >
-                  Add to project…
-                </button>
-                <button
-                  type="button"
-                  disabled={bar.ocrTargets.length === 0}
-                  onClick={() => void runOcrOn(bar.ocrTargets)}
-                  className={`${smallButton} disabled:opacity-40`}
-                >
-                  Run OCR
-                </button>
-                <button
-                  type="button"
-                  disabled={!bar.anyPicked}
-                  onClick={() => dispatch({ type: 'bulkOpened', bulk: 'delete' })}
-                  className={`${smallButton} disabled:opacity-40`}
-                >
-                  Delete…
-                </button>
-                <button
-                  type="button"
-                  onClick={() => dispatch({ type: 'pickedAll', ids: items.map((item) => item.id) })}
-                  className="text-xs text-gray-500 hover:underline"
-                >
-                  Select all on this page
-                </button>
-                <button
-                  type="button"
-                  onClick={() => dispatch({ type: 'pickCleared' })}
-                  disabled={!bar.anyPicked}
-                  className="ml-auto text-xs text-gray-500 hover:underline disabled:opacity-40 disabled:hover:no-underline"
-                >
-                  Clear
-                </button>
-              </div>
-            ) : null}
             <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-gray-200 px-3 py-2 text-xs text-gray-500 dark:border-gray-800">
               {uploads ? (
                 <span className="hidden items-center gap-2 md:flex">

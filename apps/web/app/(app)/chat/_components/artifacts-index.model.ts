@@ -2,7 +2,8 @@
  * The Artifacts page (artifacts-index.tsx): the filters as typed, the
  * file whose details are open (and the copy of it last seen, so its
  * details stay while a page it is not on is shown), select mode and the
- * files ticked in it, which dialog is open, the upload in flight, the
+ * files ticked in it — kept as last seen, so a tick survives turning the
+ * page, changing a filter or searching, until it is cleared — which dialog is open, the upload in flight, the
  * one detach in flight, and the error line.
  *
  * The page makes the calls, turns the URL and runs the timers, and
@@ -44,7 +45,9 @@ export interface IndexState {
   dialog: Dialog | null;
   /** Select mode: a press on a row ticks it instead of opening it. */
   selecting: boolean;
-  picked: readonly string[];
+  /** The ticked files, in the order ticked, each as last seen on a page: what the bulk acts act on,
+   *  whichever page is showing. */
+  picked: readonly LibraryItem[];
   bulk: Bulk | null;
   /** The detach in flight, as "file:project". */
   detaching: string | null;
@@ -59,7 +62,8 @@ export type IndexAction =
   | { type: 'revealed'; id: string }
   /** The selected file is on the page now: remember it as it is. */
   | { type: 'seenOnPage'; item: LibraryItem }
-  | { type: 'pageArrived' }
+  /** A page arrived: a detach in flight is over, and ticked files on it are kept as they are now. */
+  | { type: 'pageArrived'; items: readonly LibraryItem[] }
   | { type: 'dragEntered'; uploads: boolean }
   | { type: 'dragEnded' }
   | { type: 'transferMoved'; transfer: Transfer }
@@ -71,9 +75,12 @@ export type IndexAction =
   | { type: 'dialogOpened'; dialog: Dialog }
   | { type: 'dialogClosed' }
   | { type: 'selectModeToggled' }
-  | { type: 'pickToggled'; id: string }
-  | { type: 'pickedAll'; ids: string[] }
+  | { type: 'pickToggled'; item: LibraryItem }
+  /** The box at the top of the list: ticks every file on this page, or unticks them all. */
+  | { type: 'pagePickToggled'; items: readonly LibraryItem[] }
   | { type: 'pickCleared' }
+  /** Files a bulk delete removed: they are gone, so no longer ticked. */
+  | { type: 'picksRemoved'; ids: readonly string[] }
   | { type: 'bulkOpened'; bulk: Bulk }
   | { type: 'bulkClosed' }
   | { type: 'detachSent'; key: string }
@@ -132,9 +139,20 @@ export function indexReducer(state: IndexState, action: IndexAction): IndexState
       return { ...state, selected: action.id };
     case 'seenOnPage':
       return state.remembered === action.item ? state : { ...state, remembered: action.item };
-    case 'pageArrived':
+    case 'pageArrived': {
       // A new page is the server's answer to a detach: the one in flight is over.
-      return state.detaching === null ? state : { ...state, detaching: null };
+      const fresh = new Map(action.items.map((item) => [item.id, item]));
+      const changed = state.picked.some((item) => {
+        const now = fresh.get(item.id);
+        return now !== undefined && now !== item;
+      });
+      if (state.detaching === null && !changed) return state;
+      return {
+        ...state,
+        detaching: null,
+        picked: changed ? state.picked.map((item) => fresh.get(item.id) ?? item) : state.picked,
+      };
+    }
     case 'dragEntered':
       return action.uploads && !state.dragging ? { ...state, dragging: true } : state;
     case 'dragEnded':
@@ -160,14 +178,25 @@ export function indexReducer(state: IndexState, action: IndexAction): IndexState
     case 'pickToggled':
       return {
         ...state,
-        picked: state.picked.includes(action.id)
-          ? state.picked.filter((other) => other !== action.id)
-          : [...state.picked, action.id],
+        picked: isPicked(state, action.item.id)
+          ? state.picked.filter((other) => other.id !== action.item.id)
+          : [...state.picked, action.item],
       };
-    case 'pickedAll':
-      return { ...state, picked: action.ids };
+    case 'pagePickToggled': {
+      if (action.items.length === 0) return state;
+      const onPage = new Set(action.items.map((item) => item.id));
+      const rest = state.picked.filter((item) => !onPage.has(item.id));
+      return {
+        ...state,
+        picked: pageCheck(state, action.items).checked ? rest : [...rest, ...action.items],
+      };
+    }
     case 'pickCleared':
       return { ...state, picked: [] };
+    case 'picksRemoved':
+      return action.ids.length === 0
+        ? state
+        : { ...state, picked: state.picked.filter((item) => !action.ids.includes(item.id)) };
     case 'bulkOpened':
       return { ...state, bulk: action.bulk };
     case 'bulkClosed':
@@ -192,7 +221,7 @@ export function filterStep(
 
 /** What a press on a row does: in select mode it ticks; otherwise it opens, or closes what is open. */
 export function rowPress(state: IndexState, item: LibraryItem, narrow: boolean): IndexAction {
-  if (state.selecting) return { type: 'pickToggled', id: item.id };
+  if (state.selecting) return { type: 'pickToggled', item };
   // On a phone the details cover the list, so a row is only ever a way in.
   return { type: 'selected', item: item.id === state.selected && !narrow ? null : item };
 }
@@ -203,9 +232,42 @@ export function currentItem(state: IndexState, items: readonly LibraryItem[]): L
   return onPage ?? (state.remembered?.id === state.selected ? state.remembered : null);
 }
 
-/** The ticked files that are on this page, in the page's order. */
+/** Whether a file is ticked. */
+export function isPicked(state: Pick<IndexState, 'picked'>, id: string): boolean {
+  return state.picked.some((item) => item.id === id);
+}
+
+/** Every ticked file, on this page or another, in the order ticked: as this page shows it when it is
+ *  on it, as last seen otherwise. What the bulk acts act on. */
 export function pickedItems(state: IndexState, items: readonly LibraryItem[]): LibraryItem[] {
-  return items.filter((item) => state.picked.includes(item.id));
+  const onPage = new Map(items.map((item) => [item.id, item]));
+  return state.picked.map((item) => onPage.get(item.id) ?? item);
+}
+
+export interface PageCheck {
+  /** Every file on this page is ticked. */
+  checked: boolean;
+  /** Some, not all, are. */
+  indeterminate: boolean;
+  /** An empty page has nothing to tick. */
+  disabled: boolean;
+  /** "Select all on this page", or "Unselect all on this page" once they all are. */
+  label: string;
+}
+
+/** The select-all box at the top of the list: it speaks for this page only. */
+export function pageCheck(
+  state: Pick<IndexState, 'picked'>,
+  items: readonly LibraryItem[]
+): PageCheck {
+  const ticked = items.filter((item) => isPicked(state, item.id)).length;
+  const checked = items.length > 0 && ticked === items.length;
+  return {
+    checked,
+    indeterminate: ticked > 0 && !checked,
+    disabled: items.length === 0,
+    label: checked ? 'Unselect all on this page' : 'Select all on this page',
+  };
 }
 
 /** Whether a detach press sends anything: not while the same one is in flight. */
@@ -249,18 +311,21 @@ export function emptyMessage(libraryCount: number, query: string, digests: boole
 }
 
 export interface Toolbar {
-  /** "2 selected", or the hint while nothing is. */
+  /** "2 selected", "27 selected · 2 on this page" when some are on other pages, or the hint while
+   *  nothing is. */
   label: string;
   anyPicked: boolean;
   /** The ticked files Run OCR asks a read of; it is off when there are none. */
   ocrTargets: LibraryItem[];
 }
 
-/** The select-mode toolbar under the list. */
+/** The select-mode toolbar at the top of the list: it acts on every ticked file, on any page. */
 export function toolbar(state: IndexState, items: readonly LibraryItem[]): Toolbar {
   const ticked = pickedItems(state, items);
+  const here = items.filter((item) => isPicked(state, item.id)).length;
+  const elsewhere = here < ticked.length ? ` · ${here} on this page` : '';
   return {
-    label: ticked.length > 0 ? `${ticked.length} selected` : 'Tap files to select',
+    label: ticked.length > 0 ? `${ticked.length} selected${elsewhere}` : 'Tap files to select',
     anyPicked: ticked.length > 0,
     ocrTargets: ticked.filter(canRunOcr),
   };
