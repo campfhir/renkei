@@ -51,19 +51,23 @@ const LAYERS = [
  * itself a batch — a bulk mail job — is already ONE tallied row per run by
  * the time it gets here; see the worker's act-tally.ts.)
  */
-function coalesce(arrivals: AppNotification[]): { entry: AppNotification; extra: number }[] {
-  const groups = new Map<string, { entry: AppNotification; extra: number }>();
+function coalesce(
+  arrivals: AppNotification[]
+): { entry: AppNotification; extra: number; ids: string[] }[] {
+  const groups = new Map<string, { entry: AppNotification; extra: number; ids: string[] }>();
   for (const entry of arrivals) {
     const key = entry.runId && entry.tool ? `${entry.runId}:${entry.tool}` : entry.id;
     const existing = groups.get(key);
-    if (existing) existing.extra += 1;
-    else groups.set(key, { entry, extra: 0 });
+    if (existing) {
+      existing.extra += 1;
+      existing.ids.push(entry.id);
+    } else groups.set(key, { entry, extra: 0, ids: [entry.id] });
   }
   return [...groups.values()];
 }
 
 export default function ToastStack() {
-  const { arrivals, dismiss } = useNotifications();
+  const { arrivals, dismiss, markRead } = useNotifications();
   const [paused, setPaused] = useState(false);
   const [fanned, setFanned] = useState(false);
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
@@ -125,7 +129,7 @@ export default function ToastStack() {
       {/* Fixed height so the pile does not make the page jump as cards
           arrive and leave; the cards are absolutely positioned inside it. */}
       <div className={fanned ? 'relative' : 'relative h-24'}>
-        {shown.map(({ entry, extra }, index) => (
+        {shown.map(({ entry, extra, ids }, index) => (
           <article
             key={entry.id}
             className={`${fanned ? 'relative mb-2' : `absolute inset-x-0 bottom-0 ${LAYERS[index] ?? LAYERS[2]}`} rounded-lg border border-gray-200 bg-white p-3 shadow-lg transition-all motion-reduce:transition-none dark:border-gray-700 dark:bg-gray-950 ${
@@ -156,6 +160,10 @@ export default function ToastStack() {
                       {...(entry.refUrl.startsWith('/') && !entry.refUrl.startsWith('//')
                         ? {}
                         : { target: '_blank', rel: 'noopener noreferrer' })}
+                      onClick={() => {
+                        markRead(ids);
+                        dismiss(entry.id);
+                      }}
                       className="hover:underline after:absolute after:inset-0 after:rounded-lg"
                     >
                       {entry.headline}
@@ -181,12 +189,16 @@ export default function ToastStack() {
               ) : null}
               {/* A plain close, NOT RemoveButton: that one is red and means
                   destructive, and dismissing a toast destroys nothing.
-                  `relative` keeps it above the stretched link. */}
+                  `relative z-10` keeps it above the stretched link, and the
+                padding makes it a finger-sized target on a phone. */}
               <button
                 type="button"
                 aria-label="Dismiss"
-                onClick={() => dismiss(entry.id)}
-                className="relative shrink-0 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800"
+                onClick={() => {
+                  markRead(ids);
+                  dismiss(entry.id);
+                }}
+                className="relative z-10 -m-2 shrink-0 rounded p-3 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800"
               >
                 <Icon path={ICONS.close} className="h-3.5 w-3.5" />
               </button>

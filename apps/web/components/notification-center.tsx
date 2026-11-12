@@ -92,6 +92,8 @@ interface NotificationState {
   /** Arrivals since this tab started watching — what the toasts show. */
   arrivals: AppNotification[];
   dismiss: (id: string) => void;
+  /** Marks rows read on the server (toast dismissed or opened), then resyncs the badge. */
+  markRead: (ids: string[]) => void;
   /** Called after the page marks things read, to resync the badge. */
   refresh: () => void;
 }
@@ -100,6 +102,7 @@ const Context = createContext<NotificationState>({
   unread: 0,
   arrivals: [],
   dismiss: () => undefined,
+  markRead: () => undefined,
   refresh: () => undefined,
 });
 
@@ -107,11 +110,7 @@ export function useNotifications(): NotificationState {
   return useContext(Context);
 }
 
-export function NotificationCenter({
-  children,
-}: {
-  children: ReactNode;
-}) {
+export function NotificationCenter({ children }: { children: ReactNode }) {
   const [unread, setUnread] = useState(0);
   const [arrivals, setArrivals] = useState<AppNotification[]>([]);
   // The cursor, always a server timestamp. In a ref because the polling
@@ -198,7 +197,24 @@ export function NotificationCenter({
     void load();
   }, [load]);
 
+  const markRead = useCallback(
+    (ids: string[]) => {
+      if (ids.length === 0) return;
+      // Fire and forget: a refusal is reconciled by the next poll.
+      void fetch('/api/notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      })
+        .then(() => load())
+        .catch(() => undefined);
+    },
+    [load]
+  );
+
   return (
-    <Context.Provider value={{ unread, arrivals, dismiss, refresh }}>{children}</Context.Provider>
+    <Context.Provider value={{ unread, arrivals, dismiss, markRead, refresh }}>
+      {children}
+    </Context.Provider>
   );
 }

@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-12',
     entries: [
       {
+        kind: 'fixed',
+        title: 'Notification toasts are easier to tap on a phone',
+        detail:
+          'Dismiss is now a larger target that sits above the card, the rest of the card opens the notification, and dismissing or opening a toast marks it read.',
+      },
+      {
         kind: 'added',
         title: 'Salesforce Admin has its own tools for permission set groups',
         detail:

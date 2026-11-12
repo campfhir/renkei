@@ -195,7 +195,26 @@ test('toast — the card opens its link, the dismiss still dismisses', async ({
   );
   expect(hit).toBe(`/chat/${chatId}`);
 
+  // At phone width Dismiss is a finger-sized target and the top layer.
+  await page.setViewportSize({ width: 390, height: 844 });
+  const dismiss = card.getByRole('button', { name: 'Dismiss' });
+  const dbox = await dismiss.boundingBox();
+  if (!dbox) throw new Error('Dismiss is not on screen.');
+  expect(dbox.width).toBeGreaterThanOrEqual(36);
+  expect(dbox.height).toBeGreaterThanOrEqual(36);
+  const top = await page.evaluate(
+    ([x, y]) =>
+      document.elementFromPoint(x, y)?.closest('button')?.getAttribute('aria-label') ?? 'none',
+    [dbox.x + dbox.width / 2, dbox.y + dbox.height / 2]
+  );
+  expect(top).toBe('Dismiss');
+
+  // Dismiss is the top layer, and dismissing marks the notification read.
+  const markedRead = page.waitForRequest(
+    (req) => req.method() === 'POST' && req.url().endsWith('/api/notifications')
+  );
   await card.getByRole('button', { name: 'Dismiss' }).click();
+  expect((await markedRead).postDataJSON()).toEqual({ ids: [expect.any(String)] });
   await expect(toast).toHaveCount(0);
   expect(page.url()).toContain('/agents');
 });
