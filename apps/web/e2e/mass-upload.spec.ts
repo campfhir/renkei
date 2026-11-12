@@ -147,3 +147,31 @@ test('composer: files staged as chips, then a mass upload confirmed, uploaded an
   expect(box?.width ?? 999).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
   await shot(page, testInfo, 'mass-upload-file-list-mobile');
 });
+
+test('files dropped on the thread, not the box, are attached', async ({
+  page,
+  person: _person,
+}) => {
+  const { uploaded } = await openChat(page);
+  // Somewhere above the composer: the thread's empty state.
+  const thread = page
+    .getByRole('main')
+    .getByText(/What are you working on\?|No model is configured/)
+    .filter({ visible: true });
+  const transfer = await page.evaluateHandle(() => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(['%PDF-1.4 dropped'], 'dropped.pdf', { type: 'application/pdf' }));
+    return transfer;
+  });
+
+  // Held over the thread, the whole chat column says where the files go.
+  await thread.dispatchEvent('dragenter', { dataTransfer: transfer });
+  await thread.dispatchEvent('dragover', { dataTransfer: transfer });
+  await expect(page.getByTestId('chat-drop-overlay')).toBeVisible();
+
+  // Let go: the file goes to the upload route and comes back as a chip.
+  await thread.dispatchEvent('drop', { dataTransfer: transfer });
+  await expect(page.getByTestId('chat-drop-overlay')).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'dropped.pdf' })).toBeVisible();
+  expect(uploaded).toEqual(['dropped.pdf']);
+});

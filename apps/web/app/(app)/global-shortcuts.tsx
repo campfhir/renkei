@@ -268,7 +268,7 @@ function QuickChat({ onClose }: { onClose: () => void }) {
     <Modal title="New chat" size="lg" flush onClose={onClose}>
       {/* This composer is not the thread's: its anchors must not bring the chat tour here. */}
       <CoachAnchorContext.Provider value={null}>
-        <div ref={body}>
+        <div ref={body} className="relative">
           {quickChatView(state) === 'composer' && chatId && setup ? (
             <Composer
               chatId={chatId}
@@ -279,6 +279,7 @@ function QuickChat({ onClose }: { onClose: () => void }) {
               onRemoveQueued={() => {}}
               onClearQueue={() => {}}
               uploads={setup.uploadsEnabled}
+              dropZone={body}
               massUploadThreshold={setup.massUploadThreshold}
               onSubmit={submit}
               onCompact={async () => false}

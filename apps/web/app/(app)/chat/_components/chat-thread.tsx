@@ -1235,7 +1235,7 @@ export default function ChatThread({
           />
         </>
       ) : null}
-      <div ref={chatColumnRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div ref={chatColumnRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
           {backHref && !(codePane && paneMode === 'split' && paneOpen) ? (
             <Link
@@ -1496,6 +1496,7 @@ export default function ChatThread({
                 onRemoveQueued={removeQueued}
                 onClearQueue={() => sendDispatch({ type: 'queueCleared' })}
                 uploads={uploadsEnabled}
+                dropZone={chatColumnRef}
                 massUploadThreshold={massUploadThreshold}
                 onSubmit={onComposerSubmit}
                 onCompact={queueOrCompact}

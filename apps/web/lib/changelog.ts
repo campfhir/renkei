@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'added',
+        title: 'Drop files anywhere in a chat',
+        detail:
+          'Files dropped anywhere in a chat — on a reply, a prompt or the header, not only the message box — are attached to your message. It works in plain, project and code project chats and in quick chat, and the chat shows where the files will land while you hold them over it.',
+      },
+      {
+        kind: 'added',
         title: "Salesforce Admin can change a formula field's formula",
         detail:
           'Asked to fix a formula field, the agent now proposes the new formula — and, if needed, how blank fields count, what it returns and its digits — for you to review and apply, instead of sending you to Setup.',
