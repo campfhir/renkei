@@ -19,10 +19,11 @@ import {
   useEffect,
   useReducer,
   useRef,
-  type DragEvent,
   type KeyboardEvent,
   type ReactNode,
+  type RefObject,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { Icon, ICONS } from '@/components/icons';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import Modal from '@/components/modal';
@@ -45,6 +46,7 @@ import {
   batchWarning,
   composerReducer,
   dropQuestion,
+  dropShown,
   filesChosen,
   initialComposer,
   needsOcr,
@@ -142,6 +144,7 @@ export default function Composer({
   bare = false,
   draft,
   pathCompletions = null,
+  dropZone,
 }: {
   chatId: string;
   disabled: boolean;
@@ -204,6 +207,13 @@ export default function Composer({
    * (path-autocomplete.tsx). Nothing elsewhere.
    */
   pathCompletions?: PathCompletionScope | null;
+  /**
+   * The window files can be dropped anywhere on to attach them — the whole
+   * chat column: the replies, the prompts, whatever sits above the box. It
+   * is drawn over while files are held above it, so it should be
+   * positioned (`relative`). Left out, only the box itself takes a drop.
+   */
+  dropZone?: RefObject<HTMLElement | null>;
 }) {
   const [state, dispatch] = useReducer(composerReducer<File>, draft, initialComposer<File>);
   const {
@@ -217,7 +227,6 @@ export default function Composer({
     remembered,
     listOpen,
     queueOpen,
-    dragging,
     prompts,
     variables,
     dictating,
@@ -459,11 +468,70 @@ export default function Composer({
     }
   };
 
-  const onDrop = (event: DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    dispatch({ type: 'dragEnded' });
-    if (uploads && event.dataTransfer.files?.length) upload(event.dataTransfer.files);
-  };
+  // Files dropped anywhere in the drop zone (or, without one, on the box)
+  // are attached. The listeners sit on the document, so they run after
+  // React's own: a drop target inside the zone that takes the files itself
+  // (it prevents the default, or stops the event) keeps them.
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const anchorRef = composerAnchor.ref;
+  const boxAndAnchorRef = useCallback(
+    (element: HTMLDivElement | null) => {
+      boxRef.current = element;
+      return anchorRef(element);
+    },
+    [anchorRef]
+  );
+  const uploadRef = useRef(upload);
+  useEffect(() => {
+    uploadRef.current = upload;
+  }, [upload]);
+  useEffect(() => {
+    if (!uploads) return;
+    const zone = () => dropZone?.current ?? boxRef.current;
+    const over = (event: DragEvent) => {
+      const element = zone();
+      return (
+        element !== null &&
+        event.target instanceof Node &&
+        element.contains(event.target) &&
+        Boolean(event.dataTransfer?.types.includes('Files'))
+      );
+    };
+    const onEnter = (event: DragEvent) => {
+      if (over(event)) dispatch({ type: 'dragEntered' });
+    };
+    const onLeave = (event: DragEvent) => {
+      if (over(event)) dispatch({ type: 'dragLeft' });
+    };
+    const onOver = (event: DragEvent) => {
+      if (event.defaultPrevented || !over(event)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    };
+    const onDrop = (event: DragEvent) => {
+      dispatch({ type: 'dragEnded' });
+      if (event.defaultPrevented || !over(event)) return;
+      event.preventDefault();
+      const dropped = event.dataTransfer?.files;
+      if (dropped && dropped.length > 0) uploadRef.current(dropped);
+    };
+    const onEnd = () => dispatch({ type: 'dragEnded' });
+    document.addEventListener('dragenter', onEnter);
+    document.addEventListener('dragleave', onLeave);
+    document.addEventListener('dragover', onOver);
+    document.addEventListener('drop', onDrop);
+    document.addEventListener('dragend', onEnd);
+    return () => {
+      document.removeEventListener('dragenter', onEnter);
+      document.removeEventListener('dragleave', onLeave);
+      document.removeEventListener('dragover', onOver);
+      document.removeEventListener('drop', onDrop);
+      document.removeEventListener('dragend', onEnd);
+      dispatch({ type: 'dragEnded' });
+    };
+  }, [uploads, dropZone]);
+  const dragging = dropShown(state);
+  const zoneElement = dragging ? (dropZone?.current ?? null) : null;
 
   const slot = sendButton(state, { running, disabled, blocked: sendBlocked !== null });
 
@@ -573,14 +641,24 @@ export default function Composer({
           </div>
         </Modal>
       ) : null}
+      {zoneElement
+        ? createPortal(
+            <div
+              data-testid="chat-drop-overlay"
+              aria-hidden
+              className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center border-2 border-dashed border-blue-500 bg-blue-50/80 dark:bg-blue-950/60"
+            >
+              <span className="flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-medium text-blue-800 shadow dark:bg-gray-900 dark:text-blue-200">
+                <Icon path={ICONS.paperclip} className="h-4 w-4" />
+                Drop files to attach them
+              </span>
+            </div>,
+            zoneElement
+          )
+        : null}
       <div
-        onDragOver={(event) => {
-          event.preventDefault();
-          if (uploads) dispatch({ type: 'dragOver' });
-        }}
-        onDragLeave={() => dispatch({ type: 'dragEnded' })}
-        onDrop={onDrop}
         {...composerAnchor}
+        ref={boxAndAnchorRef}
         className={`transition ${
           bare
             ? `border-t py-2 ${

@@ -9,6 +9,8 @@
 import {
   checkFieldSpec,
   developerNameOf,
+  FORMULA_MAX_LENGTH,
+  FORMULA_RETURN_TYPES,
   fieldXml,
   isDeveloperName,
   objectFileXml,
@@ -48,6 +50,10 @@ export interface FieldChanges {
   scale?: number;
   /** A formula or literal, as Salesforce takes it (`'Open'`, `TODAY()`, `true`). */
   defaultValue?: string;
+  /** Formula fields only: the new expression, as Setup takes it. Salesforce compiles it in the check-only deploy. */
+  formula?: string;
+  /** Formula fields only: whether a blank field in the formula counts as zero or stays blank. */
+  blanksAs?: 'BlankAsZero' | 'BlankAsBlank';
 }
 
 const TYPES_WITH_LENGTH = new Set(['Text', 'LongTextArea', 'Html', 'EncryptedText']);
@@ -56,8 +62,10 @@ const TYPES_WITH_PRECISION = new Set(['Number', 'Currency', 'Percent']);
 /**
  * An existing custom field's metadata with the changes merged in, and its
  * rows old → new — or why not. Shrinking a length or a number's digits
- * would cut existing values, and changing a type is not something this
- * does, so both are refused.
+ * would cut existing values, and changing a stored field's type is not
+ * something this does, so both are refused. A formula field holds nothing:
+ * its formula, its blank handling, what it returns and its digits change
+ * freely, and Salesforce compiles the result in the check-only deploy.
  */
 export function mergeFieldChanges(
   metadata: Json,
@@ -67,6 +75,7 @@ export function mergeFieldChanges(
   const errors: string[] = [];
   const rows: ChangeRow[] = [];
   const type = str(metadata.type);
+  const isFormula = str(metadata.formula) !== '';
   const set = (key: string, label: string, value: unknown) => {
     if (value === undefined) return;
     if (String(next[key] ?? '') === String(value)) return;
@@ -74,11 +83,27 @@ export function mergeFieldChanges(
     next[key] = value;
   };
 
-  if (changes.type && changes.type !== type) {
+  const returnType = FORMULA_RETURN_TYPES.find((candidate) => candidate === changes.type);
+  const retyped = isFormula && returnType !== undefined && returnType !== type;
+  if (changes.type && changes.type !== type && !retyped) {
     errors.push(
-      `Changing a field’s type (${type} to ${changes.type}) can lose data and is not offered; change it in Setup, where Salesforce shows what would be lost.`
+      isFormula
+        ? `A formula field returns one of ${FORMULA_RETURN_TYPES.join(', ')}; ${changes.type} is not one of them.`
+        : `Changing a field’s type (${type} to ${changes.type}) can lose data and is not offered; change it in Setup, where Salesforce shows what would be lost.`
     );
   }
+  if (retyped) {
+    set('type', 'Returns', returnType);
+    if (TYPES_WITH_PRECISION.has(returnType)) {
+      // A number needs its digits; the ones given below win over these.
+      if (next.precision === undefined || next.precision === null) next.precision = 18;
+      if (next.scale === undefined || next.scale === null) next.scale = 2;
+    } else {
+      delete next.precision;
+      delete next.scale;
+    }
+  }
+  const nextType = str(next.type);
   if (changes.label !== undefined) {
     if (!changes.label.trim() || changes.label.length > 40)
       errors.push('A field label is 1 to 40 characters.');
@@ -103,7 +128,8 @@ export function mergeFieldChanges(
     }
   }
   if (changes.length !== undefined) {
-    if (!TYPES_WITH_LENGTH.has(type)) errors.push(`A ${type} field has no length to change.`);
+    if (!TYPES_WITH_LENGTH.has(type) || isFormula)
+      errors.push(`A ${isFormula ? 'formula' : type} field has no length to change.`);
     else {
       const current = Number(metadata.length ?? 0);
       if (changes.length < current) {
@@ -120,8 +146,19 @@ export function mergeFieldChanges(
   if (changes.visibleLines !== undefined)
     set('visibleLines', 'Visible lines', changes.visibleLines);
   if (changes.precision !== undefined || changes.scale !== undefined) {
-    if (!TYPES_WITH_PRECISION.has(type)) errors.push(`A ${type} field has no digits to change.`);
-    else {
+    if (!TYPES_WITH_PRECISION.has(nextType))
+      errors.push(`A ${nextType} field has no digits to change.`);
+    else if (isFormula) {
+      // Calculated: nothing stored to cut or round.
+      const precision = changes.precision ?? Number(next.precision ?? 18);
+      const scale = changes.scale ?? Number(next.scale ?? 0);
+      if (precision < 1 || precision > 18 || scale < 0 || scale > precision) {
+        errors.push('Precision is 1 to 18 digits, and scale 0 up to the precision.');
+      } else {
+        set('precision', 'Precision', precision);
+        set('scale', 'Scale', scale);
+      }
+    } else {
       const precision = changes.precision ?? Number(metadata.precision ?? 18);
       const scale = changes.scale ?? Number(metadata.scale ?? 0);
       const integerDigits = precision - scale;
@@ -136,8 +173,27 @@ export function mergeFieldChanges(
       }
     }
   }
+  if (changes.formula !== undefined) {
+    const formula = changes.formula.trim();
+    if (!isFormula) {
+      errors.push(
+        `This ${type} field is not a formula field, and a field’s type is not changed here; a calculated field is a new field (salesforce_admin_propose_fields, type Formula).`
+      );
+    } else if (!formula) {
+      errors.push('A formula field needs its formula.');
+    } else if (formula.length > FORMULA_MAX_LENGTH) {
+      errors.push(`A formula is ${FORMULA_MAX_LENGTH.toLocaleString('en-US')} characters at most.`);
+    } else set('formula', 'Formula', formula);
+  }
+  if (changes.blanksAs !== undefined) {
+    if (!isFormula)
+      errors.push(`This ${type} field is not a formula field; it has no blank handling.`);
+    else set('formulaTreatBlanksAs', 'Blank fields', changes.blanksAs);
+  }
   if (changes.defaultValue !== undefined) {
-    if (type === 'Checkbox' && !['true', 'false'].includes(changes.defaultValue.trim())) {
+    if (isFormula) {
+      errors.push('A formula field is calculated: it has no default.');
+    } else if (type === 'Checkbox' && !['true', 'false'].includes(changes.defaultValue.trim())) {
       errors.push('A checkbox’s default is true or false.');
     } else set('defaultValue', 'Default', changes.defaultValue.trim() || null);
   }

@@ -1811,6 +1811,30 @@ describe('salesforce_admin_propose_field_changes', () => {
     expect(text(result)).toContain('• Label: Visit Date → Planned Visit Date');
   });
 
+  it('changes a formula field’s formula, deployed whole with what it returns', async () => {
+    fieldMetadata.Reached_Initial_Call__c = {
+      label: 'Reached Initial Call',
+      type: 'Percent',
+      precision: 18,
+      scale: 0,
+      formula: 'IF(ISBLANK(Initial_Call__c), 0, 100)',
+      formulaTreatBlanksAs: 'BlankAsZero',
+    };
+    const result = await call('salesforce_admin_propose_field_changes', {
+      object: 'Site_Visit__c',
+      field: 'Reached_Initial_Call__c',
+      formula: 'IF(ISBLANK(Initial_Call__c), 0, 1)',
+    });
+    expect(result.isError).toBeUndefined();
+    const object = (await received()).files['objects/Site_Visit__c.object'];
+    expect(object).toContain('<formula>IF(ISBLANK(Initial_Call__c), 0, 1)</formula>');
+    expect(object).toContain('<type>Percent</type>');
+    expect(object).toContain('<formulaTreatBlanksAs>BlankAsZero</formulaTreatBlanksAs>');
+    expect(text(result)).toContain(
+      '• Formula: IF(ISBLANK(Initial_Call__c), 0, 100) → IF(ISBLANK(Initial_Call__c), 0, 1)'
+    );
+  });
+
   it('refuses a type change, and standard fields', async () => {
     const type = await call('salesforce_admin_propose_field_changes', {
       object: 'Site_Visit__c',
