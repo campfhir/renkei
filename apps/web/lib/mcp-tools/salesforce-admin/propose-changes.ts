@@ -1,6 +1,7 @@
 /**
  * Changes to an existing custom field's settings: label, help text,
- * required, a longer length… (a picklist's values: picklist-tools.ts). An
+ * required, a longer length, a formula field's formula… (a picklist's
+ * values: picklist-tools.ts). An
  * existing field deploys as its whole definition, so the proposal reads the
  * live field (the Tooling API's `CustomField.Metadata`), merges only what
  * it changes (@renkei/connector-salesforce changes.ts), and carries the
@@ -8,7 +9,8 @@
  * otherwise.
  *
  * Nothing here loses data: a type change, a shorter length and fewer
- * digits are refused, with where to do them instead.
+ * digits are refused, with where to do them instead. A formula field holds
+ * nothing, so its formula, blank handling, return type and digits change.
  */
 
 import { z } from 'zod';
@@ -90,8 +92,10 @@ export function registerAdminChangeTools(
       title: 'Salesforce Admin · Act — Propose changes to a field',
       description:
         'Propose changes to an existing custom field: its label, help text, description, ' +
-        'whether it is required, a longer length, more digits, visible lines, or its default. ' +
-        'Changing a type, a shorter length or fewer digits can lose data and is refused. The ' +
+        'whether it is required, a longer length, more digits, visible lines, or its default; ' +
+        'and on a formula field its formula, how it treats blank fields, what it returns ' +
+        '(type) and its digits (read it first: salesforce_admin_get_field). Changing a stored ' +
+        'field’s type, a shorter length or fewer digits can lose data and is refused. The ' +
         'change is checked by a validation deploy that changes nothing; the person reviews and ' +
         'applies it from the link this returns. Picklist values: ' +
         'salesforce_admin_propose_picklist_changes.',
@@ -113,7 +117,24 @@ export function registerAdminChangeTools(
           .describe(
             'A formula or literal as Salesforce takes it ("\'Open\'", "TODAY()"); "" clears.'
           ),
-        type: z.string().optional().describe('Not changed here; given only to be refused.'),
+        formula: z
+          .string()
+          .optional()
+          .describe(
+            'Formula fields only: the whole new formula, as Setup takes it. Salesforce compiles it in the validation deploy.'
+          ),
+        blanksAs: z
+          .enum(['BlankAsZero', 'BlankAsBlank'])
+          .optional()
+          .describe(
+            'Formula fields only: whether a blank field in the formula counts as zero or stays blank.'
+          ),
+        type: z
+          .string()
+          .optional()
+          .describe(
+            'Formula fields only: what it returns (Text, Number, Currency, Percent, Date, DateTime, Checkbox). A stored field’s type is refused.'
+          ),
         reason: reasonField,
         replaces: replacesField,
       }),
@@ -136,6 +157,8 @@ export function registerAdminChangeTools(
         precision: args.precision,
         scale: args.scale,
         defaultValue: args.defaultValue,
+        formula: args.formula,
+        blanksAs: args.blanksAs,
         type: args.type,
       });
       if (!merged.ok)
