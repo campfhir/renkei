@@ -195,7 +195,12 @@ test('toast — the card opens its link, the dismiss still dismisses', async ({
   );
   expect(hit).toBe(`/chat/${chatId}`);
 
+  // Dismiss is the top layer, and dismissing marks the notification read.
+  const markedRead = page.waitForRequest(
+    (req) => req.method() === 'POST' && req.url().endsWith('/api/notifications')
+  );
   await card.getByRole('button', { name: 'Dismiss' }).click();
+  expect((await markedRead).postDataJSON()).toEqual({ ids: [expect.any(String)] });
   await expect(toast).toHaveCount(0);
   expect(page.url()).toContain('/agents');
 });
