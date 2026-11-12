@@ -15,6 +15,7 @@ export function salesforceAdminScopeFor(toolName: string): string[] {
     case 'salesforce_admin_get_field':
     case 'salesforce_admin_list_validation_rules':
     case 'salesforce_admin_list_change_requests':
+    case 'salesforce_admin_get_change_request':
     case 'salesforce_admin_get_layout':
     case 'salesforce_admin_get_picklist':
     case 'salesforce_admin_get_record_type':
@@ -44,14 +45,23 @@ export function salesforceAdminScopeFor(toolName: string): string[] {
       return ['sfa-read', 'sfa-schema'];
 
     case 'salesforce_admin_propose_layout_changes':
+    case 'salesforce_admin_propose_layout':
       return ['sfa-read', 'sfa-layouts'];
 
     case 'salesforce_admin_list_permission_sets':
     case 'salesforce_admin_propose_permission_set':
+    case 'salesforce_admin_propose_permission_set_details':
       return ['sfa-read', 'sfa-permissions'];
 
     case 'salesforce_admin_propose_assignments':
       return ['sfa-read', 'sfa-user-access'];
+
+    // Who can administer the org and who can sign in: its own capability,
+    // off by default.
+    case 'salesforce_admin_propose_system_permissions':
+    case 'salesforce_admin_propose_profile_login':
+    case 'salesforce_admin_propose_profile':
+      return ['sfa-read', 'sfa-security'];
 
     default:
       // A new tool missing its mapping registers for nobody — the loud,

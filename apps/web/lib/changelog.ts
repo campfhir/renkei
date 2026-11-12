@@ -46,6 +46,23 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-12',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'An approved Salesforce change still shows what it changed',
+        detail:
+          'The review page keeps the proposed components after approval, beside what each step did. Renkei can check where a change request has got to, and it finds a field that was just created even when no permission set gives you access to it yet, saying so instead of reporting the field missing.',
+      },
+      {
+        kind: 'added',
+        title: 'Salesforce Admin can change profiles, layouts and permission sets in more ways',
+        detail:
+          "Proposals can now give or take away access in a profile as well as a permission set, rename or delete a permission set, move fields and change related lists, buttons and actions on a page layout, choose which profiles see a layout, and create or delete one. System permissions, a profile's login hours and IP ranges, and new profiles sit behind a new option on the admin connector that is off until an admin turns it on.",
+      },
+    ],
+  },
+  {
     date: '2026-11-11',
     entries: [
       {

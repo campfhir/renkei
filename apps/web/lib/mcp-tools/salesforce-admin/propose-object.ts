@@ -17,7 +17,7 @@ import { globalDescribe } from '../salesforce/schema';
 import {
   objectExists,
   OBJECT_KIND,
-  resolvePermissionSet,
+  resolveAccessHolder,
   type ComponentView,
   type DataStep,
 } from '@/lib/salesforce-admin/plan';
@@ -123,7 +123,7 @@ export function registerAdminObjectTools(
       const steps: DataStep[] = [];
       const fieldSteps: DataStep[] = [];
       for (const grant of args.grantTo ?? []) {
-        const permissionSet = await resolvePermissionSet(context, access, grant.permissionSet);
+        const permissionSet = await resolveAccessHolder(context, access, grant);
         if (typeof permissionSet === 'string') return errText(permissionSet);
         const edit = grant.edit === true;
         const base = { permissionSetId: permissionSet.id, permissionSetName: permissionSet.name };

@@ -30,7 +30,7 @@ import { objectField } from '../salesforce/fields';
 import {
   FIELDS_KIND,
   readValidationRule,
-  resolvePermissionSet,
+  resolveAccessHolder,
   VALIDATION_RULE_KIND,
   type ComponentView,
   type DataStep,
@@ -46,11 +46,15 @@ import {
 } from './shared';
 import { planLayoutChange } from './layout-plan';
 
-/** A permission set to give access to what a proposal creates. */
+/** A permission set, or a profile, to give access to what a proposal creates. */
 export const grantToField = z
   .array(
     z.object({
-      permissionSet: z.string().min(1).describe('The permission set’s API name or label.'),
+      permissionSet: z.string().optional().describe('The permission set’s API name or label.'),
+      profile: z
+        .string()
+        .optional()
+        .describe('In place of permissionSet: a profile’s name ("Standard User").'),
       edit: z.boolean().optional().describe('Edit as well as read (default read only).'),
     })
   )
@@ -69,11 +73,11 @@ export function registerAdminProposalTools(
       description:
         'Propose up to 20 new custom fields on one object — text, long text, number, currency, ' +
         'percent, date, date/time, checkbox, email, phone, URL, picklist, multi-select picklist, ' +
-        'lookup or formula (a calculated field: its formula and what it returns) — optionally giving named permission sets access to them and placing them on ' +
+        'lookup or formula (a calculated field: its formula and what it returns) — optionally giving named permission sets or profiles access to them and placing them on ' +
         'named page layouts, in the same change. This stores a change ' +
         'request and has Salesforce validate it (a check-only deploy, which changes nothing); the ' +
         'person reviews and applies it from the link this returns. New fields are invisible to ' +
-        'people until a permission set grants them, so name the permission sets.',
+        'people until a permission set or profile grants them, so name them in grantTo.',
       // A proposal writes a change request in Renkei, never to Salesforce —
       // but it is a write, so org read-only mode hides it.
       annotations: { readOnlyHint: false },
@@ -81,7 +85,7 @@ export function registerAdminProposalTools(
         object: objectField,
         fields: z.array(fieldInput).min(1).max(20),
         grantTo: grantToField.describe(
-          'Permission sets to give access to the new fields once they deploy.'
+          'Permission sets or profiles to give access to the new fields once they deploy.'
         ),
         addToLayouts: z
           .array(
@@ -160,7 +164,7 @@ export function registerAdminProposalTools(
 
       const steps: DataStep[] = [];
       for (const grant of args.grantTo ?? []) {
-        const permissionSet = await resolvePermissionSet(context, access, grant.permissionSet);
+        const permissionSet = await resolveAccessHolder(context, access, grant);
         if (typeof permissionSet === 'string') return errText(permissionSet);
         for (const spec of specs) {
           // A required field is visible and editable to everyone already;
@@ -226,7 +230,7 @@ export function registerAdminProposalTools(
                 `Then: ${[...new Set(steps.map((g) => `${g.permissionSetName} (${'edit' in g && g.edit ? 'read and edit' : 'read'})`))].join(', ')} get access to them.`,
               ]
             : [
-                'No permission set is given access: people will not see these fields until one is.',
+                'No permission set or profile is given access: nobody, you included, will see these fields until one is (salesforce_admin_propose_permission_set).',
               ]),
         ],
       });

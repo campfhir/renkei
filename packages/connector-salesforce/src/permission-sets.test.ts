@@ -4,6 +4,7 @@ import {
   permissionSetFile,
   rightsLabel,
   unionRights,
+  withoutRights,
 } from './permission-sets';
 
 describe('impliedRights', () => {
@@ -65,5 +66,23 @@ describe('permissionSetFile', () => {
     expect(xml).toContain('<tab>Site_Visit__c</tab>');
     expect(xml).toContain('<visibility>Visible</visibility>');
     expect(xml).not.toContain('<description>');
+  });
+});
+
+describe('withoutRights', () => {
+  const all = impliedRights({ modifyAll: true });
+
+  it('takes what stands on a right away with it', () => {
+    expect(rightsLabel(withoutRights(all, ['edit']))).toBe('read, create, view all');
+    expect(rightsLabel(withoutRights(all, ['viewAll']))).toBe('read, create, edit, delete');
+    expect(rightsLabel(withoutRights(all, ['modifyAll']))).toBe(
+      'read, create, edit, delete, view all'
+    );
+  });
+
+  it('leaves nothing without read, and what was there when nothing named is held', () => {
+    expect(rightsLabel(withoutRights(all, ['read']))).toBe('none');
+    const reader = impliedRights({ read: true });
+    expect(withoutRights(reader, ['delete'])).toEqual(reader);
   });
 });

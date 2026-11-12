@@ -30,6 +30,7 @@ import { registerAdminPicklistTools } from './picklist-tools';
 import { registerAdminRecordTypeTools } from './record-type-tools';
 import { registerAdminReportTools } from './report-tools';
 import { registerAdminRequestTools } from './request-change';
+import { registerAdminSecurityTools } from './security-tools';
 import { ROLE_OPERATOR } from '@/lib/access';
 
 export const SALESFORCE_ADMIN_MCP_CONNECTOR = SALESFORCE_ADMIN_KIND.key;
@@ -75,6 +76,7 @@ export function registerSalesforceAdminTools(
   registerAdminReportTools(visible, context, auth);
   registerAdminLayoutTools(visible, context, auth);
   registerAdminPermissionTools(visible, context, auth);
+  registerAdminSecurityTools(visible, context, auth);
   // A request in words is the CRM connector's to offer
   // (salesforce_request_admin_change); this one is for a person who holds
   // only the admin connection, so nobody sees two tools for one thing.

@@ -1,5 +1,12 @@
 import { metadataFile, metadataFileName } from './metadata-xml';
-import { layoutSections, mergeLayoutChanges } from './layouts';
+import {
+  layoutBehaviors,
+  layoutButtons,
+  layoutRelatedLists,
+  layoutSections,
+  mergeLayoutChanges,
+  profileLayoutFile,
+} from './layouts';
 import {
   buildObjectPackage,
   checkObjectSpec,
@@ -94,6 +101,208 @@ describe('mergeLayoutChanges', () => {
         'This layout has no section “Nope”. Its sections: Information, Custom Links.',
       ],
     });
+  });
+});
+
+describe('mergeLayoutChanges beyond placing fields', () => {
+  const withLists = {
+    ...layout,
+    relatedLists: [
+      { fields: ['FULL_NAME', 'CONTACT.EMAIL'], relatedList: 'RelatedContactList' },
+      { relatedList: 'Visit_Note__c.Visit__c' },
+    ],
+  };
+
+  it('moves a field to another section, keeping how it behaves, and changes how one behaves', () => {
+    const merged = mergeLayoutChanges(layout, {
+      addSections: [{ label: 'Follow-up', columns: 1 }],
+      setBehavior: [{ field: 'stage__c', behavior: 'Readonly' }],
+    });
+    if (!merged.ok) throw new Error(merged.errors.join('; '));
+    const moved = mergeLayoutChanges(merged.layout, {
+      move: [{ field: 'name', section: 'follow-up' }],
+    });
+    if (!moved.ok) throw new Error(moved.errors.join('; '));
+    expect(layoutSections(moved.layout).slice(0, 2)).toEqual([
+      { label: 'Information', columns: [['Stage__c'], ['OwnerId']] },
+      { label: 'Follow-up', columns: [['Name']] },
+    ]);
+    expect(layoutBehaviors(moved.layout).get('name')).toBe('Required');
+    expect(layoutBehaviors(moved.layout).get('stage__c')).toBe('Readonly');
+    expect(merged.summary).toContain('Make Stage__c read only here');
+    expect(moved.summary).toEqual(['Move Name to “Follow-up”']);
+  });
+
+  it('renames a section, and removes one along with the fields in it, saying which', () => {
+    const merged = mergeLayoutChanges(layout, {
+      renameSections: [{ section: 'custom links', label: 'Links' }],
+      removeSections: ['Information'],
+    });
+    if (!merged.ok) throw new Error(merged.errors.join('; '));
+    expect(layoutSections(merged.layout)).toEqual([{ label: 'Links', columns: [[], [], []] }]);
+    expect(merged.summary).toEqual([
+      'Remove the section “Information”, and with it Name, Stage__c, OwnerId',
+      'Rename the section “Custom Links” to “Links”',
+    ]);
+  });
+
+  it('adds a related list after those there, with its columns, and takes one off', () => {
+    const merged = mergeLayoutChanges(withLists, {
+      removeRelatedLists: ['relatedcontactlist'],
+      addRelatedLists: [{ relatedList: 'Follow_Up__c.Visit__c', fields: ['NAME', 'Due__c'] }],
+    });
+    if (!merged.ok) throw new Error(merged.errors.join('; '));
+    expect(layoutRelatedLists(merged.layout)).toEqual([
+      { relatedList: 'Visit_Note__c.Visit__c', fields: [] },
+      { relatedList: 'Follow_Up__c.Visit__c', fields: ['NAME', 'Due__c'] },
+    ]);
+    expect(merged.summary).toEqual([
+      'Remove the related list RelatedContactList',
+      'Add the related list Follow_Up__c.Visit__c showing NAME, Due__c',
+    ]);
+    // Sections are untouched by a related-list change.
+    expect(layoutSections(merged.layout)).toEqual(layoutSections(layout));
+  });
+
+  it('refuses what is not there to change, and what is already so', () => {
+    expect(
+      mergeLayoutChanges(withLists, {
+        move: [
+          { field: 'Nope__c', section: 'Information' },
+          { field: 'Name', section: 'Information' },
+        ],
+        setBehavior: [{ field: 'Name', behavior: 'Required' }],
+        renameSections: [{ section: 'Information', label: 'Custom Links' }],
+        removeSections: ['Elsewhere'],
+        addRelatedLists: [{ relatedList: 'RelatedContactList' }],
+        removeRelatedLists: ['RelatedCaseList'],
+      })
+    ).toMatchObject({
+      ok: false,
+      errors: [
+        'This layout has no section “Elsewhere”. Its sections: Information, Custom Links.',
+        'This layout already has a section “Custom Links”.',
+        'Nope__c is not on this layout.',
+        'Name is already in “Information”.',
+        'Name is already required on this layout.',
+        'This layout has no related list RelatedCaseList. Its related lists: RelatedContactList, Visit_Note__c.Visit__c.',
+        'The related list RelatedContactList is already on this layout.',
+      ],
+    });
+  });
+});
+
+describe('mergeLayoutChanges: order, related-list columns, buttons and actions', () => {
+  it('places a field before or after another, or in a named column, in its own section or another', () => {
+    const first = mergeLayoutChanges(layout, { move: [{ field: 'Stage__c', before: 'name' }] });
+    if (!first.ok) throw new Error(first.errors.join('; '));
+    expect(layoutSections(first.layout)[0].columns).toEqual([['Stage__c', 'Name'], ['OwnerId']]);
+    expect(first.summary).toEqual(['Move Stage__c before Name in “Information”']);
+
+    const across = mergeLayoutChanges(layout, {
+      move: [
+        { field: 'Name', after: 'OwnerId' },
+        { field: 'Stage__c', column: 2 },
+      ],
+    });
+    if (!across.ok) throw new Error(across.errors.join('; '));
+    expect(layoutSections(across.layout)[0].columns).toEqual([[], ['OwnerId', 'Name', 'Stage__c']]);
+    expect(across.summary).toEqual([
+      'Move Name after OwnerId in “Information”',
+      'Move Stage__c to column 2 in “Information”',
+    ]);
+  });
+
+  it('refuses a place that is not there', () => {
+    expect(
+      mergeLayoutChanges(layout, {
+        move: [
+          { field: 'Name', before: 'Nope__c' },
+          { field: 'Name', column: 5 },
+          { field: 'Name', before: 'Stage__c', after: 'OwnerId' },
+          { field: 'Name', before: 'Name' },
+        ],
+      })
+    ).toMatchObject({
+      ok: false,
+      errors: [
+        'Nope__c is not in “Information” to place Name beside.',
+        '“Information” has 2 column(s), not 5.',
+        'Name: name before or after, not both.',
+        'Name cannot be placed beside itself.',
+      ],
+    });
+  });
+
+  it('replaces a related list’s columns, and adds and removes custom buttons', () => {
+    const merged = mergeLayoutChanges(
+      {
+        ...layout,
+        customButtons: ['Print_Visit'],
+        relatedLists: [{ fields: ['NAME'], relatedList: 'Visit_Note__c.Visit__c' }],
+      },
+      {
+        setRelatedListColumns: [
+          { relatedList: 'visit_note__c.visit__c', fields: ['NAME', 'Body__c'] },
+        ],
+        addButtons: ['Send_Summary'],
+        removeButtons: ['print_visit'],
+      }
+    );
+    if (!merged.ok) throw new Error(merged.errors.join('; '));
+    expect(layoutRelatedLists(merged.layout)).toEqual([
+      { relatedList: 'Visit_Note__c.Visit__c', fields: ['NAME', 'Body__c'] },
+    ]);
+    expect(layoutButtons(merged.layout)).toEqual({ buttons: ['Send_Summary'], actions: null });
+  });
+
+  it('adds to and removes from the layout’s own action bar, renumbered in order', () => {
+    const merged = mergeLayoutChanges(
+      {
+        ...layout,
+        platformActionList: {
+          actionListContext: 'Record',
+          platformActionListItems: [
+            { actionName: 'Edit', actionType: 'StandardButton', sortOrder: 0 },
+            { actionName: 'Delete', actionType: 'StandardButton', sortOrder: 1 },
+          ],
+        },
+      },
+      { addActions: [{ name: 'Site_Visit__c.Log_Outcome' }], removeActions: ['edit'] }
+    );
+    if (!merged.ok) throw new Error(merged.errors.join('; '));
+    expect(layoutButtons(merged.layout).actions).toEqual(['Delete', 'Site_Visit__c.Log_Outcome']);
+    expect(merged.layout.platformActionList).toMatchObject({
+      platformActionListItems: [
+        { actionName: 'Delete', sortOrder: 0 },
+        { actionName: 'Site_Visit__c.Log_Outcome', actionType: 'QuickAction', sortOrder: 1 },
+      ],
+    });
+  });
+
+  it('says a layout on Salesforce’s default actions will show only the ones it is given', () => {
+    const merged = mergeLayoutChanges(layout, {
+      addActions: [{ name: 'Edit', type: 'StandardButton' }],
+    });
+    if (!merged.ok) throw new Error(merged.errors.join('; '));
+    expect(merged.summary[0]).toContain('will show only the ones listed here');
+    expect(mergeLayoutChanges(layout, { removeActions: ['Edit'] })).toMatchObject({
+      ok: false,
+      errors: [expect.stringContaining('no action list of its own')],
+    });
+  });
+});
+
+describe('profileLayoutFile', () => {
+  it('holds only the layout assignments, with the record type when one is named', () => {
+    const xml = profileLayoutFile([
+      { layout: 'Site_Visit__c-Site Visit Layout' },
+      { layout: 'Site_Visit__c-Home Layout', recordType: 'Site_Visit__c.Home_Visit' },
+    ]);
+    expect(xml.match(/<layoutAssignments>/g)).toHaveLength(2);
+    expect(xml).toContain('<recordType>Site_Visit__c.Home_Visit</recordType>');
+    expect(xml.match(/<recordType>/g)).toHaveLength(1);
+    expect(xml).not.toContain('fieldPermissions');
   });
 });
 

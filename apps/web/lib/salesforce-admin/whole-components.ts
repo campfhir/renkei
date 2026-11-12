@@ -21,6 +21,7 @@ import {
   SALESFORCE_API_VERSION,
   soqlString,
   standardValueSetOf,
+  xmlEscape,
   type StandardValueRead,
 } from '@renkei/connector-salesforce';
 import { refusalTextOf } from '@/lib/grant-refusals';
@@ -77,6 +78,51 @@ export async function readReportType(
   if (!record || !record.baseObject) return null;
   const metadata = normalizeReportType(record);
   return { name: developerName, metadata, fingerprint: fingerprintOf(metadata) };
+}
+
+export interface LiveMetadata {
+  fullName: string;
+  /** As readMetadata gives it: a repeated element is an array, one alone an object. */
+  metadata: Record<string, unknown>;
+  fingerprint: string;
+}
+
+/**
+ * Any component whole, by type and full name, through the delegate's
+ * readMetadata — for the ones a deploy replaces whole and the Tooling API
+ * does not hand over (a permission set's record types, a profile's login
+ * hours and IP ranges). Null when the name names nothing.
+ */
+export async function readWholeMetadata(
+  context: SalesforceCallContext,
+  access: SalesforceAccess,
+  type: 'PermissionSet' | 'Profile',
+  fullName: string
+): Promise<LiveMetadata | null | string> {
+  const what = type === 'Profile' ? 'profile' : 'permission set';
+  let response: Response;
+  try {
+    response = await access.auth(
+      `${access.instanceUrl}/services/Soap/m/${SALESFORCE_API_VERSION}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/xml; charset=UTF-8' },
+        body:
+          '<readMetadata xmlns="http://soap.sforce.com/2006/04/metadata">' +
+          `<type>${type}</type><fullNames>${xmlEscape(fullName)}</fullNames></readMetadata>`,
+        signal: AbortSignal.timeout(60_000),
+      }
+    );
+  } catch (error) {
+    return `Could not reach Salesforce to read the ${what}: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  const refused = refusalTextOf(response, 'Salesforce Admin');
+  if (refused) return refused;
+  const read = readMetadataRecords(await response.text().catch(() => ''));
+  if (!Array.isArray(read)) return `Salesforce would not read the ${what}: ${read.fault}`;
+  const record = read[0];
+  if (!record) return null;
+  return { fullName, metadata: record, fingerprint: fingerprintOf(record) };
 }
 
 export interface LiveReport {
@@ -427,6 +473,9 @@ export async function wholeComponentFingerprint(
       return wrap(await readReportType(context, access, precondition.name));
     case 'Report':
       return wrap(await readReport(context, access, precondition.name));
+    case 'PermissionSet':
+    case 'Profile':
+      return wrap(await readWholeMetadata(context, access, precondition.type, precondition.name));
     case 'StandardValueSet': {
       const [object, field] = [precondition.object, precondition.name];
       const set = standardValueSetOf(object, field);

@@ -2,8 +2,10 @@
  * The salesforce_admin_ read tools: who the admin connection is and what it
  * may do in Setup, an object's schema as a builder needs it, one field's
  * whole definition and where it is used, an object's validation rules with
- * their formulas, and the person's own change requests. Every one runs as
- * the person, so Salesforce decides what of the org's setup they can see.
+ * their formulas, and the person's own change requests — the list, and one
+ * request whole: what it changes, where its approval and deploy have got
+ * to, and what each step did. Every one runs as the person, so Salesforce
+ * decides what of the org's setup they can see.
  *
  * Reads come from the sObject describe, FieldDefinition, and the Tooling API
  * (`/tooling/query`: ValidationRule, CustomField and its `Metadata`, which
@@ -29,16 +31,28 @@ import { resolveObject } from '../salesforce/schema';
 import { limitField, objectField } from '../salesforce/fields';
 import { listSalesforceConnectors } from '@/lib/salesforce-app';
 import { SALESFORCE_ADMIN_KIND } from '@/lib/salesforce-kinds';
-import { readValidationRule, toolingQuery } from '@/lib/salesforce-admin/plan';
 import {
+  deploys,
+  readCustomField,
+  readMetadataPayload,
+  readValidationRule,
+  stepLabel,
+  toolingQuery,
+} from '@/lib/salesforce-admin/plan';
+import {
+  getChangeRequestById,
   listAllChangeRequests,
   listChangeRequests,
+  mayView,
   REQUEST_KIND,
   requestDescription,
   stateOf,
+  type ChangeRequest,
+  type ChangeRequestState,
 } from '@/lib/salesforce-admin/change-requests';
 import { ROLE_OPERATOR } from '@/lib/access';
 import { reviewPrefix } from './review-link';
+import { missingFieldReason } from './shared';
 
 const PERMISSIONS: [string, string][] = [
   ['PermissionsViewSetup', 'View Setup and Configuration'],
@@ -60,18 +74,88 @@ export async function changesHere(access: SalesforceAccess): Promise<string> {
     : 'read only here: a production org that does not take change requests (build in a sandbox)';
 }
 
-/** The object's id the Tooling API keys fields by: its name for standard objects, 01I… for custom. */
-async function entityKey(
-  context: MCPToolContext,
-  access: SalesforceAccess,
-  object: string
-): Promise<string | null> {
-  const found = await sfQuery(
-    context,
-    access,
-    `SELECT DurableId FROM EntityDefinition WHERE QualifiedApiName = ${soqlString(object)} LIMIT 1`
-  );
-  return found.ok ? str(found.records[0]?.DurableId) || null : null;
+/** What Salesforce's check said of a change, in a few words. */
+function validationWords(change: ChangeRequest): string {
+  const validation = change.validation;
+  if (!validation) return 'not validated';
+  if ('error' in validation) return `validation could not run: ${validation.error}`;
+  if (!validation.done) return 'validating';
+  if (validation.success) return 'validated';
+  return `validation failed (${validation.failures.length} error(s))`;
+}
+
+const STATE_WORDS: Record<ChangeRequestState, string> = {
+  pending: 'waiting for an operator to approve it — nothing has changed in Salesforce',
+  queued: 'approved, and waiting for its deploy to start — nothing has changed in Salesforce yet',
+  applying: 'approved, and deploying now',
+  applied: 'applied — every step finished',
+  partial: 'partly applied — the deploy went in, and a step after it failed',
+  failed: 'failed — see the steps',
+  cancelled: 'cancelled — nothing changed in Salesforce',
+  expired: 'expired before anyone approved it — nothing changed in Salesforce',
+  interrupted:
+    'cut off before Salesforce started a deploy — nothing was deployed; propose it again',
+};
+
+/** One change request whole: where it has got to, what it changes, what each step did. */
+export function changeRequestLines(change: ChangeRequest, link: string): string[] {
+  const state = stateOf(change);
+  const isRequest = change.kind === REQUEST_KIND;
+  const lines = [
+    `${change.title} (id ${change.id})`,
+    `Status: ${state} — ${STATE_WORDS[state]}.`,
+    `Org: ${change.connectorKey}, ${change.instanceUrl}`,
+  ];
+  if (change.reason) lines.push(`Why: ${change.reason}`);
+  lines.push(`Proposed: ${change.createdAt.toISOString()}`);
+  if (change.approvedAt) lines.push(`Approved: ${change.approvedAt.toISOString()}`);
+  if (change.appliedAt) lines.push(`Applied: ${change.appliedAt.toISOString()}`);
+  if (state === 'pending') lines.push(`Expires: ${change.expiresAt.toISOString()}`);
+  if (change.step && (state === 'queued' || state === 'applying'))
+    lines.push(`Now: ${change.step}`);
+  if (change.resolution) lines.push(`Note: ${change.resolution}`);
+  if (isRequest) {
+    lines.push('', 'Asked for, in words:', requestDescription(change.payload));
+  } else {
+    lines.push(`Salesforce’s validation: ${validationWords(change)}`);
+    const validation = change.validation;
+    if (validation && 'deployId' in validation && validation.done && !validation.success) {
+      for (const failure of validation.failures)
+        lines.push(`  • ${failure.name}: ${failure.problem}`);
+      if (validation.errorMessage) lines.push(`  • ${validation.errorMessage}`);
+    }
+    const payload = readMetadataPayload(change.payload);
+    if (payload) {
+      lines.push('', deploys(payload) ? 'What it deploys:' : 'What it changes:');
+      for (const component of payload.components) {
+        lines.push(
+          `• ${component.action === 'create' ? 'New' : component.action === 'delete' ? 'Deleted' : 'Changed'} ${component.type} ${component.name}`
+        );
+        for (const row of component.rows) {
+          lines.push(
+            row.from !== undefined
+              ? `    ${row.label}: ${row.from || '(blank)'} → ${row.value || '(blank)'}`
+              : `    ${row.label}: ${row.value || '(blank)'}`
+          );
+        }
+      }
+      if (payload.dataSteps.length > 0) {
+        lines.push(deploys(payload) ? 'Then, once it deploys:' : 'Steps:');
+        for (const step of payload.dataSteps) lines.push(`• ${stepLabel(step)}`);
+      }
+    }
+    if (change.results) {
+      lines.push('', state === 'applying' ? 'What has happened so far:' : 'What happened:');
+      for (const result of change.results.operations) {
+        lines.push(
+          `• ${result.label} — ${result.outcome === 'not_run' ? 'not run' : result.outcome}` +
+            (result.detail ? `\n    ${result.detail.replace(/\n/g, '\n    ')}` : '')
+        );
+      }
+    }
+  }
+  lines.push('', `Review page: ${link}`);
+  return lines;
 }
 
 export function registerAdminReadTools(
@@ -179,40 +263,48 @@ export function registerAdminReadTools(
       if (typeof access === 'string') return errText(access);
       const describe = await resolveObject(context, access, args.object);
       if (typeof describe === 'string') return errText(describe);
+      const name = args.field.trim();
       const definition = await sfQuery(
         context,
         access,
-        `SELECT QualifiedApiName, Label, DataType, Description, IsNillable, IsIndexed, IsCalculated, IsFieldHistoryTracked, ReferenceTo, RelationshipName FROM FieldDefinition WHERE EntityDefinition.QualifiedApiName = ${soqlString(describe.name)} AND QualifiedApiName = ${soqlString(args.field.trim())} LIMIT 1`
+        `SELECT QualifiedApiName, Label, DataType, Description, IsNillable, IsIndexed, IsCalculated, IsFieldHistoryTracked, ReferenceTo, RelationshipName FROM FieldDefinition WHERE EntityDefinition.QualifiedApiName = ${soqlString(describe.name)} AND QualifiedApiName = ${soqlString(name)} LIMIT 1`
       );
       if (!definition.ok) return errText(definition.error);
       const row = definition.records[0];
-      if (!row) return errText(`${describe.name} has no field ${args.field}.`);
-      const out: Record<string, unknown> = { object: describe.name, ...row };
-      const custom = /__c$/i.test(args.field.trim());
-      if (custom) {
-        const table = await entityKey(context, access, describe.name);
-        const developerName = args.field.trim().replace(/__c$/i, '');
-        if (table) {
-          const field = await toolingQuery(
-            context,
-            access,
-            `SELECT Id, Metadata FROM CustomField WHERE TableEnumOrId = ${soqlString(table)} AND DeveloperName = ${soqlString(developerName)} LIMIT 1`
-          );
-          if (field.ok && field.records[0]) {
-            out.metadata = field.records[0].Metadata;
-            const id = str(field.records[0].Id);
-            const uses = await toolingQuery(
-              context,
-              access,
-              `SELECT MetadataComponentName, MetadataComponentType FROM MetadataComponentDependency WHERE RefMetadataComponentId = ${soqlString(id)} LIMIT 200`
-            );
-            out.usedBy = uses.ok
-              ? uses.records.map(
-                  (use) => `${str(use.MetadataComponentType)} ${str(use.MetadataComponentName)}`
-                )
-              : { error: uses.error };
-          }
-        }
+      // A custom field's definition as Setup holds it, whoever can see the
+      // field: FieldDefinition and the describe answer by the person's own
+      // field-level access, and a field deployed with no permission set
+      // given access is hidden from both.
+      const custom = /__c$/i.test(name)
+        ? await readCustomField(context, access, describe.name, name)
+        : null;
+      const live = typeof custom === 'object' ? custom : null;
+      if (!row && !live)
+        return errText(await missingFieldReason(context, access, describe.name, name));
+      const out: Record<string, unknown> = { object: describe.name, ...(row ?? {}) };
+      if (!row) {
+        out.QualifiedApiName = name;
+        out.visibleToYou = false;
+        out.note =
+          'The field exists, but your Salesforce user has no field-level access to it: no ' +
+          'permission set or profile you hold grants it, so it is missing from records, ' +
+          'reports and report types for you. salesforce_admin_propose_permission_set gives a ' +
+          'permission set access to it.';
+      }
+      if (live) {
+        out.metadata = live.metadata;
+        const formula = live.metadata.formula;
+        if (typeof formula === 'string' && formula) out.formula = formula;
+        const uses = await toolingQuery(
+          context,
+          access,
+          `SELECT MetadataComponentName, MetadataComponentType FROM MetadataComponentDependency WHERE RefMetadataComponentId = ${soqlString(live.id)} LIMIT 200`
+        );
+        out.usedBy = uses.ok
+          ? uses.records.map(
+              (use) => `${str(use.MetadataComponentType)} ${str(use.MetadataComponentName)}`
+            )
+          : { error: uses.error };
       }
       return textResult(json(out));
     }
@@ -300,16 +392,7 @@ export function registerAdminReadTools(
       return textResult(
         changes
           .map((change) => {
-            const validation = change.validation;
-            const checked = !validation
-              ? 'not validated'
-              : 'error' in validation
-                ? `validation could not run: ${validation.error}`
-                : !validation.done
-                  ? 'validating'
-                  : validation.success
-                    ? 'validated'
-                    : `validation failed (${validation.failures.length} error(s))`;
+            const checked = validationWords(change);
             const request =
               change.kind === REQUEST_KIND
                 ? `\n  Asked for: ${requestDescription(change.payload).slice(0, 600)}`
@@ -323,6 +406,46 @@ export function registerAdminReadTools(
             );
           })
           .join('\n')
+      );
+    }
+  );
+
+  server.registerTool(
+    'salesforce_admin_get_change_request',
+    {
+      title: 'Salesforce Admin · Read — One change request, and where it has got to',
+      description:
+        'One Salesforce admin change request by its id (the id a propose tool answered with, or ' +
+        'the end of its review link): whether it is still waiting for approval, approved and ' +
+        'deploying, applied, failed, cancelled or expired; what it changes, component by ' +
+        'component; what Salesforce’s validation said; and what each step of the deploy did. ' +
+        'Call this when someone says they approved a change, before building on what it ' +
+        'creates, and to find out why a change did not go in. The person sees their own ' +
+        'requests; an operator sees anyone’s.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        id: z.string().min(1).describe('The change request’s id, or its review link.'),
+      }),
+    },
+    async (args) => {
+      if (!context.subject) return errText('No signed-in identity on this request.');
+      // A review link ends in the id.
+      const id =
+        args.id
+          .trim()
+          .replace(/[/?#]+$/, '')
+          .split('/')
+          .pop() ?? '';
+      const change = await getChangeRequestById(id);
+      const operator = context.roles?.includes(ROLE_OPERATOR) === true;
+      // Someone else's request reads the same as none.
+      if (!change || !mayView(change, { subject: context.subject, operator })) {
+        return errText(
+          `There is no change request ${id} of yours. salesforce_admin_list_change_requests lists them.`
+        );
+      }
+      return textResult(
+        changeRequestLines(change, `${reviewPrefix(context)}${change.id}`).join('\n')
       );
     }
   );

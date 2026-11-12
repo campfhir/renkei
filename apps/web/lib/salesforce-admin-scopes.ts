@@ -14,7 +14,9 @@
  * their tools are built. Report types and reports ride the schema bundle:
  * they deploy as metadata the way an object does, and a separate bundle
  * would have every existing connection reconnect to get them. User access — assigning permission sets to people — is
- * off by default: it changes who can do what, not how the org is built.
+ * off by default: it changes who can do what, not how the org is built. So
+ * is security — system permissions, login hours and IP ranges, new
+ * profiles: who can administer the org, and who can sign in.
  */
 
 import type { ScopeGroup, ScopeOption } from '@/lib/scope-catalog';
@@ -35,7 +37,7 @@ export const SALESFORCE_ADMIN_SCOPE_OPTIONS: ScopeOption[] = [
       'salesforce_admin_list_validation_rules, salesforce_admin_get_picklist, ' +
       'salesforce_admin_get_record_type, salesforce_admin_get_layout, ' +
       'salesforce_admin_list_report_types, salesforce_admin_list_report_folders, ' +
-      'salesforce_admin_get_report, salesforce_admin_list_change_requests — objects, fields, picklists and their value sets, ' +
+      'salesforce_admin_get_report, salesforce_admin_list_change_requests, salesforce_admin_get_change_request — objects, fields, picklists and their value sets, ' +
       'record types, layouts, validation rules, where a field is used, report types and their ' +
       'columns, report folders and how a report is built, as the person can see them in Setup.',
     userHint:
@@ -70,9 +72,10 @@ export const SALESFORCE_ADMIN_SCOPE_OPTIONS: ScopeOption[] = [
     hint:
       'salesforce_admin_propose_layout_changes, and placing new fields on layouts from ' +
       'salesforce_admin_propose_fields — a layout deploys whole, so the change request carries ' +
-      'the live layout with only the proposed moves merged in.',
+      'the live layout with only the proposed moves merged in (fields, sections, related ' +
+      'lists). Which profile sees a layout deploys as a Profile file holding only that assignment.',
     userHint:
-      'Propose changes to page layouts — fields added, removed, new sections — for you to review and apply.',
+      'Propose changes to page layouts — fields added, moved, removed or made required; sections and related lists; which profiles see a layout — for you to review and apply.',
     group: 'build',
     defaultChecked: true,
   },
@@ -82,11 +85,13 @@ export const SALESFORCE_ADMIN_SCOPE_OPTIONS: ScopeOption[] = [
     label: 'Propose permission sets',
     hint:
       'salesforce_admin_list_permission_sets, salesforce_admin_propose_permission_set — a new ' +
-      'permission set, or object, field and tab access added to an existing one (each access ' +
-      'row written on its own, so nothing else in the set changes), and which profiles may use a ' +
-      'record type. Assigning sets to people is the separate user access option.',
+      'permission set, or object, field and tab access added to an existing one or to a profile ' +
+      '(each access row written on its own, so nothing else in it changes), reading what a ' +
+      'profile grants, object, field and tab access taken away from one where the proposal ' +
+      'names it, and which profiles may use a record type. ' +
+      'Assigning sets to people is the separate user access option.',
     userHint:
-      'Propose new permission sets, or more access in existing ones, for you to review and apply.',
+      'Propose new permission sets, more access in existing ones or in profiles, or access taken away from one, for you to review and apply.',
     group: 'access',
     defaultChecked: true,
   },
@@ -99,6 +104,21 @@ export const SALESFORCE_ADMIN_SCOPE_OPTIONS: ScopeOption[] = [
       'removing them. Off by default: it changes what people can do in the org.',
     userHint:
       'Propose giving people permission sets, or taking them away. Off unless you choose it.',
+    group: 'access',
+    defaultChecked: false,
+  },
+  {
+    id: 'sfa-security',
+    scopes: ['sfa-security'],
+    label: 'Propose system permissions and login restrictions',
+    hint:
+      'salesforce_admin_propose_system_permissions, salesforce_admin_propose_profile_login, ' +
+      'salesforce_admin_propose_profile — system permissions (Modify All Data, Manage Users…) ' +
+      'turned on or off in a permission set or profile, a profile’s login hours and login IP ' +
+      'ranges, and new profiles. Off by default: these decide who can administer the org and ' +
+      'who can sign in at all.',
+    userHint:
+      'Propose system permissions, a profile’s login hours and IP ranges, and new profiles. Off unless you choose it.',
     group: 'access',
     defaultChecked: false,
   },

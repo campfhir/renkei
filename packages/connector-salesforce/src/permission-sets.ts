@@ -125,3 +125,29 @@ export function permissionSetFile(spec: NewPermissionSetSpec): string {
     tabSettings: spec.tabs.map((tab) => ({ tab, visibility: 'Visible' })),
   });
 }
+
+/**
+ * The rights left once some are taken away. A right goes with what it
+ * stands on, the reverse of impliedRights: nothing without read, no delete
+ * without edit, no modify all without every other right.
+ */
+export function withoutRights(
+  now: ObjectRights,
+  taken: readonly (keyof ObjectRights)[]
+): ObjectRights {
+  const next = { ...now };
+  for (const right of taken) next[right] = false;
+  if (!next.read) {
+    return {
+      read: false,
+      create: false,
+      edit: false,
+      delete: false,
+      viewAll: false,
+      modifyAll: false,
+    };
+  }
+  if (!next.edit) next.delete = false;
+  if (!next.create || !next.edit || !next.delete || !next.viewAll) next.modifyAll = false;
+  return next;
+}

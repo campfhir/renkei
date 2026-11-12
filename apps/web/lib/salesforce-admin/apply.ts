@@ -37,6 +37,7 @@ import {
   type SalesforceCallContext,
 } from '@/lib/mcp-tools/salesforce/client';
 import { orgCall } from '@/lib/mcp-tools/salesforce/org-choice';
+import { invalidateOrgDescribes } from '@/lib/mcp-tools/salesforce/schema';
 import {
   finishChangeRequest,
   recordDeployStarted,
@@ -261,6 +262,28 @@ async function runStep(
         `SELECT Id FROM FieldPermissions WHERE ParentId = ${parent} AND Field = ${soqlString(field)} LIMIT 1`
       );
       if (id && typeof id === 'object') return failed(id.error);
+      if (step.remove === 'all') {
+        // No row is no access; Salesforce keeps no row with neither right.
+        if (!id) return done('It had no access to it.');
+        const removed = await sfRequest(
+          context,
+          access,
+          'DELETE',
+          `/sobjects/FieldPermissions/${encodeURIComponent(id)}`
+        );
+        return removed.ok ? done() : failed(removed.error);
+      }
+      if (step.remove === 'edit') {
+        if (!id) return done('It had no access to it.');
+        const lowered = await sfRequest(
+          context,
+          access,
+          'PATCH',
+          `/sobjects/FieldPermissions/${encodeURIComponent(id)}`,
+          { PermissionsRead: true, PermissionsEdit: false }
+        );
+        return lowered.ok ? done() : failed(lowered.error);
+      }
       return upsert(
         'FieldPermissions',
         id,
@@ -275,6 +298,19 @@ async function runStep(
         `SELECT Id FROM ObjectPermissions WHERE ParentId = ${parent} AND SobjectType = ${soqlString(step.object)} LIMIT 1`
       );
       if (id && typeof id === 'object') return failed(id.error);
+      if (step.remove) {
+        if (!id) return done('It had no access to them.');
+        // No right left is no row: Salesforce keeps none without read.
+        if (!step.read) {
+          const removed = await sfRequest(
+            context,
+            access,
+            'DELETE',
+            `/sobjects/ObjectPermissions/${encodeURIComponent(id)}`
+          );
+          return removed.ok ? done() : failed(removed.error);
+        }
+      }
       return upsert(
         'ObjectPermissions',
         id,
@@ -296,6 +332,16 @@ async function runStep(
         `SELECT Id FROM PermissionSetTabSetting WHERE ParentId = ${parent} AND Name = ${soqlString(step.tab)} LIMIT 1`
       );
       if (id && typeof id === 'object') return failed(id.error);
+      if (step.remove) {
+        if (!id) return done('It did not show the tab.');
+        const removed = await sfRequest(
+          context,
+          access,
+          'DELETE',
+          `/sobjects/PermissionSetTabSetting/${encodeURIComponent(id)}`
+        );
+        return removed.ok ? done() : failed(removed.error);
+      }
       // A tab setting is created, never updated (Visibility takes no update).
       if (id) return done('It already shows the tab.');
       const created = await sfRequest(
@@ -310,6 +356,62 @@ async function runStep(
         }
       );
       return created.ok ? done() : failed(created.error);
+    }
+    case 'app-visibility': {
+      const id = await existingRow(
+        context,
+        access,
+        `SELECT Id FROM SetupEntityAccess WHERE ParentId = ${parent} AND SetupEntityId = ${soqlString(step.appId)} LIMIT 1`
+      );
+      if (id && typeof id === 'object') return failed(id.error);
+      if (step.remove) {
+        if (!id) return done('It could not open it.');
+        const removed = await sfRequest(
+          context,
+          access,
+          'DELETE',
+          `/sobjects/SetupEntityAccess/${encodeURIComponent(id)}`
+        );
+        return removed.ok ? done() : failed(removed.error);
+      }
+      if (id) return done('It could already open it.');
+      const created = await sfRequest(context, access, 'POST', '/sobjects/SetupEntityAccess', {
+        ParentId: step.permissionSetId,
+        SetupEntityId: step.appId,
+      });
+      return created.ok ? done() : failed(created.error);
+    }
+    case 'permission-set-details': {
+      const written = await sfRequest(
+        context,
+        access,
+        'PATCH',
+        `/sobjects/PermissionSet/${encodeURIComponent(step.permissionSetId)}`,
+        {
+          ...(step.label !== undefined ? { Label: step.label } : {}),
+          ...(step.description !== undefined ? { Description: step.description } : {}),
+        }
+      );
+      return written.ok ? done() : failed(written.error);
+    }
+    case 'system-permission': {
+      const written = await sfRequest(
+        context,
+        access,
+        'PATCH',
+        `/sobjects/${step.target}/${encodeURIComponent(step.targetId)}`,
+        { [step.permission]: step.enabled }
+      );
+      return written.ok ? done() : failed(written.error);
+    }
+    case 'permission-set-delete': {
+      const removed = await sfRequest(
+        context,
+        access,
+        'DELETE',
+        `/sobjects/PermissionSet/${encodeURIComponent(step.permissionSetId)}`
+      );
+      return removed.ok ? done() : failed(removed.error);
     }
     case 'assign':
     case 'unassign': {
@@ -354,7 +456,7 @@ async function runDataSteps(
 ): Promise<OperationResult[]> {
   const results: OperationResult[] = [];
   for (const [index, step] of steps.entries()) {
-    await onStep?.(`Granting access (${index + 1} of ${steps.length}): ${stepLabel(step)}`);
+    await onStep?.(`Changing access (${index + 1} of ${steps.length}): ${stepLabel(step)}`);
     results.push(await runStep(context, access, step));
   }
   return results;
@@ -393,6 +495,9 @@ async function finish(
       ? 'partial'
       : 'applied';
   const results = { ...base, deployId: outcome.id, operations };
+  // The org's fields, and who can see them, just moved: the next describe
+  // anyone's tool asks for is Salesforce's, not a ten-minute-old copy.
+  if (outcome.success) invalidateOrgDescribes(access.orgId);
   await finishChangeRequest(change.id, { status, results, appliedBy });
   return { ...results, status };
 }
@@ -446,6 +551,8 @@ export async function applyChangeRequest(
     const failures = steps.filter((step) => step.outcome === 'failed').length;
     const status = failures === 0 ? 'applied' : failures === steps.length ? 'failed' : 'partial';
     const results = { operations: [checked, ...steps] };
+    // Access granted or taken changes which fields a describe shows.
+    invalidateOrgDescribes(access.orgId);
     await finishChangeRequest(change.id, { status, results, appliedBy });
     return { status, results };
   }
