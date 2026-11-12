@@ -322,7 +322,8 @@ export function registerAdminPermissionTools(
     {
       title: 'Salesforce Admin · Read — Permission sets',
       description:
-        'The org’s permission sets with how many people have each, or its profiles (profiles: ' +
+        'The org’s permission sets (not permission set groups: those are ' +
+        'salesforce_admin_list_permission_set_groups) with how many people have each, or its profiles (profiles: ' +
         'true); with `permissionSet` or `profile`, what that one grants — object access, field ' +
         'access (optionally on one object), tabs, apps — and who has it. Read this before proposing ' +
         'access, taking any away, or assignments.',
@@ -409,29 +410,7 @@ export function registerAdminPermissionTools(
           counts.ok
             ? Number(counts.records.find((row) => str(row.PermissionSetId) === id)?.n ?? 0)
             : null;
-        // Groups read like sets by name, and are not sets: list them apart.
-        const groups = await sfQuery(
-          context,
-          access,
-          `SELECT DeveloperName, MasterLabel FROM PermissionSetGroup${
-            search
-              ? ` WHERE DeveloperName LIKE ${soqlString(`%${search}%`)} OR MasterLabel LIKE ${soqlString(`%${search}%`)}`
-              : ''
-          } ORDER BY MasterLabel LIMIT 100`
-        );
-        const groupLines =
-          groups.ok && groups.records.length > 0
-            ? [
-                '',
-                'Permission set groups (each grants what the sets in it grant; name one as permissionSet to read it and its sets):',
-                ...groups.records.map(
-                  (row) => `• ${str(row.MasterLabel)} (${str(row.DeveloperName)})`
-                ),
-              ]
-            : [];
-        if (found.records.length === 0) {
-          return textResult(['No permission sets match.', ...groupLines].join('\n'));
-        }
+        if (found.records.length === 0) return textResult('No permission sets match.');
         return textResult(
           found.records
             .map((row) => {
@@ -446,7 +425,6 @@ export function registerAdminPermissionTools(
                 str(row.Description) ? `\n  ${str(row.Description)}` : '',
               ].join('');
             })
-            .concat(groupLines)
             .join('\n')
         );
       }
@@ -456,10 +434,8 @@ export function registerAdminPermissionTools(
         : null;
       if (typeof profile === 'string') return errText(profile);
       const set =
-        profile ??
-        (await resolvePermissionSet(context, access, args.permissionSet ?? '', { group: 'read' }));
+        profile ?? (await resolvePermissionSet(context, access, args.permissionSet ?? ''));
       if (typeof set === 'string') return errText(set);
-      const isGroup = 'group' in set ? set.group : undefined;
       const parent = soqlString(set.id);
       const object = args.object ? await resolveObject(context, access, args.object) : null;
       if (typeof object === 'string') return errText(object);
@@ -508,19 +484,8 @@ export function registerAdminPermissionTools(
               `SELECT DurableId, DeveloperName, Label FROM AppDefinition WHERE DurableId IN ${inList(appAccess.records.map((row) => str(row.SetupEntityId)))} ORDER BY Label`
             )
           : appAccess;
-      const lines = [
-        profile
-          ? `Profile ${profile.profile}`
-          : isGroup
-            ? `Permission set group ${set.name}`
-            : `Permission set ${set.name}`,
-      ];
-      if (isGroup) {
-        lines.push(
-          'This is a group, not a set: what follows is what it grants in total, worked out by Salesforce from the sets in it. It cannot be changed directly — change one of its sets, and everyone with the group gets it.',
-          `Its permission sets: ${isGroup.sets.map((member) => `${member.label} (${member.name})`).join(', ') || 'none'}`
-        );
-      } else if (!profile) {
+      const lines = [profile ? `Profile ${profile.profile}` : `Permission set ${set.name}`];
+      if (!profile) {
         const groups = await groupsOf(context, access, set.id);
         lines.push(
           typeof groups === 'string'

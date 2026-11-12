@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-12',
     entries: [
       {
+        kind: 'added',
+        title: 'Salesforce Admin has its own tools for permission set groups',
+        detail:
+          'Renkei can list permission set groups, show which permission sets a group is made of (yours, and the ones that come with a Salesforce licence), what the group grants in total and who has it, and propose adding a set to a group or taking one out.',
+      },
+      {
         kind: 'fixed',
         title: 'Salesforce Admin tells a permission set group from a permission set',
         detail:

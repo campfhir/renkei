@@ -237,6 +237,15 @@ export type DataStep =
       enabled: boolean;
     }
   | {
+      /** A permission set put into a permission set group, or taken out of it. */
+      kind: 'group-member';
+      permissionSetId: string;
+      permissionSetName: string;
+      groupId: string;
+      group: string;
+      remove?: true;
+    }
+  | {
       kind: 'assign';
       permissionSetId: string;
       permissionSetName: string;
@@ -329,6 +338,14 @@ function stepOf(raw: Record<string, unknown>): DataStep | null {
       };
     case 'permission-set-delete':
       return { kind: 'permission-set-delete', ...base };
+    case 'group-member':
+      return {
+        kind: 'group-member',
+        ...base,
+        groupId: str(raw.groupId),
+        group: str(raw.group),
+        ...(raw.remove === true ? { remove: true as const } : {}),
+      };
     case 'system-permission':
       // Only a Permissions… field is ever written from a stored step.
       return /^Permissions[A-Za-z0-9]+$/.test(str(raw.permission))
@@ -476,6 +493,10 @@ export function stepLabel(step: DataStep): string {
         .join(' ');
     case 'permission-set-delete':
       return `Delete the permission set ${step.permissionSetName}`;
+    case 'group-member':
+      return step.remove
+        ? `Take ${step.permissionSetName} out of the permission set group ${step.group}`
+        : `Put ${step.permissionSetName} in the permission set group ${step.group}`;
     case 'system-permission':
       return step.enabled
         ? `Give ${step.permissionSetName} the system permission “${step.label}”`
@@ -974,19 +995,29 @@ export async function brokenPreconditions(
 export interface PermissionSetGroupInfo {
   id: string;
   label: string;
-  /** The sets in it, by API name and label. */
-  sets: { name: string; label: string }[];
+  /**
+   * The sets in it, by API name and label. `editable` is false for the
+   * ones Salesforce ships with a licence (Type Standard) or a package
+   * owns: they are in the group, and nobody changes what they grant.
+   */
+  sets: { name: string; label: string; editable: boolean }[];
 }
 
 /** Why a permission set group cannot take a change, and what can: the sets in it. */
 export function groupRefusal(name: string, group: PermissionSetGroupInfo): string {
-  const sets = group.sets.map((set) => `${set.label} (${set.name})`);
+  const editable = group.sets.filter((set) => set.editable);
+  const fixed = group.sets.length - editable.length;
+  const named = editable.map((set) => `${set.label} (${set.name})`);
+  const others =
+    fixed > 0
+      ? ` The other ${fixed} in the group ${fixed === 1 ? 'comes' : 'come'} with a Salesforce licence or a package and cannot be changed.`
+      : '';
   return (
     `${name} is a permission set group${group.label && group.label !== name ? ` (“${group.label}”)` : ''}, not a permission set: ` +
     'Salesforce works out what a group grants from the permission sets in it, and refuses a change made to the group itself. ' +
-    (sets.length > 0
-      ? `Make the change in one of its sets, and everyone with the group gets it: ${sets.join(', ')}.`
-      : 'It has no permission sets in it yet: add one to the group in Setup, and make the change in that set.')
+    (named.length > 0
+      ? `Make the change in ${named.length === 1 ? 'its permission set' : 'one of its permission sets'} ${named.join(', ')}, and everyone with the group gets it.${others} salesforce_admin_list_permission_set_groups reads the group.`
+      : `None of the permission sets in it can be changed${fixed > 0 ? ' (they come with Salesforce licences or packages)' : ' (it has none yet)'}: create a permission set for this change and add it to the group in Setup.`)
   );
 }
 
@@ -997,16 +1028,14 @@ export function groupRefusal(name: string, group: PermissionSetGroupInfo): strin
  * group's name, holding what the group grants in total. Salesforce derives
  * it from the sets in the group and refuses any write to it ("its parent
  * is associated with a permission set group"). It reads as a permission
- * set, so it is told apart here: a caller that changes access gets the
- * refusal naming the group's sets; a caller that only reads asks for it
- * with `group: 'read'` and gets the group beside the row.
+ * set, so it is told apart here and refused, naming the group's own sets
+ * and the tools that read and change groups (resolvePermissionSetGroup).
  */
 export async function resolvePermissionSet(
   context: SalesforceCallContext,
   access: SalesforceAccess,
-  ref: string,
-  options: { group?: 'read' } = {}
-): Promise<{ id: string; name: string; group?: PermissionSetGroupInfo } | string> {
+  ref: string
+): Promise<{ id: string; name: string } | string> {
   const literal = soqlString(ref.trim());
   const found = await sfQuery(
     context,
@@ -1025,27 +1054,84 @@ export async function resolvePermissionSet(
   const groupId = str(row.PermissionSetGroupId);
   if (!groupId && str(row.Type) !== 'Group') return set;
 
-  const members = groupId
-    ? await sfQuery(
-        context,
-        access,
-        `SELECT PermissionSet.Name, PermissionSet.Label FROM PermissionSetGroupComponent WHERE PermissionSetGroupId = ${soqlString(groupId)} LIMIT 100`
-      )
-    : null;
   const group: PermissionSetGroupInfo = {
     id: groupId,
     label: str(row.Label),
-    sets: members?.ok
-      ? members.records
-          .map((member) => rec(member.PermissionSet))
-          .filter((member) => str(member.Name))
-          .map((member) => ({
-            name: str(member.Name),
-            label: str(member.Label) || str(member.Name),
-          }))
-      : [],
+    sets: groupId ? await groupSets(context, access, groupId) : [],
   };
-  return options.group === 'read' ? { ...set, group } : groupRefusal(set.name, group);
+  return groupRefusal(set.name, group);
+}
+
+/** The permission sets in a group, and whether each is the org's own to change. */
+async function groupSets(
+  context: SalesforceCallContext,
+  access: SalesforceAccess,
+  groupId: string
+): Promise<PermissionSetGroupInfo['sets']> {
+  const members = await sfQuery(
+    context,
+    access,
+    `SELECT PermissionSet.Name, PermissionSet.Label, PermissionSet.Type, PermissionSet.NamespacePrefix FROM PermissionSetGroupComponent WHERE PermissionSetGroupId = ${soqlString(groupId)} LIMIT 200`
+  );
+  if (!members.ok) return [];
+  return members.records
+    .map((member) => rec(member.PermissionSet))
+    .filter((member) => str(member.Name))
+    .map((member) => ({
+      name: str(member.Name),
+      label: str(member.Label) || str(member.Name),
+      // Regular is the org's own set; anything else is Salesforce's or a package's.
+      editable: (str(member.Type) || 'Regular') === 'Regular' && !str(member.NamespacePrefix),
+    }))
+    .sort((a, b) => Number(b.editable) - Number(a.editable) || a.label.localeCompare(b.label));
+}
+
+/** A permission set group by API name or label, with the sets in it and its own total row. */
+export async function resolvePermissionSetGroup(
+  context: SalesforceCallContext,
+  access: SalesforceAccess,
+  ref: string
+): Promise<
+  | (PermissionSetGroupInfo & {
+      /** The group's API name. */
+      name: string;
+      description: string;
+      /** Updated, Outdated, Updating or Failed: whether its total is current. */
+      status: string;
+      /** The permission set row holding what the group grants in total. */
+      totalSetId: string;
+    })
+  | string
+> {
+  const literal = soqlString(ref.trim());
+  const found = await sfQuery(
+    context,
+    access,
+    `SELECT Id, DeveloperName, MasterLabel, Description, Status FROM PermissionSetGroup WHERE DeveloperName = ${literal} OR MasterLabel = ${literal} LIMIT 3`
+  );
+  if (!found.ok) return found.error;
+  if (found.records.length > 1) {
+    return `"${ref}" names more than one permission set group: ${found.records.map((r) => str(r.DeveloperName)).join(', ')}. Use the API name.`;
+  }
+  const row = found.records[0];
+  if (!row) {
+    return `No permission set group "${ref}" in this org (salesforce_admin_list_permission_set_groups lists them; a permission set is read with salesforce_admin_list_permission_sets).`;
+  }
+  const id = str(row.Id);
+  const total = await sfQuery(
+    context,
+    access,
+    `SELECT Id FROM PermissionSet WHERE PermissionSetGroupId = ${soqlString(id)} LIMIT 1`
+  );
+  return {
+    id,
+    name: str(row.DeveloperName),
+    label: str(row.MasterLabel) || str(row.DeveloperName),
+    description: str(row.Description),
+    status: str(row.Status),
+    totalSetId: total.ok ? str(total.records[0]?.Id) : '',
+    sets: await groupSets(context, access, id),
+  };
 }
 
 /**

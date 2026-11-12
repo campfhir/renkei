@@ -404,6 +404,33 @@ async function runStep(
       );
       return written.ok ? done() : failed(written.error);
     }
+    case 'group-member': {
+      const id = await existingRow(
+        context,
+        access,
+        `SELECT Id FROM PermissionSetGroupComponent WHERE PermissionSetGroupId = ${soqlString(step.groupId)} AND PermissionSetId = ${parent} LIMIT 1`
+      );
+      if (id && typeof id === 'object') return failed(id.error);
+      if (step.remove) {
+        if (!id) return done('It was not in the group.');
+        const removed = await sfRequest(
+          context,
+          access,
+          'DELETE',
+          `/sobjects/PermissionSetGroupComponent/${encodeURIComponent(id)}`
+        );
+        return removed.ok ? done() : failed(removed.error);
+      }
+      if (id) return done('It was already in the group.');
+      const created = await sfRequest(
+        context,
+        access,
+        'POST',
+        '/sobjects/PermissionSetGroupComponent',
+        { PermissionSetGroupId: step.groupId, PermissionSetId: step.permissionSetId }
+      );
+      return created.ok ? done() : failed(created.error);
+    }
     case 'permission-set-delete': {
       const removed = await sfRequest(
         context,

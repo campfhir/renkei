@@ -125,6 +125,12 @@ global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       records: /'Shown__c'/.test(q) ? [{ Id: '0PT000000000001AAA' }] : [],
     });
   }
+  if (method === 'GET' && /FROM PermissionSetGroupComponent/.test(q)) {
+    return answer(200, { totalSize: 0, done: true, records: [] });
+  }
+  if (method === 'POST' && url.pathname === `${V}/sobjects/PermissionSetGroupComponent`) {
+    return answer(201, { id: '0QM000000000001AAA', success: true });
+  }
   if (method === 'GET' && /FROM SetupEntityAccess/.test(q)) {
     return answer(200, { totalSize: 0, done: true, records: [] });
   }
@@ -670,6 +676,51 @@ describe('applyChangeRequest', () => {
         dataSteps: [{ ...step, permission: 'IsActive' }],
       })
     ).toBeNull();
+  });
+
+  it('puts a permission set in a group, and leaves alone one it is asked to take out and is not in', async () => {
+    const member = {
+      kind: 'group-member',
+      permissionSetId: '0PS000000000001AAA',
+      permissionSetName: 'Program_Staff',
+      groupId: '0PG000000000001AAA',
+      group: 'PACE_Staff',
+    };
+    const grouping = {
+      ...change(),
+      kind: 'permission_set',
+      validation: {
+        deployId: '',
+        done: true,
+        success: true,
+        status: 'Checked',
+        failures: [],
+        checkedAt: '',
+      },
+      payload: {
+        files: {},
+        members: [],
+        components: [],
+        preconditions: [],
+        dataSteps: [member, { ...member, remove: true }],
+      },
+    };
+    const outcome = await applyChangeRequest(context, access, grouping, 'ada');
+    expect(outcome.status).toBe('applied');
+    expect(outcome.results.operations.slice(1)).toEqual([
+      { label: 'Put Program_Staff in the permission set group PACE_Staff', outcome: 'done' },
+      {
+        label: 'Take Program_Staff out of the permission set group PACE_Staff',
+        outcome: 'done',
+        detail: 'It was not in the group.',
+      },
+    ]);
+    const writes = requests.filter((r) => r.method !== 'GET');
+    expect(writes).toHaveLength(1);
+    expect(JSON.parse(String(writes[0].body))).toEqual({
+      PermissionSetGroupId: '0PG000000000001AAA',
+      PermissionSetId: '0PS000000000001AAA',
+    });
   });
 
   it('leaves a deploy still running as applying, and a later look finishes it', async () => {
