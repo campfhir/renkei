@@ -354,6 +354,82 @@ describe('mergeFieldChanges', () => {
   });
 });
 
+describe('mergeFieldChanges on a formula field', () => {
+  const reached = {
+    type: 'Percent',
+    label: 'Reached Initial Call',
+    formula: 'IF(ISBLANK(Initial_Call__c), 0, 100)',
+    formulaTreatBlanksAs: 'BlankAsZero',
+    precision: 18,
+    scale: 0,
+  };
+
+  it('changes the formula and lists it old → new', () => {
+    const merged = mergeFieldChanges(reached, { formula: 'IF(ISBLANK(Initial_Call__c), 0, 1)' });
+    expect(merged).toEqual({
+      ok: true,
+      metadata: { ...reached, formula: 'IF(ISBLANK(Initial_Call__c), 0, 1)' },
+      rows: [
+        {
+          label: 'Formula',
+          value: 'IF(ISBLANK(Initial_Call__c), 0, 1)',
+          from: 'IF(ISBLANK(Initial_Call__c), 0, 100)',
+        },
+      ],
+    });
+    const xml = existingFieldXml('Reached__c', merged.ok ? merged.metadata : {});
+    expect(xml).toContain('<formula>IF(ISBLANK(Initial_Call__c), 0, 1)</formula>');
+  });
+
+  it('changes what it returns and its digits, which loses nothing', () => {
+    const merged = mergeFieldChanges(reached, {
+      type: 'Number',
+      scale: 2,
+      blanksAs: 'BlankAsBlank',
+    });
+    expect(merged).toMatchObject({
+      ok: true,
+      metadata: { type: 'Number', precision: 18, scale: 2, formulaTreatBlanksAs: 'BlankAsBlank' },
+    });
+    const text = mergeFieldChanges(reached, { type: 'Text' });
+    expect(text.ok && text.metadata).toEqual({
+      type: 'Text',
+      label: 'Reached Initial Call',
+      formula: 'IF(ISBLANK(Initial_Call__c), 0, 100)',
+      formulaTreatBlanksAs: 'BlankAsZero',
+    });
+    expect(mergeFieldChanges({ ...reached, scale: 2 }, { scale: 0 })).toMatchObject({
+      ok: true,
+      metadata: { scale: 0 },
+    });
+  });
+
+  it('refuses a formula on a stored field, an empty or too long formula, and a default', () => {
+    const date = { type: 'Date', label: 'Visit Date' };
+    expect(mergeFieldChanges(date, { formula: 'TODAY()' })).toMatchObject({
+      ok: false,
+      errors: [expect.stringContaining('not a formula field')],
+    });
+    expect(mergeFieldChanges(date, { blanksAs: 'BlankAsZero' })).toMatchObject({ ok: false });
+    expect(mergeFieldChanges(reached, { formula: '  ' })).toEqual({
+      ok: false,
+      errors: ['A formula field needs its formula.'],
+    });
+    expect(mergeFieldChanges(reached, { formula: 'x'.repeat(3901) })).toMatchObject({
+      ok: false,
+    });
+    expect(mergeFieldChanges(reached, { defaultValue: '1' })).toEqual({
+      ok: false,
+      errors: ['A formula field is calculated: it has no default.'],
+    });
+    expect(mergeFieldChanges(reached, { type: 'Picklist' })).toMatchObject({
+      ok: false,
+      errors: [expect.stringContaining('A formula field returns one of')],
+    });
+    expect(mergeFieldChanges(reached, { required: true })).toMatchObject({ ok: false });
+  });
+});
+
 describe('mergePicklistChanges', () => {
   const picklist = {
     type: 'Picklist',
