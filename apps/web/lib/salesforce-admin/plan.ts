@@ -970,26 +970,82 @@ export async function brokenPreconditions(
   return broken;
 }
 
-/** A permission set by API name or label. */
+/** A permission set group, as the tools name one: its label and the sets it is made of. */
+export interface PermissionSetGroupInfo {
+  id: string;
+  label: string;
+  /** The sets in it, by API name and label. */
+  sets: { name: string; label: string }[];
+}
+
+/** Why a permission set group cannot take a change, and what can: the sets in it. */
+export function groupRefusal(name: string, group: PermissionSetGroupInfo): string {
+  const sets = group.sets.map((set) => `${set.label} (${set.name})`);
+  return (
+    `${name} is a permission set group${group.label && group.label !== name ? ` (“${group.label}”)` : ''}, not a permission set: ` +
+    'Salesforce works out what a group grants from the permission sets in it, and refuses a change made to the group itself. ' +
+    (sets.length > 0
+      ? `Make the change in one of its sets, and everyone with the group gets it: ${sets.join(', ')}.`
+      : 'It has no permission sets in it yet: add one to the group in Setup, and make the change in that set.')
+  );
+}
+
+/**
+ * A permission set by API name or label.
+ *
+ * A permission set group has a permission set row of its own, under the
+ * group's name, holding what the group grants in total. Salesforce derives
+ * it from the sets in the group and refuses any write to it ("its parent
+ * is associated with a permission set group"). It reads as a permission
+ * set, so it is told apart here: a caller that changes access gets the
+ * refusal naming the group's sets; a caller that only reads asks for it
+ * with `group: 'read'` and gets the group beside the row.
+ */
 export async function resolvePermissionSet(
   context: SalesforceCallContext,
   access: SalesforceAccess,
-  ref: string
-): Promise<{ id: string; name: string } | string> {
+  ref: string,
+  options: { group?: 'read' } = {}
+): Promise<{ id: string; name: string; group?: PermissionSetGroupInfo } | string> {
   const literal = soqlString(ref.trim());
   const found = await sfQuery(
     context,
     access,
-    `SELECT Id, Name, Label FROM PermissionSet WHERE IsOwnedByProfile = false AND (Name = ${literal} OR Label = ${literal}) LIMIT 3`
+    `SELECT Id, Name, Label, Type, PermissionSetGroupId FROM PermissionSet WHERE IsOwnedByProfile = false AND (Name = ${literal} OR Label = ${literal}) LIMIT 3`
   );
   if (!found.ok) return found.error;
-  if (found.records.length === 1) {
-    return { id: str(found.records[0].Id), name: str(found.records[0].Name) };
-  }
   if (found.records.length > 1) {
     return `"${ref}" names more than one permission set: ${found.records.map((r) => str(r.Name)).join(', ')}. Use the API name.`;
   }
-  return `No permission set "${ref}" in this org (a profile is named as profile, not permissionSet).`;
+  const row = found.records[0];
+  if (!row) {
+    return `No permission set "${ref}" in this org (a profile is named as profile, not permissionSet).`;
+  }
+  const set = { id: str(row.Id), name: str(row.Name) };
+  const groupId = str(row.PermissionSetGroupId);
+  if (!groupId && str(row.Type) !== 'Group') return set;
+
+  const members = groupId
+    ? await sfQuery(
+        context,
+        access,
+        `SELECT PermissionSet.Name, PermissionSet.Label FROM PermissionSetGroupComponent WHERE PermissionSetGroupId = ${soqlString(groupId)} LIMIT 100`
+      )
+    : null;
+  const group: PermissionSetGroupInfo = {
+    id: groupId,
+    label: str(row.Label),
+    sets: members?.ok
+      ? members.records
+          .map((member) => rec(member.PermissionSet))
+          .filter((member) => str(member.Name))
+          .map((member) => ({
+            name: str(member.Name),
+            label: str(member.Label) || str(member.Name),
+          }))
+      : [],
+  };
+  return options.group === 'read' ? { ...set, group } : groupRefusal(set.name, group);
 }
 
 /**

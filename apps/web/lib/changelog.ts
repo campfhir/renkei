@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'fixed',
+        title: 'Salesforce Admin tells a permission set group from a permission set',
+        detail:
+          'Asking to change a permission set group by name is now refused up front, with the permission sets inside it listed so the change can go in one of them, instead of failing after approval. Groups are listed and can be read like sets. A permission set that is merely inside a group is changed like any other set again.',
+      },
+      {
+        kind: 'fixed',
         title: 'Salesforce Admin can change a permission set that is in a permission set group',
         detail:
           'Giving or taking away access in a set that belongs to a group no longer fails when it is applied: the set is deployed whole with only that change, and refused up front if Salesforce does not hand over everything the set grants. Reading a permission set now names the groups it is in.',

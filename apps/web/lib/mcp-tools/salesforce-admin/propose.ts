@@ -46,7 +46,6 @@ import {
   refusesChanges,
   replacesField,
 } from './shared';
-import { foldGroupedSteps } from './grouped-sets';
 import { planLayoutChange } from './layout-plan';
 
 /** A permission set, or a profile, to give access to what a proposal creates. */
@@ -231,13 +230,6 @@ export function registerAdminProposalTools(
         preconditions.push(part.precondition);
         layoutLines.push(...part.summary);
       }
-      // A set in a permission set group takes no access row: its access
-      // rides in this same deploy, as the set's whole definition.
-      const grouped = await foldGroupedSteps(context, access, steps);
-      if (typeof grouped === 'string') return errText(`Nothing was proposed: ${grouped}`);
-      Object.assign(built.files, grouped.files);
-      built.members.push(...grouped.members);
-      preconditions.push(...grouped.preconditions);
       built.files['package.xml'] = packageXml(built.members);
       const names = specs.map((spec) => spec.label);
       return proposeAndValidate(context, access, {
@@ -245,7 +237,7 @@ export function registerAdminProposalTools(
         title: `${describe.label}: add ${names.length === 1 ? `the field ${names[0]}` : `${names.length} fields (${names.join(', ')})`}`,
         reason: args.reason,
         replaces: args.replaces,
-        payload: { ...built, components, preconditions, dataSteps: grouped.steps },
+        payload: { ...built, components, preconditions, dataSteps: steps },
         summary: [
           ...specs.map(
             (spec) =>
@@ -259,7 +251,6 @@ export function registerAdminProposalTools(
             : [
                 'No permission set or profile is given access: nobody, you included, will see these fields until one is (salesforce_admin_propose_permission_set).',
               ]),
-          ...grouped.notes,
         ],
       });
     }

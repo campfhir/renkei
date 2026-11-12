@@ -57,7 +57,7 @@ import {
   readProfile,
   readWholeMetadata,
 } from '@/lib/salesforce-admin/whole-components';
-import { accessChangesOf, groupsOf, planWholeSetChange } from './grouped-sets';
+import { groupsOf, planWholeSetChange } from './grouped-sets';
 import { loginHoursWords, systemPermissions } from './security-tools';
 import { proposeAndValidate, reasonField, refusesChanges, replacesField } from './shared';
 
@@ -409,7 +409,29 @@ export function registerAdminPermissionTools(
           counts.ok
             ? Number(counts.records.find((row) => str(row.PermissionSetId) === id)?.n ?? 0)
             : null;
-        if (found.records.length === 0) return textResult('No permission sets match.');
+        // Groups read like sets by name, and are not sets: list them apart.
+        const groups = await sfQuery(
+          context,
+          access,
+          `SELECT DeveloperName, MasterLabel FROM PermissionSetGroup${
+            search
+              ? ` WHERE DeveloperName LIKE ${soqlString(`%${search}%`)} OR MasterLabel LIKE ${soqlString(`%${search}%`)}`
+              : ''
+          } ORDER BY MasterLabel LIMIT 100`
+        );
+        const groupLines =
+          groups.ok && groups.records.length > 0
+            ? [
+                '',
+                'Permission set groups (each grants what the sets in it grant; name one as permissionSet to read it and its sets):',
+                ...groups.records.map(
+                  (row) => `• ${str(row.MasterLabel)} (${str(row.DeveloperName)})`
+                ),
+              ]
+            : [];
+        if (found.records.length === 0) {
+          return textResult(['No permission sets match.', ...groupLines].join('\n'));
+        }
         return textResult(
           found.records
             .map((row) => {
@@ -424,6 +446,7 @@ export function registerAdminPermissionTools(
                 str(row.Description) ? `\n  ${str(row.Description)}` : '',
               ].join('');
             })
+            .concat(groupLines)
             .join('\n')
         );
       }
@@ -433,8 +456,10 @@ export function registerAdminPermissionTools(
         : null;
       if (typeof profile === 'string') return errText(profile);
       const set =
-        profile ?? (await resolvePermissionSet(context, access, args.permissionSet ?? ''));
+        profile ??
+        (await resolvePermissionSet(context, access, args.permissionSet ?? '', { group: 'read' }));
       if (typeof set === 'string') return errText(set);
+      const isGroup = 'group' in set ? set.group : undefined;
       const parent = soqlString(set.id);
       const object = args.object ? await resolveObject(context, access, args.object) : null;
       if (typeof object === 'string') return errText(object);
@@ -483,8 +508,19 @@ export function registerAdminPermissionTools(
               `SELECT DurableId, DeveloperName, Label FROM AppDefinition WHERE DurableId IN ${inList(appAccess.records.map((row) => str(row.SetupEntityId)))} ORDER BY Label`
             )
           : appAccess;
-      const lines = [profile ? `Profile ${profile.profile}` : `Permission set ${set.name}`];
-      if (!profile) {
+      const lines = [
+        profile
+          ? `Profile ${profile.profile}`
+          : isGroup
+            ? `Permission set group ${set.name}`
+            : `Permission set ${set.name}`,
+      ];
+      if (isGroup) {
+        lines.push(
+          'This is a group, not a set: what follows is what it grants in total, worked out by Salesforce from the sets in it. It cannot be changed directly — change one of its sets, and everyone with the group gets it.',
+          `Its permission sets: ${isGroup.sets.map((member) => `${member.label} (${member.name})`).join(', ') || 'none'}`
+        );
+      } else if (!profile) {
         const groups = await groupsOf(context, access, set.id);
         lines.push(
           typeof groups === 'string'
@@ -1075,9 +1111,8 @@ export function registerAdminPermissionTools(
         rows.push({ label: `${app.name} app`, value: 'may not', from: 'may open' });
       }
 
-      // Salesforce takes no access row for a set in a permission set
-      // group, and record types have no row at all: either way the set
-      // deploys whole, as read, with only these changes — and applying is
+      // Record types have no row of their own to write: the set deploys
+      // whole, as read, with the record types added — and applying is
       // refused if the set moved since (grouped-sets.ts).
       const files: Record<string, string> = {};
       const members: { type: string; member: string }[] = [];
@@ -1114,30 +1149,19 @@ export function registerAdminPermissionTools(
       const takes = (step: DataStep) => 'remove' in step && Boolean(step.remove);
       const taking = steps.some(takes);
       const giving = steps.some((step) => !takes(step)) || recordTypes.length > 0;
-      const whole = groups.length > 0 && steps.length > 0;
       const notes: string[] = [];
-      if (whole || recordTypes.length > 0) {
-        const folded = whole ? accessChangesOf(steps) : { changes: {}, left: steps };
-        if (whole && folded.left.length > 0) {
-          return errText(
-            `Nothing was proposed: ${set.name} is in the permission set group ${groups.join(', ')}, and Salesforce does not let its apps be changed from here. Change them in Setup, or propose the rest without apps.`
-          );
-        }
-        const part = await planWholeSetChange(context, access, set, {
-          ...folded.changes,
-          recordTypes,
-        });
+      if (recordTypes.length > 0) {
+        const part = await planWholeSetChange(context, access, set, { recordTypes });
         if (typeof part === 'string') return errText(`Nothing was proposed: ${part}`);
         files[part.path] = part.content;
         members.push(part.member);
         files['package.xml'] = packageXml(members);
         preconditions.push(part.precondition);
-        if (whole) {
-          steps.length = 0;
-          notes.push(
-            `${set.name} is in the permission set group ${groups.join(', ')}, where Salesforce takes no single access change: the set deploys whole, as it is now, with only this changed. Everyone in the group gets the change.`
-          );
-        }
+      }
+      if (groups.length > 0) {
+        notes.push(
+          `${set.name} is in the permission set group ${groups.join(', ')}: everyone with the group gets this change.`
+        );
       }
 
       if (steps.length + members.length === 0) {
