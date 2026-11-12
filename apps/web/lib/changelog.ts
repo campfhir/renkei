@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'fixed',
+        title: 'Salesforce Admin access changes wait out a permission set group update',
+        detail:
+          "When Salesforce refuses an access change because the permission set's group is still recalculating, the change now waits and tries again for up to about four minutes instead of failing, so granting many fields to a set in a group goes through in one approval.",
+      },
+      {
+        kind: 'fixed',
         title: 'Notification toasts are easier to tap on a phone',
         detail:
           'Dismiss is now a larger target that sits above the card, the rest of the card opens the notification, and dismissing or opening a toast marks it read.',

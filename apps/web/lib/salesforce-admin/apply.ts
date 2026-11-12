@@ -474,17 +474,61 @@ async function runStep(
   }
 }
 
-/** Every data step in order; one failing does not stop the rest (each is its own row). */
+export type Pause = (ms: number) => Promise<void>;
+
+const realPause: Pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * The waits before each new try of a write refused because a permission
+ * set group is recalculating: about four minutes in all. Every write to a
+ * set in a group starts the group recalculating, and Salesforce refuses
+ * the next write to that set until it finishes ("The NEMS_PACE_User
+ * permission set group is updating…"), so a run of grants to one set hits
+ * it partway through. Each wait is well inside the job's heartbeat
+ * (JOB_STALE_MS), which the step line written before it renews.
+ */
+export const GROUP_UPDATING_WAITS_MS = [
+  2_000, 4_000, 8_000, 15_000, 30_000, 30_000, 30_000, 30_000, 30_000, 30_000, 30_000,
+];
+
+/** Salesforce refusing a write to a permission set while a group it is in recalculates. */
+export function isGroupUpdating(detail: string | undefined): boolean {
+  return /permission set group is updating/i.test(detail ?? '');
+}
+
+/**
+ * Every data step in order; one failing does not stop the rest (each is its
+ * own row). A step refused only because a permission set group is
+ * recalculating is tried again once it has had time to finish; each try
+ * reads the row afresh, so one that landed is updated, not added twice.
+ */
 async function runDataSteps(
   context: SalesforceCallContext,
   access: SalesforceAccess,
   steps: readonly DataStep[],
-  onStep?: StepReporter
+  onStep?: StepReporter,
+  pause: Pause = realPause
 ): Promise<OperationResult[]> {
   const results: OperationResult[] = [];
   for (const [index, step] of steps.entries()) {
-    await onStep?.(`Changing access (${index + 1} of ${steps.length}): ${stepLabel(step)}`);
-    results.push(await runStep(context, access, step));
+    const doing = `Changing access (${index + 1} of ${steps.length}): ${stepLabel(step)}`;
+    await onStep?.(doing);
+    let result = await runStep(context, access, step);
+    for (const [attempt, waitMs] of GROUP_UPDATING_WAITS_MS.entries()) {
+      if (result.outcome !== 'failed' || !isGroupUpdating(result.detail)) break;
+      await onStep?.(
+        `${doing} — waiting for the permission set group to finish updating (try ${attempt + 2} of ${GROUP_UPDATING_WAITS_MS.length + 1})`
+      );
+      await pause(waitMs);
+      result = await runStep(context, access, step);
+    }
+    if (result.outcome === 'failed' && isGroupUpdating(result.detail)) {
+      result = {
+        ...result,
+        detail: `${result.detail}\nThe group was still updating after ${GROUP_UPDATING_WAITS_MS.length + 1} tries over about four minutes.`,
+      };
+    }
+    results.push(result);
   }
   return results;
 }
@@ -497,7 +541,8 @@ async function finish(
   outcome: DeployOutcome,
   base: ApplyResults,
   appliedBy: string,
-  onStep?: StepReporter
+  onStep?: StepReporter,
+  pause?: Pause
 ): Promise<ApplyResults & { status: 'applied' | 'partial' | 'failed' }> {
   const payload = readMetadataPayload(change.payload);
   const deployLine: OperationResult = outcome.success
@@ -513,7 +558,7 @@ async function finish(
       };
   const grants =
     outcome.success && payload
-      ? await runDataSteps(context, access, payload.dataSteps, onStep)
+      ? await runDataSteps(context, access, payload.dataSteps, onStep, pause)
       : [];
   const operations = [...base.operations, deployLine, ...grants];
   const status = !outcome.success
@@ -536,7 +581,8 @@ export async function applyChangeRequest(
   change: ChangeRequest,
   appliedBy: string,
   waitMs = APPLY_WAIT_MS,
-  onStep?: StepReporter
+  onStep?: StepReporter,
+  pause?: Pause
 ): Promise<{ status: ChangeRequest['status']; results: ApplyResults }> {
   await onStep?.('Checking the org has not changed since this was proposed');
   const payload = readMetadataPayload(change.payload);
@@ -574,7 +620,7 @@ export async function applyChangeRequest(
 
   if (!deploys(payload)) {
     // Data only: nothing to deploy, the steps are the change.
-    const steps = await runDataSteps(context, access, payload.dataSteps, onStep);
+    const steps = await runDataSteps(context, access, payload.dataSteps, onStep, pause);
     const failures = steps.filter((step) => step.outcome === 'failed').length;
     const status = failures === 0 ? 'applied' : failures === steps.length ? 'failed' : 'partial';
     const results = { operations: [checked, ...steps] };
@@ -608,7 +654,16 @@ export async function applyChangeRequest(
     // Still running in Salesforce: a later look finishes it.
     return { status: 'applying', results: base };
   }
-  const done = await finish(context, access, change, waited.outcome, base, appliedBy, onStep);
+  const done = await finish(
+    context,
+    access,
+    change,
+    waited.outcome,
+    base,
+    appliedBy,
+    onStep,
+    pause
+  );
   return { status: done.status, results: done };
 }
 
@@ -622,7 +677,8 @@ export async function refreshApplying(
   access: SalesforceAccess,
   change: ChangeRequest,
   waitMs = 0,
-  onStep?: StepReporter
+  onStep?: StepReporter,
+  pause?: Pause
 ): Promise<boolean> {
   if (change.status !== 'applying' || !change.results?.deployId) return false;
   const status = await waitReporting(context, access, change.results.deployId, waitMs, onStep);
@@ -634,7 +690,8 @@ export async function refreshApplying(
     status.outcome,
     change.results,
     change.approvedBy ?? change.appliedBy ?? change.subject,
-    onStep
+    onStep,
+    pause
   );
   return true;
 }

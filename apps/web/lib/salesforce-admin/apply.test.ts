@@ -24,7 +24,7 @@ jest.mock('./change-requests', () => ({
 import { authedFetch } from '@renkei/delegate-client';
 import { EMPTY_POLICY } from '@renkei/connector-salesforce';
 import type { SalesforceAccess } from '@/lib/mcp-tools/salesforce/client';
-import { applyChangeRequest, refreshApplying } from './apply';
+import { applyChangeRequest, GROUP_UPDATING_WAITS_MS, refreshApplying } from './apply';
 import type { ChangeRequest } from './change-requests';
 import { applyScopesFor, readMetadataPayload, type MetadataPayload } from './plan';
 
@@ -44,6 +44,8 @@ let quickRefusal: { status: number; errorCode: string; message: string };
 let deployDone: boolean;
 let deploySucceeds: boolean;
 let grantFails: boolean;
+/** How many more grants Salesforce refuses because the set's permission set group is recalculating. */
+let groupBusyFor: number;
 let existingAccess: boolean;
 let requests: { method: string; path: string; body: unknown }[];
 
@@ -186,6 +188,16 @@ global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     return answer(200, result(url.pathname.split('/').pop() ?? ''));
   }
   if (method === 'POST' && url.pathname === `${V}/sobjects/FieldPermissions`) {
+    if (groupBusyFor > 0) {
+      groupBusyFor -= 1;
+      return answer(400, [
+        {
+          errorCode: 'FIELD_INTEGRITY_EXCEPTION',
+          message:
+            'The Program_Staff_Group permission set group is updating. You can make edits to this permission set when the group update completes.',
+        },
+      ]);
+    }
     return grantFails
       ? answer(400, [{ errorCode: 'INVALID_FIELD', message: 'Field is required' }])
       : answer(201, { id: '01k000000000001AAA', success: true });
@@ -271,6 +283,7 @@ beforeEach(() => {
   deployDone = true;
   deploySucceeds = true;
   grantFails = false;
+  groupBusyFor = 0;
   existingAccess = false;
 });
 
@@ -385,6 +398,64 @@ describe('applyChangeRequest', () => {
     grantFails = true;
     const outcome = await applyChangeRequest(context, access, change(), 'ada');
     expect(outcome.status).toBe('partial');
+  });
+
+  it('waits out a permission set group recalculating and grants the field once it has', async () => {
+    groupBusyFor = 3;
+    const waited: number[] = [];
+    const steps: string[] = [];
+    const outcome = await applyChangeRequest(
+      context,
+      access,
+      change(),
+      'ada',
+      undefined,
+      (step) => {
+        steps.push(step);
+      },
+      async (ms) => {
+        waited.push(ms);
+      }
+    );
+    expect(outcome.status).toBe('applied');
+    expect(waited).toEqual(GROUP_UPDATING_WAITS_MS.slice(0, 3));
+    expect(
+      steps.some((step) => /waiting for the permission set group to finish updating/.test(step))
+    ).toBe(true);
+    expect(
+      requests.filter((r) => r.method === 'POST' && r.path.endsWith('/sobjects/FieldPermissions'))
+    ).toHaveLength(4);
+    expect(finished()?.results.operations.at(-1)).toEqual({
+      label: 'Give Program_Staff read and edit access to Site_Visit__c.Outcome__c',
+      outcome: 'done',
+    });
+  });
+
+  it('gives up on a grant when the group is still updating after every wait, and says so', async () => {
+    groupBusyFor = Infinity;
+    const outcome = await applyChangeRequest(
+      context,
+      access,
+      change(),
+      'ada',
+      undefined,
+      undefined,
+      async () => {}
+    );
+    expect(outcome.status).toBe('partial');
+    const last = finished()?.results.operations.at(-1);
+    expect(last?.outcome).toBe('failed');
+    expect(last?.detail).toMatch(/permission set group is updating/);
+    expect(last?.detail).toMatch(/still updating after 12 tries/);
+  });
+
+  it('does not wait and try again when a grant fails for any other reason', async () => {
+    grantFails = true;
+    const waited: number[] = [];
+    await applyChangeRequest(context, access, change(), 'ada', undefined, undefined, async (ms) => {
+      waited.push(ms);
+    });
+    expect(waited).toEqual([]);
   });
 
   it('updates the access a permission set already has instead of adding a second row', async () => {
