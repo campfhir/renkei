@@ -44,6 +44,7 @@ import { limitField } from '../salesforce/fields';
 import {
   ASSIGNMENTS_KIND,
   PERMISSION_SET_KIND,
+  readCustomField,
   resolvePermissionSet,
   resolveProfileAccess,
   type ComponentView,
@@ -171,12 +172,24 @@ async function checkAccess(
       const row = found.records.find(
         (r) => str(r.QualifiedApiName).toLowerCase() === field.toLowerCase()
       );
-      if (!row) {
+      // FieldDefinition answers by the person's own field-level access, so
+      // a custom field nobody has been given yet — the very field this is
+      // about to grant — is missing from it. Setup's own record of the
+      // field (the Tooling API) lists it whoever can see it.
+      const hidden =
+        !row && /__c$/i.test(field) ? await readCustomField(context, access, object, field) : null;
+      const live = hidden && typeof hidden === 'object' ? hidden : null;
+      if (!row && !live) {
         errors.push(`${object} has no field ${field}.`);
         continue;
       }
-      const name = str(row.QualifiedApiName);
-      if (row.IsNillable !== true && str(row.DataType) !== 'Checkbox') {
+      const name = row
+        ? str(row.QualifiedApiName)
+        : (live?.fullName.slice(live.fullName.indexOf('.') + 1) ?? field);
+      const required = row
+        ? row.IsNillable !== true && str(row.DataType) !== 'Checkbox'
+        : live?.metadata.required === true;
+      if (required) {
         errors.push(
           `${object}.${name} is required (or a name field), so everyone with the object sees it; it takes no field access.`
         );

@@ -34,6 +34,7 @@ import {
   entityKey,
   LAYOUT_KIND,
   listLayouts,
+  readCustomField,
   readLayout,
   toolingQuery,
   type ComponentView,
@@ -344,8 +345,28 @@ export function registerAdminLayoutTools(
       if (typeof describe === 'string') return errText(describe);
 
       // Fields named must exist; the layout keeps the org's own spelling.
+      // A custom field nobody has been given access to yet is missing from
+      // the person's describe, and is still a field to place: Setup's own
+      // record of it (the Tooling API) gives its spelling.
+      const hiddenFields = new Map<string, string>();
+      const placing = [
+        ...(args.add ?? []).map((a) => a.field),
+        ...(args.addSections ?? []).flatMap((section) =>
+          (section.fields ?? []).map((f) => f.field)
+        ),
+      ];
+      for (const field of placing) {
+        const key = field.trim().toLowerCase();
+        if (!/__c$/.test(key) || hiddenFields.has(key)) continue;
+        if (describe.fields.some((f) => f.name.toLowerCase() === key)) continue;
+        const live = await readCustomField(context, access, describe.name, field.trim());
+        if (live && typeof live === 'object') {
+          hiddenFields.set(key, live.fullName.slice(live.fullName.indexOf('.') + 1));
+        }
+      }
       const spelled = (field: string) =>
-        describe.fields.find((f) => f.name.toLowerCase() === field.toLowerCase())?.name;
+        describe.fields.find((f) => f.name.toLowerCase() === field.toLowerCase())?.name ??
+        hiddenFields.get(field.trim().toLowerCase());
       const unknown: string[] = [];
       const known = (field: string): string => {
         const name = spelled(field);
