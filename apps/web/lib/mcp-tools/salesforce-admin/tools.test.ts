@@ -44,7 +44,7 @@ import { authedFetch } from '@renkei/delegate-client';
 import { EMPTY_POLICY, type SalesforceOrg } from '@renkei/connector-salesforce';
 import type { MCPToolContext } from '../common';
 import type { SalesforceAuth } from '../salesforce/salesforce-auth';
-import { invalidateDescribe } from '../salesforce/schema';
+import { invalidateDescribe, invalidateOrgDescribes } from '../salesforce/schema';
 import { resetApiUsage } from '../salesforce/client';
 import { ALL_SALESFORCE_ADMIN_SCOPES } from '@/lib/salesforce-admin-scopes';
 import { registerSalesforceAdminTools } from './index';
@@ -145,6 +145,18 @@ let layoutMetadata: Record<string, unknown>;
 let fieldMetadata: Record<string, Record<string, unknown>>;
 let objectRows: Record<string, unknown>[];
 let assigned: string[];
+/** The field access the set or profile being changed holds now. */
+let fieldAccessRows: Record<string, unknown>[];
+/** Whether a profile sees the layout. */
+let layoutUsed: boolean;
+/** Whether the set being changed may open the Sales app. */
+let opensApp: boolean;
+/** The system permissions the set or profile being changed has on. */
+let systemOn: string[];
+/** The tabs it shows now. */
+let tabRows: Record<string, unknown>[];
+/** Fields the org gained after the describe was first read. */
+let deployedSince: Record<string, unknown>[];
 
 const ENTITY = '01I000000000001AAA';
 const HOME_VISIT = '012000000000001AAA';
@@ -192,6 +204,8 @@ const OPPORTUNITY = {
   recordTypeInfos: [],
 };
 const LAYOUT_ID = '00h000000000001AAA';
+const PROFILE_SET = '0PS000000000009AAA';
+const APP = '0H4000000000001AAA';
 
 const VISIT_NOTE = {
   name: 'Visit_Note__c',
@@ -391,6 +405,7 @@ function fakeOrg(method: string, path: string, query: string): Response {
   if (method === 'GET' && path === `${V}/sobjects/Site_Visit__c/describe`)
     return answer(200, {
       ...SITE_VISIT,
+      fields: [...SITE_VISIT.fields, ...deployedSince],
       childRelationships: [
         { relationshipName: 'Visit_Notes__r', childSObject: 'Visit_Note__c', field: 'Visit__c' },
       ],
@@ -492,15 +507,12 @@ function fakeOrg(method: string, path: string, query: string): Response {
   }
   if (method === 'GET' && path === `${V}/query` && /FROM FieldDefinition/.test(q)) {
     // Every field, including one the person's field-level access hides from the describe.
-    return answer(200, {
-      totalSize: 5,
-      done: true,
-      records: ['Id', 'Name', 'Stage__c', 'Visit_Date__c', 'Hidden_Score__c'].map((n) => ({
-        QualifiedApiName: n,
-        IsNillable: n.endsWith('__c'),
-        DataType: 'Text',
-      })),
-    });
+    // A query for one field answers with that field, or nothing.
+    const one = /AND QualifiedApiName = '([^']+)'/.exec(q)?.[1];
+    const records = ['Id', 'Name', 'Stage__c', 'Visit_Date__c', 'Hidden_Score__c']
+      .filter((n) => !one || n === one)
+      .map((n) => ({ QualifiedApiName: n, IsNillable: n.endsWith('__c'), DataType: 'Text' }));
+    return answer(200, { totalSize: records.length, done: true, records });
   }
   if (method === 'GET' && path === `${V}/query` && /FROM EntityDefinition/.test(q)) {
     const known = /'(Site_Visit__c|Contact)'/.exec(q);
@@ -537,9 +549,11 @@ function fakeOrg(method: string, path: string, query: string): Response {
   }
   if (method === 'GET' && path === `${V}/tooling/query` && /FROM ProfileLayout/.test(q)) {
     return answer(200, {
-      totalSize: 1,
+      totalSize: layoutUsed ? 1 : 0,
       done: true,
-      records: [{ LayoutId: LAYOUT_ID, Profile: { Name: 'Standard User' }, RecordType: null }],
+      records: layoutUsed
+        ? [{ LayoutId: LAYOUT_ID, Profile: { Name: 'Standard User' }, RecordType: null }]
+        : [],
     });
   }
   if (method === 'GET' && path === `${V}/tooling/query` && /FROM CustomField/.test(q)) {
@@ -556,12 +570,99 @@ function fakeOrg(method: string, path: string, query: string): Response {
   if (method === 'GET' && path === `${V}/query` && /FROM ObjectPermissions/.test(q)) {
     return answer(200, { totalSize: objectRows.length, done: true, records: objectRows });
   }
+  if (method === 'GET' && path === `${V}/query` && /FROM FieldPermissions/.test(q)) {
+    return answer(200, {
+      totalSize: fieldAccessRows.length,
+      done: true,
+      records: fieldAccessRows,
+    });
+  }
+  if (method === 'GET' && path === `${V}/query` && /FROM PermissionSetTabSetting/.test(q)) {
+    return answer(200, { totalSize: tabRows.length, done: true, records: tabRows });
+  }
+  if (method === 'GET' && path === `${V}/sobjects/PermissionSet/describe`) {
+    return answer(200, {
+      name: 'PermissionSet',
+      label: 'Permission Set',
+      fields: [
+        { name: 'Id', label: 'ID', type: 'id' },
+        { name: 'PermissionsViewSetup', label: 'View Setup and Configuration', type: 'boolean' },
+        { name: 'PermissionsManageUsers', label: 'Manage Users', type: 'boolean' },
+        { name: 'PermissionsModifyAllData', label: 'Modify All Data', type: 'boolean' },
+      ],
+    });
+  }
+  if (method === 'GET' && path === `${V}/query` && /FROM UserLicense/.test(q)) {
+    const known = /'Salesforce'/.test(q);
+    return answer(200, {
+      totalSize: known ? 1 : 0,
+      done: true,
+      records: known ? [{ Name: 'Salesforce' }] : [],
+    });
+  }
   if (
     method === 'GET' &&
     path === `${V}/query` &&
-    /FROM (FieldPermissions|PermissionSetTabSetting)/.test(q)
+    /FROM Profile WHERE Name = '/.test(q) &&
+    !/'Standard User'/.test(q)
   ) {
     return answer(200, { totalSize: 0, done: true, records: [] });
+  }
+  if (method === 'GET' && path === `${V}/query` && /FROM Profile( |$)/.test(q)) {
+    return answer(200, {
+      totalSize: 1,
+      done: true,
+      records: [
+        { Id: '00e000000000001AAA', Name: 'Standard User', UserLicense: { Name: 'Salesforce' } },
+      ],
+    });
+  }
+  if (method === 'GET' && path === `${V}/query` && /FROM User WHERE (ProfileId|IsActive)/.test(q)) {
+    const grouped = /GROUP BY ProfileId/.test(q);
+    return answer(200, {
+      totalSize: 1,
+      done: true,
+      records: grouped
+        ? [{ ProfileId: '00e000000000001AAA', n: 4 }]
+        : [{ Name: 'Grace Hopper', Username: 'grace@acme.org' }],
+    });
+  }
+  if (
+    method === 'GET' &&
+    path === `${V}/query` &&
+    /FROM PermissionSet WHERE IsOwnedByProfile = true/.test(q)
+  ) {
+    // A profile's own permission set, which its access hangs from.
+    const known = /Profile\.Name = 'Standard User'/.test(q);
+    return answer(200, {
+      totalSize: known ? 1 : 0,
+      done: true,
+      records: known
+        ? [{ Id: PROFILE_SET, ProfileId: '00e000000000001AAA', Profile: { Name: 'Standard User' } }]
+        : [],
+    });
+  }
+  if (
+    method === 'GET' &&
+    path === `${V}/query` &&
+    /COUNT\(Id\) n FROM PermissionSetAssignment WHERE PermissionSetId/.test(q)
+  ) {
+    return answer(200, { totalSize: 1, done: true, records: [{ n: assigned.length }] });
+  }
+  if (method === 'GET' && path === `${V}/query` && /FROM AppDefinition/.test(q)) {
+    const known = /'(Sales|0H4000000000001AAA)'/.test(q);
+    return answer(200, {
+      totalSize: known ? 1 : 0,
+      done: true,
+      records: known ? [{ DurableId: APP, DeveloperName: 'Sales', Label: 'Sales' }] : [],
+    });
+  }
+  if (method === 'GET' && path === `${V}/query` && /FROM SetupEntityAccess/.test(q)) {
+    return answer(200, {
+      totalSize: opensApp ? 1 : 0,
+      done: true,
+      records: opensApp ? [{ SetupEntityId: APP }] : [],
+    });
   }
   if (method === 'GET' && path === `${V}/query` && /FROM PermissionSetAssignment/.test(q)) {
     return answer(200, {
@@ -597,7 +698,15 @@ function fakeOrg(method: string, path: string, query: string): Response {
     return answer(200, {
       totalSize: 1,
       done: true,
-      records: [{ Id: '0PS000000000001AAA', Name: 'Program_Staff', Label: 'Program Staff' }],
+      records: [
+        {
+          Id: '0PS000000000001AAA',
+          Name: 'Program_Staff',
+          Label: 'Program Staff',
+          // The system permissions it has on, for a query that asks for them.
+          ...Object.fromEntries(systemOn.map((field) => [field, true])),
+        },
+      ],
     });
   }
   if (method === 'GET' && path === `${V}/tooling/query` && /FROM ValidationRule/.test(q)) {
@@ -623,9 +732,13 @@ function fakeOrg(method: string, path: string, query: string): Response {
       lastBody()
     )
       ? '<records xsi:type="Report"><fullName>Program_Reports/Pipeline</fullName><chart><chartType>HorizontalBar</chartType></chart><columns><field>OPPORTUNITY_NAME</field></columns><columns><aggregateTypes>Sum</aggregateTypes><field>AMOUNT</field></columns><filter><criteriaItems><column>STAGE_NAME</column><columnToColumn>false</columnToColumn><isUnlocked>true</isUnlocked><operator>notEqual</operator><value>Closed Lost</value></criteriaItems></filter><format>Tabular</format><name>Open Pipeline</name><reportType>Opportunity</reportType><scope>organization</scope><showDetails>true</showDetails><timeFrameFilter><dateColumn>CLOSE_DATE</dateColumn><interval>INTERVAL_CUSTOM</interval><startDate>2025-11-11</startDate></timeFrameFilter></records>'
-      : known
-        ? `<records xsi:type="ReportType"><fullName>Site_Visits</fullName><baseObject>Site_Visit__c</baseObject><category>other</category><deployed>true</deployed><description>Visits</description><label>Site Visits</label><sections><columns><checkedByDefault>true</checkedByDefault><field>Name</field><table>Site_Visit__c</table></columns><columns><checkedByDefault>false</checkedByDefault><displayNameOverride>Visit Stage</displayNameOverride><field>Stage__c</field><table>Site_Visit__c</table></columns><columns><checkedByDefault>false</checkedByDefault><field>Owner</field><table>Site_Visit__c</table></columns><masterLabel>Visits</masterLabel></sections><join><outerJoin>false</outerJoin><relationship>Visit_Notes__r</relationship></join><sections><columns><checkedByDefault>true</checkedByDefault><field>Body__c</field><table>Site_Visit__c.Visit_Notes__r</table></columns><masterLabel>Visit Notes</masterLabel></sections></records>`
-        : '<records xsi:nil="true"/>';
+      : /<type>Profile<\/type><fullNames>Standard<\/fullNames>/.test(lastBody())
+        ? '<records xsi:type="Profile"><fullName>Standard</fullName><custom>false</custom><loginHours><mondayEnd>1080</mondayEnd><mondayStart>480</mondayStart></loginHours><loginIpRanges><description>Office</description><endAddress>203.0.113.255</endAddress><startAddress>203.0.113.0</startAddress></loginIpRanges><objectPermissions><allowRead>true</allowRead><object>Site_Visit__c</object></objectPermissions><userLicense>Salesforce</userLicense></records>'
+        : /<type>PermissionSet<\/type><fullNames>Program_Staff<\/fullNames>/.test(lastBody())
+          ? '<records xsi:type="PermissionSet"><fullName>Program_Staff</fullName><hasActivationRequired>false</hasActivationRequired><label>Program Staff</label><objectPermissions><allowCreate>false</allowCreate><allowRead>true</allowRead><object>Site_Visit__c</object></objectPermissions><recordTypeVisibilities><recordType>Opportunity.Grant</recordType><visible>true</visible></recordTypeVisibilities><userPermissions><enabled>true</enabled><name>ViewSetup</name></userPermissions></records>'
+          : known
+            ? `<records xsi:type="ReportType"><fullName>Site_Visits</fullName><baseObject>Site_Visit__c</baseObject><category>other</category><deployed>true</deployed><description>Visits</description><label>Site Visits</label><sections><columns><checkedByDefault>true</checkedByDefault><field>Name</field><table>Site_Visit__c</table></columns><columns><checkedByDefault>false</checkedByDefault><displayNameOverride>Visit Stage</displayNameOverride><field>Stage__c</field><table>Site_Visit__c</table></columns><columns><checkedByDefault>false</checkedByDefault><field>Owner</field><table>Site_Visit__c</table></columns><masterLabel>Visits</masterLabel></sections><join><outerJoin>false</outerJoin><relationship>Visit_Notes__r</relationship></join><sections><columns><checkedByDefault>true</checkedByDefault><field>Body__c</field><table>Site_Visit__c.Visit_Notes__r</table></columns><masterLabel>Visit Notes</masterLabel></sections></records>`
+            : '<records xsi:nil="true"/>';
     return new Response(
       `<?xml version="1.0"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns="http://soap.sforce.com/2006/04/metadata" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><soapenv:Body><readMetadataResponse><result>${record}</result></readMetadataResponse></soapenv:Body></soapenv:Envelope>`,
       { status: 200, headers: { 'content-type': 'text/xml' } }
@@ -716,6 +829,12 @@ beforeEach(() => {
   existingRule = null;
   objectRows = [];
   assigned = [];
+  fieldAccessRows = [];
+  layoutUsed = true;
+  opensApp = false;
+  systemOn = [];
+  tabRows = [];
+  deployedSince = [];
   layoutMetadata = {
     layoutSections: [
       {
@@ -948,6 +1067,190 @@ describe('salesforce_admin_list_change_requests', () => {
   });
 });
 
+describe('salesforce_admin_get_change_request', () => {
+  const applied = {
+    id: '11111111-2222-4333-8444-555555555555',
+    title: 'Site Visit: add the field Years Enrolled',
+    kind: 'fields',
+    subject: 'subject-1',
+    connectorKey: 'uat',
+    instanceUrl: UAT,
+    reason: 'Ticket ENG-920',
+    status: 'applied',
+    createdAt: new Date('2026-11-11T15:44:00Z'),
+    approvedAt: new Date('2026-11-11T15:44:20Z'),
+    appliedAt: new Date('2026-11-11T15:44:40Z'),
+    expiresAt: new Date('2026-11-12T15:44:00Z'),
+    updatedAt: new Date('2026-11-11T15:44:40Z'),
+    step: null,
+    resolution: null,
+    validation: {
+      deployId: DEPLOY,
+      done: true,
+      success: true,
+      status: 'Succeeded',
+      failures: [],
+      checkedAt: '2026-11-11T15:44:05Z',
+    },
+    payload: {
+      files: { 'package.xml': '<Package/>' },
+      members: [{ type: 'CustomField', member: 'Site_Visit__c.Years_Enrolled__c' }],
+      components: [
+        {
+          type: 'CustomField',
+          name: 'Site_Visit__c.Years_Enrolled__c',
+          action: 'create',
+          rows: [
+            { label: 'Label', value: 'Years Enrolled' },
+            { label: 'Formula', value: 'FLOOR((TODAY() - Visit_Date__c) / 365.25)' },
+          ],
+        },
+      ],
+      preconditions: [],
+      dataSteps: [],
+    },
+    results: {
+      deployId: DEPLOY,
+      operations: [{ label: 'Deploy 1 component(s)', outcome: 'done', detail: `Deploy ${DEPLOY}` }],
+    },
+  };
+
+  it('says an approved change went in, still shows what it deployed, and lists each step', async () => {
+    store.getChangeRequestById.mockResolvedValue(applied);
+    const result = await call('salesforce_admin_get_change_request', {
+      id: `https://renkei.example/salesforce-admin/changes/${applied.id}`,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(store.getChangeRequestById).toHaveBeenCalledWith(applied.id);
+    expect(text(result)).toContain('Status: applied');
+    expect(text(result)).toContain('Applied: 2026-11-11T15:44:40.000Z');
+    expect(text(result)).toContain('New CustomField Site_Visit__c.Years_Enrolled__c');
+    expect(text(result)).toContain('Formula: FLOOR((TODAY() - Visit_Date__c) / 365.25)');
+    expect(text(result)).toContain('Deploy 1 component(s) — done');
+    expect(text(result)).toContain(`salesforce-admin/changes/${applied.id}`);
+  });
+
+  it('says a change nobody has approved is still waiting, and that nothing changed', async () => {
+    store.getChangeRequestById.mockResolvedValue({
+      ...applied,
+      status: 'pending',
+      approvedAt: null,
+      appliedAt: null,
+      results: null,
+      expiresAt: new Date(Date.now() + 3_600_000),
+    });
+    const result = await call('salesforce_admin_get_change_request', { id: applied.id });
+    expect(text(result)).toContain('Status: pending — waiting for an operator to approve it');
+    expect(text(result)).not.toContain('What happened');
+  });
+
+  it('reads someone else’s request as none, unless an operator asks', async () => {
+    store.getChangeRequestById.mockResolvedValue({ ...applied, subject: 'someone-else' });
+    const ordinary = await call('salesforce_admin_get_change_request', { id: applied.id }, [
+      'renkei-user',
+    ]);
+    expect(ordinary.isError).toBe(true);
+    expect(text(ordinary)).toContain('There is no change request');
+    const operator = await call('salesforce_admin_get_change_request', { id: applied.id }, [
+      'renkei-operator',
+    ]);
+    expect(text(operator)).toContain('Status: applied');
+  });
+});
+
+describe('a field the person’s field-level access hides', () => {
+  beforeEach(() => {
+    // Deployed, with no permission set given access: Setup has it, the
+    // describe and FieldDefinition do not show it to this person.
+    fieldMetadata.Years_Enrolled__c = {
+      label: 'Years Enrolled',
+      type: 'Number',
+      formula: 'FLOOR((TODAY() - Visit_Date__c) / 365.25)',
+    };
+  });
+
+  it('is found by salesforce_admin_get_field, with its formula, and said to be hidden', async () => {
+    const result = await call('salesforce_admin_get_field', {
+      object: 'Site_Visit__c',
+      field: 'Years_Enrolled__c',
+    });
+    expect(result.isError).toBeUndefined();
+    const field = JSON.parse(text(result));
+    expect(field.visibleToYou).toBe(false);
+    expect(field.formula).toBe('FLOOR((TODAY() - Visit_Date__c) / 365.25)');
+    expect(field.note).toContain('salesforce_admin_propose_permission_set');
+  });
+
+  it('is refused for a report type with the reason, not as a field that does not exist', async () => {
+    const result = await call('salesforce_admin_propose_report_type_changes', {
+      reportType: 'Site_Visits',
+      add: [{ fields: ['Years_Enrolled__c'] }],
+    });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain('Site_Visit__c.Years_Enrolled__c exists');
+    expect(text(result)).toContain('no field-level access');
+    expect(deploys()).toHaveLength(0);
+  });
+
+  it('counts as existing when a proposal checks the org has not changed', async () => {
+    const access = await stubAuth.resolve();
+    if (typeof access === 'string') throw new Error(access);
+    expect(
+      await brokenPreconditions({ subject: 'subject-1' }, access, [
+        { kind: 'field-absent', object: 'Site_Visit__c', field: 'Years_Enrolled__c' },
+      ])
+    ).toEqual([
+      'Site_Visit__c.Years_Enrolled__c exists now — someone created it since this was proposed.',
+    ]);
+  });
+});
+
+describe('a field that does not exist', () => {
+  it('is said so by salesforce_admin_get_field, pointing at the change request’s status', async () => {
+    const result = await call('salesforce_admin_get_field', {
+      object: 'Site_Visit__c',
+      field: 'Nowhere__c',
+    });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain('Site_Visit__c has no field Nowhere__c');
+    expect(text(result)).toContain('salesforce_admin_get_change_request');
+  });
+});
+
+describe('a field deployed since the describe was read', () => {
+  it('shows in the next describe once a deploy in that org says the schema moved', async () => {
+    await call('salesforce_admin_describe_object', { object: 'Site_Visit__c' });
+    deployedSince = [
+      { name: 'Years_Enrolled__c', label: 'Years Enrolled', type: 'double', custom: true },
+    ];
+    const stale = await call('salesforce_admin_describe_object', { object: 'Site_Visit__c' });
+    expect(text(stale)).not.toContain('Years_Enrolled__c');
+    invalidateOrgDescribes('another-org');
+    const access = await stubAuth.resolve();
+    if (typeof access === 'string') throw new Error(access);
+    invalidateOrgDescribes(access.orgId);
+    const fresh = await call('salesforce_admin_describe_object', { object: 'Site_Visit__c' });
+    expect(text(fresh)).toContain('Years_Enrolled__c');
+  });
+
+  it('is added to a report type: the describe is asked for again before a field is called missing', async () => {
+    // The describe is read, and cached, before the field exists.
+    await call('salesforce_admin_describe_object', { object: 'Site_Visit__c' });
+    deployedSince = [
+      { name: 'Years_Enrolled__c', label: 'Years Enrolled', type: 'double', custom: true },
+    ];
+    const result = await call('salesforce_admin_propose_report_type_changes', {
+      reportType: 'Site_Visits',
+      add: [{ fields: ['Years_Enrolled__c'] }],
+    });
+    expect(result.isError).toBeUndefined();
+    const { files } = await received();
+    expect(files['reportTypes/Site_Visits.reportType']).toContain(
+      '<field>Years_Enrolled__c</field>'
+    );
+  });
+});
+
 describe('salesforce_admin_propose_fields', () => {
   it('stores the exact package and has Salesforce validate it, changing nothing', async () => {
     const result = await call('salesforce_admin_propose_fields', {
@@ -1160,6 +1463,86 @@ describe('salesforce_admin_get_layout', () => {
   });
 });
 
+describe('salesforce_admin_get_layout, beyond the fields', () => {
+  it('marks a field required on the layout, and lists the related lists', async () => {
+    layoutMetadata.relatedLists = [{ fields: ['FULL_NAME'], relatedList: 'RelatedContactList' }];
+    const result = await call('salesforce_admin_get_layout', {
+      object: 'Site_Visit__c',
+      layout: 'Site Visit Layout',
+    });
+    expect(text(result)).toContain('Column 1: Name (required)');
+    expect(text(result)).toContain('• RelatedContactList — FULL_NAME');
+  });
+});
+
+describe('salesforce_admin_propose_layout', () => {
+  it('creates a layout as a copy of one the object has, refused at apply if the name is taken by then', async () => {
+    const result = await call('salesforce_admin_propose_layout', {
+      object: 'Site_Visit__c',
+      create: { name: 'Home Visit Layout', copyFrom: 'Site Visit Layout' },
+    });
+    expect(result.isError).toBeUndefined();
+    const { files } = await received();
+    expect(Object.keys(files).sort()).toEqual([
+      'layouts/Site_Visit__c-Home Visit Layout.layout',
+      'package.xml',
+    ]);
+    expect(files['layouts/Site_Visit__c-Home Visit Layout.layout']).toContain(
+      '<field>Stage__c</field>'
+    );
+    expect(stored().payload.components[0]).toMatchObject({ action: 'create' });
+    expect(stored().payload.preconditions).toEqual([
+      { kind: 'layout-absent', object: 'Site_Visit__c', layout: 'Home Visit Layout' },
+    ]);
+    const access = await stubAuth.resolve();
+    if (typeof access === 'string') throw new Error(access);
+    expect(
+      await brokenPreconditions({ subject: 'subject-1' }, access, [
+        { kind: 'layout-absent', object: 'Site_Visit__c', layout: 'site visit layout' },
+      ])
+    ).toEqual([
+      'The layout “site visit layout” exists now — someone created it since this was proposed.',
+    ]);
+  });
+
+  it('refuses a name the object already has', async () => {
+    const result = await call('salesforce_admin_propose_layout', {
+      object: 'Site_Visit__c',
+      create: { name: 'site visit layout' },
+    });
+    expect(text(result)).toContain('already has a layout “site visit layout”');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
+  });
+
+  it('refuses to delete a layout a profile still sees, naming who', async () => {
+    const result = await call('salesforce_admin_propose_layout', {
+      object: 'Site_Visit__c',
+      delete: 'Site Visit Layout',
+    });
+    expect(text(result)).toContain('is still the layout for Standard User');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
+  });
+
+  it('deletes an unused layout as a destructive deploy, guarded by what was read', async () => {
+    layoutUsed = false;
+    const result = await call('salesforce_admin_propose_layout', {
+      object: 'Site_Visit__c',
+      delete: 'Site Visit Layout',
+    });
+    expect(result.isError).toBeUndefined();
+    const { files } = await received();
+    expect(Object.keys(files).sort()).toEqual(['destructiveChanges.xml', 'package.xml']);
+    expect(files['destructiveChanges.xml']).toContain(
+      '<members>Site_Visit__c-Site Visit Layout</members>'
+    );
+    expect(files['package.xml']).not.toContain('<members>');
+    expect(stored().payload.components[0]).toMatchObject({ type: 'Layout', action: 'delete' });
+    expect(stored().payload.preconditions).toEqual([
+      expect.objectContaining({ kind: 'layout-unchanged', layout: 'Site Visit Layout' }),
+    ]);
+  });
+});
+
 describe('salesforce_admin_propose_layout_changes', () => {
   it('deploys the whole live layout with only the change merged in', async () => {
     const result = await call('salesforce_admin_propose_layout_changes', {
@@ -1182,6 +1565,95 @@ describe('salesforce_admin_propose_layout_changes', () => {
     expect(stored().payload.preconditions).toEqual([
       expect.objectContaining({ kind: 'layout-unchanged', layout: 'Site Visit Layout' }),
     ]);
+  });
+
+  it('moves a field, changes how one behaves, renames a section and adds a related list, in one layout', async () => {
+    layoutMetadata.relatedLists = [{ fields: ['FULL_NAME'], relatedList: 'RelatedContactList' }];
+    const result = await call('salesforce_admin_propose_layout_changes', {
+      object: 'Site_Visit__c',
+      layout: 'Site Visit Layout',
+      move: [{ field: 'Stage__c', section: 'System Information' }],
+      setBehavior: [{ field: 'Name', behavior: 'Readonly' }],
+      renameSections: [{ section: 'Information', label: 'Visit' }],
+      // The object's child relationship, spelled as the layout spells it.
+      addRelatedLists: [{ relatedList: 'visit_notes__r', fields: ['NAME', 'Body__c'] }],
+      removeRelatedLists: ['RelatedContactList'],
+    });
+    expect(result.isError).toBeUndefined();
+    const { files } = await received();
+    const layout = files['layouts/Site_Visit__c-Site Visit Layout.layout'];
+    expect(layout).toContain('<label>Visit</label>');
+    expect(layout).toMatch(/<behavior>Readonly<\/behavior>\s*<field>Name<\/field>/);
+    expect(layout).toMatch(/<label>System Information<\/label>[\s\S]*<field>Stage__c<\/field>/);
+    expect(layout).toContain('<relatedList>Visit_Note__c.Visit__c</relatedList>');
+    expect(layout).not.toContain('RelatedContactList');
+    expect(stored().payload.components[0].rows.map((r: { value: string }) => r.value)).toEqual(
+      expect.arrayContaining([
+        'Move Stage__c to “System Information”',
+        'Make Name read only here',
+        'Rename the section “Information” to “Visit”',
+        'Add the related list Visit_Note__c.Visit__c showing NAME, Body__c',
+      ])
+    );
+  });
+
+  it('gives a profile the layout for a record type as a Profile file holding only that', async () => {
+    const result = await call('salesforce_admin_propose_layout_changes', {
+      object: 'Site_Visit__c',
+      layout: 'Site Visit Layout',
+      assignTo: [{ profile: 'Standard User', recordType: 'Home Visit' }],
+    });
+    expect(result.isError).toBeUndefined();
+    const { files } = await received();
+    expect(Object.keys(files).sort()).toEqual(['package.xml', 'profiles/Standard.profile']);
+    const profile = files['profiles/Standard.profile'];
+    expect(profile).toContain('<layout>Site_Visit__c-Site Visit Layout</layout>');
+    expect(profile).toContain('<recordType>Site_Visit__c.Home_Visit</recordType>');
+    expect(profile).not.toContain('fieldPermissions');
+    expect(stored().title).toBe('Site Visit: give profiles the layout “Site Visit Layout”');
+    expect(stored().payload.components).toEqual([
+      {
+        type: 'Profile',
+        name: 'Standard User',
+        action: 'update',
+        rows: [{ label: 'Layout for Home Visit records', value: 'Site Visit Layout' }],
+      },
+    ]);
+  });
+
+  it('reorders a field, replaces a related list’s columns, and adds a button and an action', async () => {
+    layoutMetadata.relatedLists = [{ fields: ['NAME'], relatedList: 'Visit_Note__c.Visit__c' }];
+    const result = await call('salesforce_admin_propose_layout_changes', {
+      object: 'Site_Visit__c',
+      layout: 'Site Visit Layout',
+      move: [{ field: 'Stage__c', before: 'Name' }],
+      setRelatedListColumns: [{ relatedList: 'Visit_Notes__r', fields: ['NAME', 'Body__c'] }],
+      addButtons: ['Print_Visit'],
+      addActions: [{ name: 'Site_Visit__c.Log_Outcome' }],
+    });
+    expect(result.isError).toBeUndefined();
+    const { files } = await received();
+    const layout = files['layouts/Site_Visit__c-Site Visit Layout.layout'];
+    expect(layout.indexOf('<field>Stage__c</field>')).toBeLessThan(
+      layout.indexOf('<field>Name</field>')
+    );
+    expect(layout).toMatch(/<fields>NAME<\/fields>\s*<fields>Body__c<\/fields>/);
+    expect(layout).toContain('<customButtons>Print_Visit</customButtons>');
+    expect(layout).toContain('<actionName>Site_Visit__c.Log_Outcome</actionName>');
+    // The layout had no action list of its own, and the proposal says what that means.
+    expect(text(result)).toContain('will show only the ones listed here');
+  });
+
+  it('refuses to give a profile the layout it already sees', async () => {
+    const result = await call('salesforce_admin_propose_layout_changes', {
+      object: 'Site_Visit__c',
+      layout: 'Site Visit Layout',
+      assignTo: [{ profile: 'Standard User' }],
+    });
+    expect(text(result)).toContain(
+      'Standard User already sees “Site Visit Layout” for records with no record type.'
+    );
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
   });
 
   it('refuses a field the object does not have, and a field already placed', async () => {
@@ -1327,6 +1799,34 @@ describe('salesforce_admin_propose_object', () => {
   });
 });
 
+describe('salesforce_admin_list_permission_sets, for profiles', () => {
+  it('lists the org’s profiles with how many people are on each', async () => {
+    const result = await call('salesforce_admin_list_permission_sets', { profiles: true });
+    expect(text(result)).toBe('• Standard User — 4 active people, Salesforce licence');
+  });
+
+  it('reads what a profile grants — records, fields on an object, tabs — and who is on it', async () => {
+    objectRows = [{ SobjectType: 'Site_Visit__c', PermissionsRead: true, PermissionsEdit: true }];
+    fieldAccessRows = [
+      { Field: 'Site_Visit__c.Stage__c', PermissionsRead: true, PermissionsEdit: true },
+    ];
+    tabRows = [{ Name: 'Site_Visit__c', Visibility: 'DefaultOn' }];
+    const result = await call('salesforce_admin_list_permission_sets', {
+      profile: 'Standard User',
+      object: 'Site_Visit__c',
+    });
+    expect(result.isError).toBeUndefined();
+    expect(text(result)).toContain('Profile Standard User');
+    expect(text(result)).toContain('• Site_Visit__c: read, edit');
+    expect(text(result)).toContain('• Site_Visit__c.Stage__c: read and edit');
+    expect(text(result)).toContain('• Grace Hopper (grace@acme.org)');
+    // Its access is read from the profile's own permission set.
+    expect(
+      requests.some((r) => decodeURIComponent(r.query).includes(`ParentId = '${PROFILE_SET}'`))
+    ).toBe(true);
+  });
+});
+
 describe('salesforce_admin_propose_permission_set', () => {
   it('adds access to an existing set as data, never taking any away', async () => {
     objectRows = [
@@ -1375,6 +1875,143 @@ describe('salesforce_admin_propose_permission_set', () => {
     expect(text(result)).toContain('takes no field access');
   });
 
+  it('gives a profile field access through the profile’s own permission set', async () => {
+    const result = await call('salesforce_admin_propose_permission_set', {
+      profile: 'Standard User',
+      fields: [{ object: 'Site_Visit__c', field: 'stage__c', edit: true }],
+    });
+    expect(result.isError).toBeUndefined();
+    expect(deploys()).toHaveLength(0);
+    expect(stored().title).toBe('The profile Standard User: more access');
+    expect(stored().payload.components[0]).toMatchObject({
+      type: 'Profile',
+      name: 'Standard User',
+    });
+    expect(stored().payload.dataSteps).toContainEqual({
+      kind: 'field-permission',
+      permissionSetId: PROFILE_SET,
+      permissionSetName: 'the profile Standard User',
+      object: 'Site_Visit__c',
+      field: 'Stage__c',
+      read: true,
+      edit: true,
+    });
+  });
+
+  it('says so when the profile is not in the org, or when two things are named to change', async () => {
+    const missing = await call('salesforce_admin_propose_permission_set', {
+      profile: 'Nobody',
+      fields: [{ object: 'Site_Visit__c', field: 'Stage__c' }],
+    });
+    expect(text(missing)).toContain('No profile "Nobody" in this org.');
+    const both = await call('salesforce_admin_propose_permission_set', {
+      profile: 'Standard User',
+      permissionSet: 'Program Staff',
+      fields: [{ object: 'Site_Visit__c', field: 'Stage__c' }],
+    });
+    expect(text(both)).toContain('Name one of permissionSet');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
+  });
+
+  it('takes field access away only where it is named: all of it, or edit alone', async () => {
+    fieldAccessRows = [
+      { Field: 'Site_Visit__c.Stage__c', PermissionsRead: true, PermissionsEdit: true },
+      { Field: 'Site_Visit__c.Visit_Date__c', PermissionsRead: true, PermissionsEdit: true },
+    ];
+    const result = await call('salesforce_admin_propose_permission_set', {
+      permissionSet: 'Program Staff',
+      removeFields: [
+        { object: 'Site_Visit__c', field: 'stage__c' },
+        { object: 'Site_Visit__c', field: 'Visit_Date__c', keepRead: true },
+      ],
+    });
+    expect(result.isError).toBeUndefined();
+    expect(stored().title).toBe('Program_Staff: less access');
+    expect(stored().payload.dataSteps).toEqual([
+      expect.objectContaining({ field: 'Stage__c', read: false, edit: false, remove: 'all' }),
+      expect.objectContaining({ field: 'Visit_Date__c', read: true, edit: false, remove: 'edit' }),
+    ]);
+    expect(stored().payload.components[0].rows).toEqual([
+      { label: 'Site_Visit__c.Stage__c', value: 'none', from: 'read and edit' },
+      { label: 'Site_Visit__c.Visit_Date__c', value: 'read', from: 'read and edit' },
+    ]);
+    expect(text(result)).toContain('people keep any access another set or their profile gives');
+  });
+
+  it('takes records’ access and a tab away after the field access that stands on them', async () => {
+    objectRows = [
+      {
+        SobjectType: 'Site_Visit__c',
+        PermissionsRead: true,
+        PermissionsCreate: true,
+        PermissionsEdit: true,
+        PermissionsDelete: true,
+      },
+    ];
+    fieldAccessRows = [
+      { Field: 'Site_Visit__c.Stage__c', PermissionsRead: true, PermissionsEdit: false },
+    ];
+    tabRows = [{ Name: 'Site_Visit__c', Visibility: 'DefaultOn' }];
+    const result = await call('salesforce_admin_propose_permission_set', {
+      profile: 'Standard User',
+      removeObjects: [{ object: 'Site Visit', rights: ['edit'] }],
+      removeFields: [{ object: 'Site_Visit__c', field: 'Stage__c' }],
+      removeTabs: ['Site_Visit__c'],
+    });
+    expect(result.isError).toBeUndefined();
+    expect(stored().title).toBe('The profile Standard User: less access');
+    expect(stored().payload.dataSteps).toEqual([
+      expect.objectContaining({ kind: 'field-permission', field: 'Stage__c', remove: 'all' }),
+      // Delete stands on edit, so it goes with it; read and create stay.
+      expect.objectContaining({
+        kind: 'object-permission',
+        object: 'Site_Visit__c',
+        read: true,
+        create: true,
+        edit: false,
+        delete: false,
+        remove: true,
+      }),
+      expect.objectContaining({ kind: 'tab-visibility', tab: 'Site_Visit__c', remove: true }),
+    ]);
+    expect(stored().payload.components[0].rows).toEqual([
+      { label: 'Site_Visit__c.Stage__c', value: 'none', from: 'read' },
+      { label: 'Site_Visit__c records', value: 'read, create', from: 'read, create, edit, delete' },
+      { label: 'Site_Visit__c tab', value: 'hidden', from: 'shown' },
+    ]);
+  });
+
+  it('refuses to take away records’ access or a tab it does not give', async () => {
+    const result = await call('salesforce_admin_propose_permission_set', {
+      permissionSet: 'Program Staff',
+      removeObjects: [{ object: 'Site_Visit__c' }],
+      removeTabs: ['Site_Visit__c'],
+    });
+    expect(text(result)).toContain('gives no access to Site_Visit__c records to take away');
+    expect(text(result)).toContain('does not show the Site_Visit__c tab');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
+  });
+
+  it('refuses a removal that changes nothing, one from a new set, and a field given and taken at once', async () => {
+    const none = await call('salesforce_admin_propose_permission_set', {
+      permissionSet: 'Program Staff',
+      removeFields: [{ object: 'Site_Visit__c', field: 'Stage__c' }],
+    });
+    expect(text(none)).toContain('gives no access to Site_Visit__c.Stage__c to take away');
+    const fresh = await call('salesforce_admin_propose_permission_set', {
+      newSet: { label: 'Site Visit Editors' },
+      removeFields: [{ object: 'Site_Visit__c', field: 'Stage__c' }],
+    });
+    expect(text(fresh)).toContain('has no access to take away');
+    const twice = await call('salesforce_admin_propose_permission_set', {
+      permissionSet: 'Program Staff',
+      fields: [{ object: 'Site_Visit__c', field: 'Stage__c' }],
+      removeFields: [{ object: 'Site_Visit__c', field: 'stage__c' }],
+    });
+    expect(text(twice)).toContain('is both given and taken away');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
+  });
+
   it('deploys a new set with its access inside it', async () => {
     const result = await call('salesforce_admin_propose_permission_set', {
       newSet: { label: 'Site Visit Editors' },
@@ -1388,6 +2025,302 @@ describe('salesforce_admin_propose_permission_set', () => {
     expect(stored().payload.preconditions).toEqual([
       { kind: 'permission-set-absent', name: 'Site_Visit_Editors' },
     ]);
+  });
+});
+
+describe('apps a permission set or profile may open', () => {
+  it('lets a set open an app, and stops it, as one access row each', async () => {
+    const give = await call('salesforce_admin_propose_permission_set', {
+      permissionSet: 'Program Staff',
+      apps: ['Sales'],
+    });
+    expect(give.isError).toBeUndefined();
+    expect(stored().payload.dataSteps).toEqual([
+      {
+        kind: 'app-visibility',
+        permissionSetId: '0PS000000000001AAA',
+        permissionSetName: 'Program_Staff',
+        appId: APP,
+        app: 'Sales',
+      },
+    ]);
+    store.createChangeRequest.mockClear();
+    opensApp = true;
+    const take = await call('salesforce_admin_propose_permission_set', {
+      profile: 'Standard User',
+      removeApps: ['Sales'],
+    });
+    expect(take.isError).toBeUndefined();
+    expect(stored().payload.dataSteps).toEqual([
+      expect.objectContaining({ kind: 'app-visibility', appId: APP, remove: true }),
+    ]);
+    expect(stored().payload.components[0].rows).toEqual([
+      { label: 'Sales app', value: 'may not', from: 'may open' },
+    ]);
+  });
+
+  it('refuses an app the org does not have, and one for a set that does not exist yet', async () => {
+    const missing = await call('salesforce_admin_propose_permission_set', {
+      permissionSet: 'Program Staff',
+      apps: ['Nowhere'],
+    });
+    expect(text(missing)).toContain('No app "Nowhere" in this org.');
+    const fresh = await call('salesforce_admin_propose_permission_set', {
+      newSet: { label: 'Site Visit Editors' },
+      apps: ['Sales'],
+    });
+    expect(text(fresh)).toContain('once it exists');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe('salesforce_admin_propose_permission_set_details', () => {
+  it('renames a set, keeping its API name', async () => {
+    const result = await call('salesforce_admin_propose_permission_set_details', {
+      permissionSet: 'Program Staff',
+      label: 'Programme Staff',
+      description: 'People who run programmes',
+    });
+    expect(result.isError).toBeUndefined();
+    expect(deploys()).toHaveLength(0);
+    expect(stored().payload.dataSteps).toEqual([
+      {
+        kind: 'permission-set-details',
+        permissionSetId: '0PS000000000001AAA',
+        permissionSetName: 'Program_Staff',
+        label: 'Programme Staff',
+        description: 'People who run programmes',
+      },
+    ]);
+    expect(stored().payload.components[0].rows).toContainEqual({
+      label: 'Label',
+      value: 'Programme Staff',
+      from: 'Program Staff',
+    });
+  });
+
+  it('deletes a set nobody has, and refuses one people still have', async () => {
+    const result = await call('salesforce_admin_propose_permission_set_details', {
+      permissionSet: 'Program Staff',
+      delete: true,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(stored().payload.components[0]).toMatchObject({ action: 'delete' });
+    expect(stored().payload.dataSteps).toEqual([
+      expect.objectContaining({ kind: 'permission-set-delete' }),
+    ]);
+    store.createChangeRequest.mockClear();
+    assigned = ['005000000000002AAA', '005000000000003AAA'];
+    const held = await call('salesforce_admin_propose_permission_set_details', {
+      permissionSet: 'Program Staff',
+      delete: true,
+    });
+    expect(text(held)).toContain('2 people have Program_Staff');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
+  });
+
+  it('wants one thing: a change, or a delete', async () => {
+    const result = await call('salesforce_admin_propose_permission_set_details', {
+      permissionSet: 'Program Staff',
+      label: 'X',
+      delete: true,
+    });
+    expect(text(result)).toContain('one or the other');
+  });
+});
+
+describe('salesforce_admin_propose_system_permissions', () => {
+  it('turns one on in a set and one off, by Setup name or API name, each its own write', async () => {
+    systemOn = ['PermissionsViewSetup'];
+    const result = await call('salesforce_admin_propose_system_permissions', {
+      permissionSet: 'Program Staff',
+      enable: ['manage users'],
+      disable: ['ViewSetup'],
+    });
+    expect(result.isError).toBeUndefined();
+    expect(deploys()).toHaveLength(0);
+    expect(stored()).toMatchObject({ kind: 'security' });
+    expect(stored().payload.dataSteps).toEqual([
+      {
+        kind: 'system-permission',
+        permissionSetId: '0PS000000000001AAA',
+        permissionSetName: 'Program_Staff',
+        target: 'PermissionSet',
+        targetId: '0PS000000000001AAA',
+        permission: 'PermissionsManageUsers',
+        label: 'Manage Users',
+        enabled: true,
+      },
+      expect.objectContaining({ permission: 'PermissionsViewSetup', enabled: false }),
+    ]);
+    expect(stored().payload.components[0].rows).toEqual([
+      { label: 'Manage Users', value: 'on', from: 'off' },
+      { label: 'View Setup and Configuration', value: 'off', from: 'on' },
+    ]);
+  });
+
+  it('writes a profile’s to the profile’s own row', async () => {
+    const result = await call('salesforce_admin_propose_system_permissions', {
+      profile: 'Standard User',
+      enable: ['Modify All Data'],
+    });
+    expect(result.isError).toBeUndefined();
+    expect(stored().payload.dataSteps).toEqual([
+      expect.objectContaining({
+        target: 'Profile',
+        targetId: '00e000000000001AAA',
+        permission: 'PermissionsModifyAllData',
+        permissionSetName: 'the profile Standard User',
+      }),
+    ]);
+  });
+
+  it('refuses a permission the org does not have, naming the near ones, and one already so', async () => {
+    const unknown = await call('salesforce_admin_propose_system_permissions', {
+      permissionSet: 'Program Staff',
+      enable: ['Manage'],
+    });
+    expect(text(unknown)).toContain('did you mean Manage Users (ManageUsers)');
+    const already = await call('salesforce_admin_propose_system_permissions', {
+      permissionSet: 'Program Staff',
+      disable: ['Manage Users'],
+    });
+    expect(text(already)).toContain('already has “Manage Users” off');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
+  });
+
+  it('is its own capability: not offered with the permission-set one alone', async () => {
+    const handlers = await tools(['sfa-read', 'sfa-permissions']);
+    expect(handlers.has('salesforce_admin_propose_permission_set')).toBe(true);
+    expect(handlers.has('salesforce_admin_propose_system_permissions')).toBe(false);
+    expect(handlers.has('salesforce_admin_propose_profile_login')).toBe(false);
+    expect(handlers.has('salesforce_admin_propose_profile')).toBe(false);
+  });
+});
+
+describe('salesforce_admin_propose_profile_login', () => {
+  it('adds an IP range to those the profile has, as a Profile file holding only the ranges', async () => {
+    const result = await call('salesforce_admin_propose_profile_login', {
+      profile: 'Standard User',
+      addIpRanges: [{ start: '198.51.100.0', end: '198.51.100.255', description: 'VPN' }],
+    });
+    expect(result.isError).toBeUndefined();
+    const { files } = await received();
+    const profile = files['profiles/Standard.profile'];
+    expect(profile.match(/<loginIpRanges>/g)).toHaveLength(2);
+    expect(profile).toContain('<startAddress>203.0.113.0</startAddress>');
+    expect(profile).toContain('<startAddress>198.51.100.0</startAddress>');
+    expect(profile).not.toContain('objectPermissions');
+    expect(profile).not.toContain('loginHours');
+    expect(stored().payload.preconditions).toEqual([
+      expect.objectContaining({ kind: 'component-unchanged', type: 'Profile', name: 'Standard' }),
+    ]);
+    expect(stored().payload.components[0].rows).toEqual([
+      {
+        label: 'Login IP ranges',
+        value: '203.0.113.0–203.0.113.255 (Office); 198.51.100.0–198.51.100.255 (VPN)',
+        from: '203.0.113.0–203.0.113.255 (Office)',
+      },
+    ]);
+  });
+
+  it('sets login hours only with every day given, and lifts them with an empty element', async () => {
+    const some = await call('salesforce_admin_propose_profile_login', {
+      profile: 'Standard User',
+      loginHours: [{ day: 'monday', start: '08:00', end: '18:00' }],
+    });
+    expect(text(some)).toContain('Give every day');
+    const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+    const all = await call('salesforce_admin_propose_profile_login', {
+      profile: 'Standard User',
+      loginHours: days.map((day) => ({ day, start: '07:30', end: '24:00' })),
+    });
+    expect(all.isError).toBeUndefined();
+    const set = (await received()).files['profiles/Standard.profile'];
+    expect(set).toContain('<sundayStart>450</sundayStart>');
+    expect(set).toContain('<sundayEnd>1440</sundayEnd>');
+    expect(set).not.toContain('loginIpRanges');
+
+    const lifted = await call('salesforce_admin_propose_profile_login', {
+      profile: 'Standard User',
+      clearLoginHours: true,
+    });
+    expect(lifted.isError).toBeUndefined();
+    expect((await received(1)).files['profiles/Standard.profile']).toContain('<loginHours/>');
+  });
+
+  it('refuses a range that is not one, one it does not have, and removing the last', async () => {
+    const bad = await call('salesforce_admin_propose_profile_login', {
+      profile: 'Standard User',
+      addIpRanges: [
+        { start: '10.0.0.9', end: '10.0.0.1' },
+        { start: 'office', end: '10.0.0.1' },
+      ],
+      removeIpRanges: [{ start: '192.0.2.0', end: '192.0.2.255' }],
+    });
+    expect(text(bad)).toContain('has no login range 192.0.2.0–192.0.2.255');
+    expect(text(bad)).toContain('10.0.0.9–10.0.0.1 ends before it starts');
+    expect(text(bad)).toContain('office–10.0.0.1 is not a range of IP addresses');
+    const last = await call('salesforce_admin_propose_profile_login', {
+      profile: 'Standard User',
+      removeIpRanges: [{ start: '203.0.113.0', end: '203.0.113.255' }],
+    });
+    expect(text(last)).toContain('remove the last range in Setup');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe('salesforce_admin_propose_profile', () => {
+  it('creates a profile as a copy of one, whole, marked custom', async () => {
+    const result = await call('salesforce_admin_propose_profile', {
+      name: 'Program Staff Profile',
+      copyFrom: 'Standard User',
+    });
+    expect(result.isError).toBeUndefined();
+    const { files } = await received();
+    const profile = files['profiles/Program Staff Profile.profile'];
+    expect(profile).toContain('<custom>true</custom>');
+    expect(profile).toContain('<userLicense>Salesforce</userLicense>');
+    expect(profile).toContain('<object>Site_Visit__c</object>');
+    expect(stored().payload.preconditions).toEqual([
+      { kind: 'profile-absent', name: 'Program Staff Profile' },
+    ]);
+  });
+
+  it('creates one from a licence alone, and refuses a name or a licence that will not do', async () => {
+    const result = await call('salesforce_admin_propose_profile', {
+      name: 'Volunteers',
+      userLicense: 'Salesforce',
+    });
+    expect(result.isError).toBeUndefined();
+    const profile = (await received()).files['profiles/Volunteers.profile'];
+    expect(profile).toContain('<userLicense>Salesforce</userLicense>');
+    expect(profile).not.toContain('objectPermissions');
+    store.createChangeRequest.mockClear();
+    const taken = await call('salesforce_admin_propose_profile', {
+      name: 'Standard User',
+      userLicense: 'Salesforce',
+    });
+    expect(text(taken)).toContain('already a profile Standard User');
+    const licence = await call('salesforce_admin_propose_profile', {
+      name: 'Volunteers',
+      userLicense: 'Nope',
+    });
+    expect(text(licence)).toContain('no user licence "Nope"');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe('salesforce_admin_list_permission_sets, with security', () => {
+  it('lists a profile’s system permissions, login hours and IP ranges', async () => {
+    systemOn = ['PermissionsViewSetup'];
+    const result = await call('salesforce_admin_list_permission_sets', {
+      profile: 'Standard User',
+      security: true,
+    });
+    expect(text(result)).toContain('System permissions:\n• View Setup and Configuration');
+    expect(text(result)).toContain('Login hours: Mon 08:00–18:00');
+    expect(text(result)).toContain('• 203.0.113.0–203.0.113.255 (Office)');
   });
 });
 
@@ -1587,12 +2520,35 @@ describe('salesforce_admin_propose_record_type', () => {
     });
   });
 
-  it('gives record types only to a new permission set', async () => {
-    const existing = await call('salesforce_admin_propose_permission_set', {
+  it('gives an existing set a record type by deploying the set whole, as read, with it added', async () => {
+    const result = await call('salesforce_admin_propose_permission_set', {
       permissionSet: 'Program Staff',
       recordTypes: ['Site_Visit__c.Home Visit'],
     });
-    expect(text(existing)).toContain('in a new permission set only');
+    expect(result.isError).toBeUndefined();
+    const set = (await received()).files['permissionsets/Program_Staff.permissionset'];
+    // Everything it granted stays, system permission and all.
+    expect(set).toContain('<object>Site_Visit__c</object>');
+    expect(set).toContain('<name>ViewSetup</name>');
+    expect(set).toContain('<recordType>Opportunity.Grant</recordType>');
+    expect(set).toContain('<recordType>Site_Visit__c.Home_Visit</recordType>');
+    expect(stored().payload.preconditions).toEqual([
+      {
+        kind: 'component-unchanged',
+        type: 'PermissionSet',
+        object: '',
+        name: 'Program_Staff',
+        fingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+      },
+    ]);
+    const already = await call('salesforce_admin_propose_permission_set', {
+      permissionSet: 'Program Staff',
+      recordTypes: ['Opportunity.Grant'],
+    });
+    expect(text(already)).toContain('may already use the record type Opportunity.Grant');
+  });
+
+  it('gives a new permission set its record types in its own file', async () => {
     const created = await call('salesforce_admin_propose_permission_set', {
       newSet: { label: 'Site Visit Home Visits' },
       recordTypes: ['Site_Visit__c.Home Visit'],
@@ -1956,7 +2912,7 @@ describe('salesforce_admin_propose_report_type_changes', () => {
       reportType: 'Site_Visits',
       add: [{ fields: ['Nope__c'] }],
     });
-    expect(text(missing)).toContain('Site_Visit__c has no field or lookup path Nope__c');
+    expect(text(missing)).toContain('Site_Visit__c has no field Nope__c');
     const nowhere = await call('salesforce_admin_propose_report_type_changes', {
       reportType: 'Elsewhere__c',
       add: [{ fields: ['Name'] }],

@@ -46,6 +46,8 @@ export const ASSIGNMENTS_KIND = 'assignments';
 export const RECORD_TYPE_KIND = 'record_type';
 export const REPORT_TYPE_KIND = 'report_type';
 export const REPORT_KIND = 'report';
+/** System permissions, a profile's login hours and IP ranges, a new profile. */
+export const SECURITY_KIND = 'security';
 
 /**
  * The capabilities applying a change stands on (lib/salesforce-admin-scopes.ts):
@@ -65,12 +67,18 @@ export function applyScopesFor(kind: string, payload?: MetadataPayload | null): 
     case ASSIGNMENTS_KIND:
       scopes.add('sfa-user-access');
       break;
+    case SECURITY_KIND:
+      scopes.add('sfa-security');
+      break;
     default:
       scopes.add('sfa-schema');
   }
   if (payload?.members.some((member) => member.type === 'Layout')) scopes.add('sfa-layouts');
   // Record type visibility in a profile is access.
   if (payload?.members.some((member) => member.type === 'Profile')) scopes.add('sfa-permissions');
+  if (payload?.dataSteps.some((step) => step.kind === 'system-permission')) {
+    scopes.add('sfa-security');
+  }
   if (payload?.dataSteps.some((step) => step.kind === 'assign' || step.kind === 'unassign')) {
     scopes.add('sfa-user-access');
   }
@@ -89,7 +97,8 @@ export interface ComponentView {
   type: string;
   /** `Object.Member`, a layout's full name, an object's API name. */
   name: string;
-  action: 'create' | 'update';
+  /** 'delete' takes the component out of the org (a destructive deploy). */
+  action: 'create' | 'update' | 'delete';
   rows: ViewRow[];
 }
 
@@ -99,6 +108,7 @@ export type Precondition =
   | { kind: 'rule-unchanged'; object: string; rule: string; fingerprint: string }
   | { kind: 'field-unchanged'; object: string; field: string; fingerprint: string }
   | { kind: 'layout-unchanged'; object: string; layout: string; fingerprint: string }
+  | { kind: 'layout-absent'; object: string; layout: string }
   | { kind: 'object-absent'; object: string }
   | { kind: 'record-type-absent'; object: string; name: string }
   | {
@@ -111,6 +121,7 @@ export type Precondition =
       fingerprint: string;
     }
   | { kind: 'permission-set-absent'; name: string }
+  | { kind: 'profile-absent'; name: string }
   /** A custom report type's developer name, without `__c`. */
   | { kind: 'report-type-absent'; name: string }
   | { kind: 'report-folder-absent'; folder: string }
@@ -124,7 +135,9 @@ export type WholeComponent =
   | 'GlobalValueSet'
   | 'StandardValueSet'
   | 'ReportType'
-  | 'Report';
+  | 'Report'
+  | 'PermissionSet'
+  | 'Profile';
 
 const WHOLE_COMPONENTS: readonly WholeComponent[] = [
   'RecordType',
@@ -133,6 +146,8 @@ const WHOLE_COMPONENTS: readonly WholeComponent[] = [
   'StandardValueSet',
   'ReportType',
   'Report',
+  'PermissionSet',
+  'Profile',
 ];
 
 export interface Access {
@@ -157,12 +172,22 @@ export type DataStep =
       object: string;
       /** The field's API name, without the object. */
       field: string;
+      /**
+       * Set when the step takes access away, which a grant never does:
+       * 'all' leaves none, 'edit' leaves read. A step without it only adds.
+       */
+      remove?: 'all' | 'edit';
     } & Access)
   | ({
       kind: 'object-permission';
       permissionSetId: string;
       permissionSetName: string;
       object: string;
+      /**
+       * Set when the step takes rights away: the rights given are what is
+       * left (none of them: the row goes). A step without it only adds.
+       */
+      remove?: true;
     } & ObjectAccess)
   | {
       kind: 'tab-visibility';
@@ -172,6 +197,44 @@ export type DataStep =
       tab: string;
       /** DefaultOn: in the app's navigation; DefaultOff: on All Tabs only. */
       visibility: 'DefaultOn' | 'DefaultOff';
+      /** Set when the step stops showing the tab instead. */
+      remove?: true;
+    }
+  | {
+      /** An app the set or profile may open (a SetupEntityAccess row), or no longer may. */
+      kind: 'app-visibility';
+      permissionSetId: string;
+      permissionSetName: string;
+      /** The app's id (AppDefinition.DurableId). */
+      appId: string;
+      app: string;
+      remove?: true;
+    }
+  | {
+      /** A permission set's label or description. */
+      kind: 'permission-set-details';
+      permissionSetId: string;
+      permissionSetName: string;
+      label?: string;
+      description?: string;
+    }
+  | {
+      kind: 'permission-set-delete';
+      permissionSetId: string;
+      permissionSetName: string;
+    }
+  | {
+      /** A system permission (Permissions… on the set's or profile's own row) turned on or off. */
+      kind: 'system-permission';
+      permissionSetId: string;
+      permissionSetName: string;
+      /** The row that carries it: the permission set's, or the profile's. */
+      target: 'PermissionSet' | 'Profile';
+      targetId: string;
+      /** The field's API name: PermissionsViewSetup. */
+      permission: string;
+      label: string;
+      enabled: boolean;
     }
   | {
       kind: 'assign';
@@ -226,6 +289,7 @@ function stepOf(raw: Record<string, unknown>): DataStep | null {
         field: str(raw.field),
         read: raw.read !== false,
         edit: flag(raw.edit),
+        ...(raw.remove === 'all' || raw.remove === 'edit' ? { remove: raw.remove } : {}),
       };
     case 'object-permission':
       return {
@@ -238,6 +302,7 @@ function stepOf(raw: Record<string, unknown>): DataStep | null {
         delete: flag(raw.delete),
         viewAll: flag(raw.viewAll),
         modifyAll: flag(raw.modifyAll),
+        ...(raw.remove === true ? { remove: true as const } : {}),
       };
     case 'tab-visibility':
       return {
@@ -245,7 +310,38 @@ function stepOf(raw: Record<string, unknown>): DataStep | null {
         ...base,
         tab: str(raw.tab),
         visibility: raw.visibility === 'DefaultOff' ? 'DefaultOff' : 'DefaultOn',
+        ...(raw.remove === true ? { remove: true as const } : {}),
       };
+    case 'app-visibility':
+      return {
+        kind: 'app-visibility',
+        ...base,
+        appId: str(raw.appId),
+        app: str(raw.app),
+        ...(raw.remove === true ? { remove: true as const } : {}),
+      };
+    case 'permission-set-details':
+      return {
+        kind: 'permission-set-details',
+        ...base,
+        ...(typeof raw.label === 'string' ? { label: raw.label } : {}),
+        ...(typeof raw.description === 'string' ? { description: raw.description } : {}),
+      };
+    case 'permission-set-delete':
+      return { kind: 'permission-set-delete', ...base };
+    case 'system-permission':
+      // Only a Permissions… field is ever written from a stored step.
+      return /^Permissions[A-Za-z0-9]+$/.test(str(raw.permission))
+        ? {
+            kind: 'system-permission',
+            ...base,
+            target: raw.target === 'Profile' ? 'Profile' : 'PermissionSet',
+            targetId: str(raw.targetId),
+            permission: str(raw.permission),
+            label: str(raw.label),
+            enabled: raw.enabled === true,
+          }
+        : null;
     case 'assign':
     case 'unassign':
       return { kind: raw.kind, ...base, userId: str(raw.userId), userName: str(raw.userName) };
@@ -266,7 +362,12 @@ export function readMetadataPayload(value: unknown): MetadataPayload | null {
   const components = recs(entry.components).map((c) => ({
     type: str(c.type),
     name: str(c.name),
-    action: c.action === 'update' ? ('update' as const) : ('create' as const),
+    action:
+      c.action === 'update'
+        ? ('update' as const)
+        : c.action === 'delete'
+          ? ('delete' as const)
+          : ('create' as const),
     rows: recs(c.rows).map((row) => ({
       label: str(row.label),
       value: str(row.value),
@@ -287,6 +388,8 @@ export function readMetadataPayload(value: unknown): MetadataPayload | null {
         return [{ kind: 'field-unchanged', object, field: str(p.field), fingerprint }];
       case 'layout-unchanged':
         return [{ kind: 'layout-unchanged', object, layout: str(p.layout), fingerprint }];
+      case 'layout-absent':
+        return [{ kind: 'layout-absent', object, layout: str(p.layout) }];
       case 'object-absent':
         return [{ kind: 'object-absent', object }];
       case 'record-type-absent':
@@ -299,6 +402,8 @@ export function readMetadataPayload(value: unknown): MetadataPayload | null {
       }
       case 'permission-set-absent':
         return [{ kind: 'permission-set-absent', name: str(p.name) }];
+      case 'profile-absent':
+        return [{ kind: 'profile-absent', name: str(p.name) }];
       case 'report-type-absent':
         return [{ kind: 'report-type-absent', name: str(p.name) }];
       case 'report-folder-absent':
@@ -333,6 +438,10 @@ export function readMetadataPayload(value: unknown): MetadataPayload | null {
 export function stepLabel(step: DataStep): string {
   switch (step.kind) {
     case 'field-permission':
+      if (step.remove === 'all')
+        return `Take ${step.permissionSetName}’s access to ${step.object}.${step.field} away`;
+      if (step.remove === 'edit')
+        return `Leave ${step.permissionSetName} read-only access to ${step.object}.${step.field}`;
       return `Give ${step.permissionSetName} ${step.edit ? 'read and edit' : 'read'} access to ${step.object}.${step.field}`;
     case 'object-permission': {
       const rights = [
@@ -343,10 +452,34 @@ export function stepLabel(step: DataStep): string {
         step.viewAll && 'view all',
         step.modifyAll && 'modify all',
       ].filter(Boolean);
+      if (step.remove) {
+        return rights.length > 0
+          ? `Leave ${step.permissionSetName} only ${rights.join(', ')} access to ${step.object} records`
+          : `Take ${step.permissionSetName}’s access to ${step.object} records away`;
+      }
       return `Give ${step.permissionSetName} ${rights.join(', ') || 'no'} access to ${step.object} records`;
     }
     case 'tab-visibility':
+      if (step.remove) return `Stop showing the ${step.tab} tab to ${step.permissionSetName}`;
       return `Show the ${step.tab} tab to ${step.permissionSetName}${step.visibility === 'DefaultOn' ? ' (in their navigation by default)' : ''}`;
+    case 'app-visibility':
+      return step.remove
+        ? `Stop ${step.permissionSetName} opening the app ${step.app}`
+        : `Let ${step.permissionSetName} open the app ${step.app}`;
+    case 'permission-set-details':
+      return [
+        step.label !== undefined && `Rename ${step.permissionSetName} to “${step.label}”`,
+        step.description !== undefined &&
+          `${step.label !== undefined ? 'and describe it' : `Describe ${step.permissionSetName}`} as “${step.description}”`,
+      ]
+        .filter(Boolean)
+        .join(' ');
+    case 'permission-set-delete':
+      return `Delete the permission set ${step.permissionSetName}`;
+    case 'system-permission':
+      return step.enabled
+        ? `Give ${step.permissionSetName} the system permission “${step.label}”`
+        : `Take the system permission “${step.label}” away from ${step.permissionSetName}`;
     case 'assign':
       return `Assign ${step.permissionSetName} to ${step.userName}`;
     case 'unassign':
@@ -367,7 +500,13 @@ export async function fieldExists(
     `SELECT QualifiedApiName FROM FieldDefinition WHERE EntityDefinition.QualifiedApiName = ${soqlString(object)} AND QualifiedApiName = ${soqlString(field)}`
   );
   if (!found.ok) return found.error;
-  return found.records.length > 0;
+  if (found.records.length > 0) return true;
+  // FieldDefinition can leave out a custom field the person has no
+  // field-level access to (one deployed a moment ago with no permission set
+  // given access). The Tooling API's CustomField lists it whoever sees it.
+  if (!/__c$/i.test(field)) return false;
+  const hidden = await readCustomField(context, access, object, field);
+  return typeof hidden === 'object' && hidden !== null;
 }
 
 /**
@@ -798,6 +937,34 @@ export async function brokenPreconditions(
         else if (live.fingerprint !== precondition.fingerprint) moved(name);
         break;
       }
+      case 'profile-absent': {
+        const found = await sfQuery(
+          context,
+          access,
+          `SELECT Id FROM Profile WHERE Name = ${soqlString(precondition.name)} LIMIT 1`
+        );
+        if (!found.ok)
+          broken.push(`Could not check the profile ${precondition.name}: ${found.error}`);
+        else if (found.records.length > 0) {
+          broken.push(
+            `The profile ${precondition.name} exists now — someone created it since this was proposed.`
+          );
+        }
+        break;
+      }
+      case 'layout-absent': {
+        const layouts = await listLayouts(context, access, precondition.object);
+        if (typeof layouts === 'string') {
+          broken.push(`Could not check the layout “${precondition.layout}”: ${layouts}`);
+        } else if (
+          layouts.some((l) => l.name.toLowerCase() === precondition.layout.toLowerCase())
+        ) {
+          broken.push(
+            `The layout “${precondition.layout}” exists now — someone created it since this was proposed.`
+          );
+        }
+        break;
+      }
     }
   }
   return broken;
@@ -822,5 +989,45 @@ export async function resolvePermissionSet(
   if (found.records.length > 1) {
     return `"${ref}" names more than one permission set: ${found.records.map((r) => str(r.Name)).join(', ')}. Use the API name.`;
   }
-  return `No permission set "${ref}" in this org (profiles are not offered — grant access through permission sets).`;
+  return `No permission set "${ref}" in this org (a profile is named as profile, not permissionSet).`;
+}
+
+/**
+ * A profile's own permission set: the row its field, object and tab access
+ * hang from (`IsOwnedByProfile`), so access in a profile is read and written
+ * exactly as a permission set's is. Named in steps as "the profile X".
+ */
+export async function resolveProfileAccess(
+  context: SalesforceCallContext,
+  access: SalesforceAccess,
+  ref: string
+): Promise<{ id: string; name: string; profile: string; profileId: string } | string> {
+  const found = await sfQuery(
+    context,
+    access,
+    `SELECT Id, ProfileId, Profile.Name FROM PermissionSet WHERE IsOwnedByProfile = true AND Profile.Name = ${soqlString(ref.trim())} LIMIT 2`
+  );
+  if (!found.ok) return found.error;
+  if (found.records.length !== 1) return `No profile "${ref}" in this org.`;
+  const profile = str(rec(found.records[0].Profile).Name) || ref.trim();
+  return {
+    id: str(found.records[0].Id),
+    name: `the profile ${profile}`,
+    profile,
+    profileId: str(found.records[0].ProfileId),
+  };
+}
+
+/** Who a grant names: a permission set, or a profile (through its own permission set). */
+export async function resolveAccessHolder(
+  context: SalesforceCallContext,
+  access: SalesforceAccess,
+  holder: { permissionSet?: string; profile?: string }
+): Promise<{ id: string; name: string } | string> {
+  const set = holder.permissionSet?.trim();
+  const profile = holder.profile?.trim();
+  if (Boolean(set) === Boolean(profile)) return 'Name either a permissionSet or a profile.';
+  return profile
+    ? resolveProfileAccess(context, access, profile)
+    : resolvePermissionSet(context, access, set ?? '');
 }

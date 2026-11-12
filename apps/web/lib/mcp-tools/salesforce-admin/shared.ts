@@ -32,7 +32,12 @@ import {
   type Validation,
 } from '@/lib/salesforce-admin/change-requests';
 import { failureLines, startDeploy, waitForDeploy } from '@/lib/salesforce-admin/deploy';
-import { deploys, type ComponentView, type MetadataPayload } from '@/lib/salesforce-admin/plan';
+import {
+  deploys,
+  readCustomField,
+  type ComponentView,
+  type MetadataPayload,
+} from '@/lib/salesforce-admin/plan';
 import { reviewPrefix } from './review-link';
 
 /** How long a proposal waits on Salesforce's validation before answering. */
@@ -188,7 +193,7 @@ export async function proposeAndValidate(
           ...validationLines(validation),
           '',
           `Review and approve: ${link}`,
-          `Request ${change.id}; it expires in ${CHANGE_REQUEST_TTL_HOURS} hours. Only an operator can approve it, from that page, and it then deploys in the background; operators have been told it is waiting.`,
+          `Request ${change.id}; it expires in ${CHANGE_REQUEST_TTL_HOURS} hours. Only an operator can approve it, from that page, and it then deploys in the background; operators have been told it is waiting. salesforce_admin_get_change_request with this id says where it has got to.`,
         ].join('\n'),
       },
     ],
@@ -377,4 +382,32 @@ export async function fileRequest(
     ],
     _meta: actMeta({ url: link }),
   };
+}
+
+/**
+ * Why a field a proposal names is not on the object as the person's
+ * describe shows it: either there is no such field, or it is a custom field
+ * that exists and that their field-level access hides — a field deployed
+ * with no permission set given access is invisible even to who built it.
+ * The Tooling API's CustomField tells the two apart.
+ */
+export async function missingFieldReason(
+  context: MCPToolContext,
+  access: SalesforceAccess,
+  object: string,
+  field: string
+): Promise<string> {
+  const none =
+    `${object} has no field ${field}. If a change request was meant to create it, ` +
+    'salesforce_admin_get_change_request says whether it has deployed.';
+  if (!/__c$/i.test(field)) return none;
+  const hidden = await readCustomField(context, access, object, field);
+  if (typeof hidden !== 'object' || hidden === null) return none;
+  return (
+    `${object}.${field} exists, but your Salesforce user has no field-level access to it, so ` +
+    'it cannot be used here: no permission set or profile you hold grants it (a new field is ' +
+    'invisible until one does). Give a permission set read access to it with ' +
+    'salesforce_admin_propose_permission_set — whoever is to see it in a report or on a ' +
+    'record needs that too — and once that is applied, ask again.'
+  );
 }

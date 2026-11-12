@@ -55,7 +55,7 @@ import {
   textResult,
   type SalesforceAccess,
 } from '../salesforce/client';
-import { describeObject, resolveObject } from '../salesforce/schema';
+import { describeObject, invalidateDescribe, resolveObject } from '../salesforce/schema';
 import {
   findReports,
   isMissingReportType,
@@ -67,7 +67,13 @@ import {
   type ComponentView,
 } from '@/lib/salesforce-admin/plan';
 import { readReport, readReportType } from '@/lib/salesforce-admin/whole-components';
-import { proposeAndValidate, reasonField, refusesChanges, replacesField } from './shared';
+import {
+  missingFieldReason,
+  proposeAndValidate,
+  reasonField,
+  refusesChanges,
+  replacesField,
+} from './shared';
 
 const bullets = (errors: string[]) =>
   errText(`Nothing was proposed:\n${errors.map((e) => `• ${e}`).join('\n')}`);
@@ -789,14 +795,30 @@ export function registerAdminReportTools(
         }
       }
       const adds: ReportTypeColumnAdd[] = [];
+      const reread = new Set<string>();
       for (const item of args.add ?? []) {
         const found = tableOf(item.object);
         if (!found) continue;
         const checked = new Set((item.checked ?? []).map((name) => name.toLowerCase()));
         for (const name of item.fields) {
-          const field = reportColumnOf(found.info, name);
+          let field = reportColumnOf(found.info, name);
+          if (!field && !reread.has(found.table)) {
+            // The describe is cached for minutes, and a field may have
+            // deployed since: ask Salesforce again before saying it is not there.
+            reread.add(found.table);
+            invalidateDescribe(access, found.info.name);
+            const fresh = objectInfo(await describeObject(context, access, found.info.name));
+            if (fresh) {
+              found.info = fresh;
+              field = reportColumnOf(fresh, name);
+            }
+          }
           if (!field) {
-            errors.push(`${found.info.name} has no field or lookup path ${name}.`);
+            errors.push(
+              name.includes('.')
+                ? `${found.info.name} has no lookup path ${name}.`
+                : await missingFieldReason(context, access, found.info.name, name.trim())
+            );
             continue;
           }
           adds.push({

@@ -42,10 +42,26 @@ const TTL_MS = 10 * 60_000;
 interface Cached<T> {
   value: T;
   at: number;
+  /** The org it describes, so a deploy there can drop it for everyone. */
+  org: string;
 }
 
-const globals = new Map<string, Cached<GlobalSObject[]>>();
-const describes = new Map<string, Cached<DescribeSObject>>();
+interface DescribeCaches {
+  globals: Map<string, Cached<GlobalSObject[]>>;
+  describes: Map<string, Cached<DescribeSObject>>;
+}
+
+// One cache for the process, not one per server bundle (Next's separate
+// module graphs): the job that deploys an approved change and the tools
+// that read the schema afterwards are bundled apart, and the job's "the
+// schema moved" has to reach them.
+declare global {
+  var __renkeiSalesforceDescribes: DescribeCaches | undefined;
+}
+const { globals, describes } = (globalThis.__renkeiSalesforceDescribes ??= {
+  globals: new Map(),
+  describes: new Map(),
+});
 
 function cacheKey(access: SalesforceAccess, object = ''): string {
   return `${access.accountId}|${object.toLowerCase()}`;
@@ -64,6 +80,18 @@ export function invalidateDescribe(access?: SalesforceAccess, object?: string): 
       if (key.startsWith(`${access.accountId}|`)) describes.delete(key);
     }
     globals.delete(cacheKey(access));
+  }
+}
+
+/**
+ * Forget every describe of one org, whoever's it is: a deploy changed the
+ * org's schema for everyone connected to it, not only for who approved it.
+ */
+export function invalidateOrgDescribes(orgId: string): void {
+  for (const cache of [globals, describes]) {
+    for (const [key, entry] of [...cache]) {
+      if (entry.org === orgId) cache.delete(key);
+    }
   }
 }
 
@@ -98,7 +126,7 @@ async function fetchGlobalDescribe(
     layoutable: entry.layoutable === true,
     deprecatedAndHidden: entry.deprecatedAndHidden === true,
   }));
-  globals.set(key, { value: objects, at: Date.now() });
+  globals.set(key, { value: objects, at: Date.now(), org: access.orgId });
   return objects;
 }
 
@@ -217,7 +245,7 @@ async function fetchDescribe(
       master: info.master === true,
     })),
   };
-  describes.set(key, { value: describe, at: Date.now() });
+  describes.set(key, { value: describe, at: Date.now(), org: access.orgId });
   return describe;
 }
 

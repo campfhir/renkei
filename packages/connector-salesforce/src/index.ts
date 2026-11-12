@@ -107,12 +107,19 @@ export {
 } from './metadata';
 export { metadataBody, metadataFile, metadataFileName } from './metadata-xml';
 export {
+  LAYOUT_ACTION_TYPES,
+  layoutBehaviors,
+  layoutButtons,
+  layoutRelatedLists,
   layoutSections,
   layoutFieldSet,
   mergeLayoutChanges,
+  profileLayoutFile,
   type FieldBehavior,
+  type LayoutActionType,
   type LayoutChanges,
   type LayoutSectionView,
+  type RelatedListView,
 } from './layouts';
 export {
   mergeFieldChanges,
@@ -130,6 +137,7 @@ export {
   impliedRights,
   rightsLabel,
   unionRights,
+  withoutRights,
   checkPermissionSetName,
   permissionSetFile,
   type ObjectRights,

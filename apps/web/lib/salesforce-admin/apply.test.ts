@@ -26,7 +26,7 @@ import { EMPTY_POLICY } from '@renkei/connector-salesforce';
 import type { SalesforceAccess } from '@/lib/mcp-tools/salesforce/client';
 import { applyChangeRequest, refreshApplying } from './apply';
 import type { ChangeRequest } from './change-requests';
-import { applyScopesFor, type MetadataPayload } from './plan';
+import { applyScopesFor, readMetadataPayload, type MetadataPayload } from './plan';
 
 const store = jest.requireMock<{ finishChangeRequest: jest.Mock; recordDeployStarted: jest.Mock }>(
   './change-requests'
@@ -125,11 +125,41 @@ global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       records: /'Shown__c'/.test(q) ? [{ Id: '0PT000000000001AAA' }] : [],
     });
   }
+  if (method === 'GET' && /FROM SetupEntityAccess/.test(q)) {
+    return answer(200, { totalSize: 0, done: true, records: [] });
+  }
+  if (method === 'POST' && url.pathname === `${V}/sobjects/SetupEntityAccess`) {
+    return answer(201, { id: '0J0000000000001AAA', success: true });
+  }
+  if (
+    (method === 'PATCH' || method === 'DELETE') &&
+    url.pathname === `${V}/sobjects/PermissionSet/0PS000000000001AAA`
+  ) {
+    return new Response(null, { status: 204 });
+  }
+  if (method === 'GET' && /FROM ObjectPermissions/.test(q)) {
+    return answer(200, { totalSize: 1, done: true, records: [{ Id: '110000000000001AAA' }] });
+  }
+  if (
+    (method === 'DELETE' || method === 'PATCH') &&
+    url.pathname === `${V}/sobjects/ObjectPermissions/110000000000001AAA`
+  ) {
+    return new Response(null, { status: 204 });
+  }
+  if (
+    method === 'DELETE' &&
+    url.pathname === `${V}/sobjects/PermissionSetTabSetting/0PT000000000001AAA`
+  ) {
+    return new Response(null, { status: 204 });
+  }
   if (method === 'POST' && url.pathname === `${V}/sobjects/PermissionSetTabSetting`) {
     return answer(201, { id: '0PT000000000002AAA', success: true });
   }
   if (method === 'GET' && /FROM PermissionSetAssignment/.test(q)) {
     return answer(200, { totalSize: 0, done: true, records: [] });
+  }
+  if (method === 'DELETE' && url.pathname === `${V}/sobjects/FieldPermissions/01k00000000000EAAA`) {
+    return new Response(null, { status: 204 });
   }
   if (method === 'PATCH' && url.pathname === `${V}/sobjects/FieldPermissions/01k00000000000EAAA`) {
     return new Response(null, { status: 204 });
@@ -433,6 +463,213 @@ describe('applyChangeRequest', () => {
     expect(created.map((r) => JSON.parse(String(r.body)))).toEqual([
       { ParentId: '0PS000000000001AAA', Name: 'Site_Visit__c', Visibility: 'DefaultOn' },
     ]);
+  });
+
+  it('takes field access away by deleting its row, lowers it by clearing edit, and adds nothing when there was none', async () => {
+    const base = {
+      kind: 'field-permission',
+      permissionSetId: '0PS000000000001AAA',
+      permissionSetName: 'the profile Standard User',
+      object: 'Site_Visit__c',
+      edit: false,
+    };
+    const removal = (dataSteps: unknown[]) => ({
+      ...change(),
+      kind: 'permission_set',
+      validation: {
+        deployId: '',
+        done: true,
+        success: true,
+        status: 'Checked',
+        failures: [],
+        checkedAt: '',
+      },
+      payload: { files: {}, members: [], components: [], preconditions: [], dataSteps },
+    });
+    existingAccess = true;
+    const outcome = await applyChangeRequest(
+      context,
+      access,
+      removal([
+        { ...base, field: 'Outcome__c', read: false, remove: 'all' },
+        { ...base, field: 'Stage__c', read: true, remove: 'edit' },
+      ]),
+      'ada'
+    );
+    expect(outcome.status).toBe('applied');
+    expect(outcome.results.operations.map((o) => o.label)).toEqual([
+      'Check the org has not changed since this was proposed',
+      'Take the profile Standard User’s access to Site_Visit__c.Outcome__c away',
+      'Leave the profile Standard User read-only access to Site_Visit__c.Stage__c',
+    ]);
+    const writes = requests.filter((r) => r.path.includes('/sobjects/FieldPermissions'));
+    expect(writes.map((r) => r.method)).toEqual(['DELETE', 'PATCH']);
+    expect(JSON.parse(String(writes[1].body))).toEqual({
+      PermissionsRead: true,
+      PermissionsEdit: false,
+    });
+
+    requests.length = 0;
+    existingAccess = false;
+    const nothing = await applyChangeRequest(
+      context,
+      access,
+      removal([{ ...base, field: 'Outcome__c', read: false, remove: 'all' }]),
+      'ada'
+    );
+    expect(nothing.status).toBe('applied');
+    expect(nothing.results.operations.at(-1)?.detail).toBe('It had no access to it.');
+    expect(requests.some((r) => r.path.includes('/sobjects/FieldPermissions'))).toBe(false);
+  });
+
+  it('lowers records’ access to what is left, deletes it when nothing is, and stops showing a tab', async () => {
+    const base = { permissionSetId: '0PS000000000001AAA', permissionSetName: 'Program_Staff' };
+    const none = { read: false, create: false, edit: false, delete: false };
+    const rest = { viewAll: false, modifyAll: false, remove: true };
+    const less = {
+      ...change(),
+      kind: 'permission_set',
+      validation: {
+        deployId: '',
+        done: true,
+        success: true,
+        status: 'Checked',
+        failures: [],
+        checkedAt: '',
+      },
+      payload: {
+        files: {},
+        members: [],
+        components: [],
+        preconditions: [],
+        dataSteps: [
+          {
+            kind: 'object-permission',
+            ...base,
+            object: 'Site_Visit__c',
+            ...none,
+            ...rest,
+            read: true,
+          },
+          { kind: 'object-permission', ...base, object: 'Visit_Note__c', ...none, ...rest },
+          {
+            kind: 'tab-visibility',
+            ...base,
+            tab: 'Shown__c',
+            visibility: 'DefaultOn',
+            remove: true,
+          },
+          {
+            kind: 'tab-visibility',
+            ...base,
+            tab: 'Site_Visit__c',
+            visibility: 'DefaultOn',
+            remove: true,
+          },
+        ],
+      },
+    };
+    const outcome = await applyChangeRequest(context, access, less, 'ada');
+    expect(outcome.status).toBe('applied');
+    expect(outcome.results.operations.slice(1).map((o) => o.label)).toEqual([
+      'Leave Program_Staff only read access to Site_Visit__c records',
+      'Take Program_Staff’s access to Visit_Note__c records away',
+      'Stop showing the Shown__c tab to Program_Staff',
+      'Stop showing the Site_Visit__c tab to Program_Staff',
+    ]);
+    const writes = requests.filter((r) => r.method !== 'GET').map((r) => `${r.method} ${r.path}`);
+    expect(writes).toEqual([
+      `PATCH ${V}/sobjects/ObjectPermissions/110000000000001AAA`,
+      `DELETE ${V}/sobjects/ObjectPermissions/110000000000001AAA`,
+      `DELETE ${V}/sobjects/PermissionSetTabSetting/0PT000000000001AAA`,
+    ]);
+    // A tab it never showed is left alone, and said so.
+    expect(outcome.results.operations.at(-1)?.detail).toBe('It did not show the tab.');
+  });
+
+  it('opens an app to a set, renames the set, and deletes one, each as its own write', async () => {
+    const base = { permissionSetId: '0PS000000000001AAA', permissionSetName: 'Program_Staff' };
+    const details = {
+      ...change(),
+      kind: 'permission_set',
+      validation: {
+        deployId: '',
+        done: true,
+        success: true,
+        status: 'Checked',
+        failures: [],
+        checkedAt: '',
+      },
+      payload: {
+        files: {},
+        members: [],
+        components: [],
+        preconditions: [],
+        dataSteps: [
+          { kind: 'app-visibility', ...base, appId: '0H4000000000001AAA', app: 'Sales' },
+          { kind: 'permission-set-details', ...base, label: 'Programme Staff' },
+          { kind: 'permission-set-delete', ...base },
+        ],
+      },
+    };
+    const outcome = await applyChangeRequest(context, access, details, 'ada');
+    expect(outcome.status).toBe('applied');
+    expect(outcome.results.operations.slice(1).map((o) => o.label)).toEqual([
+      'Let Program_Staff open the app Sales',
+      'Rename Program_Staff to “Programme Staff”',
+      'Delete the permission set Program_Staff',
+    ]);
+    const writes = requests.filter((r) => r.method !== 'GET');
+    expect(writes.map((r) => `${r.method} ${r.path}`)).toEqual([
+      `POST ${V}/sobjects/SetupEntityAccess`,
+      `PATCH ${V}/sobjects/PermissionSet/0PS000000000001AAA`,
+      `DELETE ${V}/sobjects/PermissionSet/0PS000000000001AAA`,
+    ]);
+    expect(JSON.parse(String(writes[0].body))).toEqual({
+      ParentId: '0PS000000000001AAA',
+      SetupEntityId: '0H4000000000001AAA',
+    });
+    expect(JSON.parse(String(writes[1].body))).toEqual({ Label: 'Programme Staff' });
+  });
+
+  it('writes a system permission to the row that carries it, and needs the security capability', async () => {
+    const step = {
+      kind: 'system-permission',
+      permissionSetId: '0PS000000000001AAA',
+      permissionSetName: 'Program_Staff',
+      target: 'PermissionSet',
+      targetId: '0PS000000000001AAA',
+      permission: 'PermissionsManageUsers',
+      label: 'Manage Users',
+      enabled: true,
+    };
+    const security = {
+      ...change(),
+      kind: 'security',
+      validation: {
+        deployId: '',
+        done: true,
+        success: true,
+        status: 'Checked',
+        failures: [],
+        checkedAt: '',
+      },
+      payload: { files: {}, members: [], components: [], preconditions: [], dataSteps: [step] },
+    };
+    const outcome = await applyChangeRequest(context, access, security, 'ada');
+    expect(outcome.status).toBe('applied');
+    const write = requests.find((r) => r.method === 'PATCH');
+    expect(write?.path).toBe(`${V}/sobjects/PermissionSet/0PS000000000001AAA`);
+    expect(JSON.parse(String(write?.body))).toEqual({ PermissionsManageUsers: true });
+    expect(applyScopesFor('security')).toEqual(['sfa-security']);
+    // A stored step never writes a field that is not a system permission.
+    expect(
+      readMetadataPayload({
+        files: {},
+        members: [],
+        dataSteps: [{ ...step, permission: 'IsActive' }],
+      })
+    ).toBeNull();
   });
 
   it('leaves a deploy still running as applying, and a later look finishes it', async () => {

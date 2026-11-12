@@ -76,7 +76,8 @@ async function catchUp(subject: string, change: ChangeRequest): Promise<ChangeRe
  * every component it deploys (a new field's whole definition, a changed
  * rule's old against new), what Salesforce's validation said, what runs
  * after the deploy, what is re-checked before it, and — once applied —
- * what each step did.
+ * what each step did, above the same components: the proposal stays
+ * readable after it is approved.
  */
 export default async function SalesforceAdminChangePage({
   params,
@@ -129,6 +130,15 @@ export default async function SalesforceAdminChangePage({
       ? await applyGate(session.subject, session.roles, change)
       : null;
   const inProgress = state === 'queued' || state === 'applying';
+  const componentsHeading = !results
+    ? payload && !deploys(payload)
+      ? 'What applying it changes'
+      : 'What applying it deploys'
+    : inProgress
+      ? 'What is being applied'
+      : state === 'applied' || state === 'partial'
+        ? 'What was applied'
+        : 'What was proposed';
   const running = inProgress || validationState(validation) === 'running';
 
   return (
@@ -285,7 +295,7 @@ export default async function SalesforceAdminChangePage({
         </section>
       )}
 
-      {isRequest ? null : results ? (
+      {!isRequest && results && (
         <>
           <h2 className="mb-2 text-sm font-semibold">
             {inProgress ? 'What has happened so far' : 'What happened'}
@@ -311,10 +321,14 @@ export default async function SalesforceAdminChangePage({
             ))}
           </ol>
         </>
-      ) : (
+      )}
+
+      {/* The proposal itself stays on the page once it is approved: what
+          was deployed is read here long after the deploy's own lines. */}
+      {!isRequest && (
         <>
-          <h2 className="mb-2 text-sm font-semibold">
-            {payload && !deploys(payload) ? 'What applying it changes' : 'What applying it deploys'}
+          <h2 className={`mb-2 text-sm font-semibold ${results ? 'mt-4' : ''}`}>
+            {componentsHeading}
           </h2>
           <ol className="space-y-2" data-testid="change-components">
             {(payload?.components ?? []).map((component, index) => (
@@ -324,8 +338,18 @@ export default async function SalesforceAdminChangePage({
               >
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                   <span className="min-w-0 font-mono text-xs break-all">{component.name}</span>
-                  <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs dark:bg-gray-800">
-                    {component.action === 'create' ? 'New' : 'Changed'}{' '}
+                  <span
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${
+                      component.action === 'delete'
+                        ? 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
+                        : 'bg-gray-100 dark:bg-gray-800'
+                    }`}
+                  >
+                    {component.action === 'create'
+                      ? 'New'
+                      : component.action === 'delete'
+                        ? 'Delete'
+                        : 'Changed'}{' '}
                     {TYPE_LABELS[component.type] ?? component.type}
                   </span>
                 </div>
@@ -359,7 +383,13 @@ export default async function SalesforceAdminChangePage({
               data-testid="change-grants"
             >
               <p className="font-medium">
-                {deploys(payload) ? 'Then, once it deploys:' : 'What applying it does:'}
+                {!deploys(payload)
+                  ? results
+                    ? 'Its steps:'
+                    : 'What applying it does:'
+                  : results
+                    ? 'After the deploy:'
+                    : 'Then, once it deploys:'}
               </p>
               <ul className="mt-1 list-disc space-y-0.5 pl-5">
                 {payload.dataSteps.map((step, index) => (

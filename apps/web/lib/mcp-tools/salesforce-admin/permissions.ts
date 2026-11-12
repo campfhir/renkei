@@ -1,11 +1,15 @@
 /**
- * Permission sets: reading them (what one grants, who has it), proposing a
- * new one or more access in an existing one, and proposing who has them.
+ * Permission sets and profiles: reading sets (what one grants, who has it),
+ * proposing a new set, more access in an existing set or a profile, field
+ * access taken away from one, and who has the sets.
  *
- * A new set deploys as metadata with its access inside it. Access added to
- * an existing set is data — one FieldPermissions, ObjectPermissions or tab
+ * A new set deploys as metadata with its access inside it. Access in an
+ * existing set is data — one FieldPermissions, ObjectPermissions or tab
  * setting row at a time — because deploying a set replaces everything in
- * it; the proposal reads what the set grants now and only ever adds to it.
+ * it; the proposal reads what the set grants now and adds to it. A
+ * profile's access hangs from its own permission set, so it is read and
+ * written the same way. Nothing is taken away unless the proposal names it
+ * (removeFields), and the review page shows each as its own line.
  * Assignments are data too, behind their own capability (user access),
  * which is off by default.
  */
@@ -15,12 +19,14 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import {
   checkPermissionSetName,
   impliedRights,
+  metadataFile,
   metadataFileName,
   packageXml,
   permissionSetFile,
   rightsLabel,
   soqlString,
   unionRights,
+  withoutRights,
   type ObjectRights,
 } from '@renkei/connector-salesforce';
 import type { MCPToolContext } from '../common';
@@ -39,11 +45,19 @@ import {
   ASSIGNMENTS_KIND,
   PERMISSION_SET_KIND,
   resolvePermissionSet,
+  resolveProfileAccess,
   type ComponentView,
   type DataStep,
+  type Precondition,
   type ViewRow,
 } from '@/lib/salesforce-admin/plan';
-import { findRecordType, listRecordTypes } from '@/lib/salesforce-admin/whole-components';
+import {
+  findRecordType,
+  listRecordTypes,
+  readProfile,
+  readWholeMetadata,
+} from '@/lib/salesforce-admin/whole-components';
+import { loginHoursWords, systemPermissions } from './security-tools';
 import { proposeAndValidate, reasonField, refusesChanges, replacesField } from './shared';
 
 const NO_RIGHTS: ObjectRights = {
@@ -65,6 +79,15 @@ const rightsOf = (row: Record<string, unknown>): ObjectRights => ({
 });
 
 const sameRights = (a: ObjectRights, b: ObjectRights) => rightsLabel(a) === rightsLabel(b);
+
+const ALL_RIGHTS: readonly (keyof ObjectRights)[] = [
+  'read',
+  'create',
+  'edit',
+  'delete',
+  'viewAll',
+  'modifyAll',
+];
 
 const OBJECT_RIGHTS_FIELDS =
   'SobjectType, PermissionsRead, PermissionsCreate, PermissionsEdit, PermissionsDelete, PermissionsViewAllRecords, PermissionsModifyAllRecords';
@@ -185,6 +208,63 @@ async function checkAccess(
   return { objects, fields, tabs, notes };
 }
 
+/** Record types named as Object.RecordType (API name or label), as the org spells them. */
+async function resolveRecordTypes(
+  context: MCPToolContext,
+  access: SalesforceAccess,
+  refs: readonly string[]
+): Promise<{ recordTypes: string[]; errors: string[] }> {
+  const recordTypes: string[] = [];
+  const errors: string[] = [];
+  for (const ref of refs) {
+    const dot = ref.indexOf('.');
+    if (dot < 1) {
+      errors.push(`"${ref}": name it as Object.RecordType.`);
+      continue;
+    }
+    const describe = await resolveObject(context, access, ref.slice(0, dot));
+    if (typeof describe === 'string') {
+      errors.push(describe);
+      continue;
+    }
+    const types = await listRecordTypes(context, access, describe.name);
+    const rt = typeof types === 'string' ? types : findRecordType(types, ref.slice(dot + 1));
+    if (typeof rt === 'string') errors.push(`${describe.name}: ${rt}`);
+    else recordTypes.push(`${describe.name}.${rt.developerName}`);
+  }
+  return { recordTypes, errors };
+}
+
+/** Apps by API name or label, as `{ id, name }` — the id a SetupEntityAccess row names. */
+async function resolveApps(
+  context: MCPToolContext,
+  access: SalesforceAccess,
+  refs: readonly string[]
+): Promise<{ apps: { id: string; name: string }[]; errors: string[] }> {
+  const apps: { id: string; name: string }[] = [];
+  const errors: string[] = [];
+  for (const ref of refs) {
+    const literal = soqlString(ref.trim());
+    const found = await sfQuery(
+      context,
+      access,
+      `SELECT DurableId, DeveloperName, Label FROM AppDefinition WHERE DeveloperName = ${literal} OR Label = ${literal} LIMIT 3`
+    );
+    if (!found.ok) errors.push(`${ref}: ${found.error}`);
+    else if (found.records.length === 0) errors.push(`No app "${ref}" in this org.`);
+    else if (found.records.length > 1)
+      errors.push(
+        `"${ref}" names more than one app: ${found.records.map((r) => str(r.DeveloperName)).join(', ')}. Use the API name.`
+      );
+    else if (!apps.some((app) => app.id === str(found.records[0].DurableId)))
+      apps.push({ id: str(found.records[0].DurableId), name: str(found.records[0].Label) });
+  }
+  return { apps, errors };
+}
+
+const many = (value: unknown): Record<string, unknown>[] =>
+  (Array.isArray(value) ? value : value === undefined || value === null ? [] : [value]).map(rec);
+
 const accessInput = {
   objects: z
     .array(
@@ -229,21 +309,73 @@ export function registerAdminPermissionTools(
     {
       title: 'Salesforce Admin · Read — Permission sets',
       description:
-        'The org’s permission sets (not profiles) with how many people have each; with ' +
-        '`permissionSet`, what that one grants — object access, field access (optionally on one ' +
-        'object), tabs — and who has it. Read this before proposing access or assignments.',
+        'The org’s permission sets with how many people have each, or its profiles (profiles: ' +
+        'true); with `permissionSet` or `profile`, what that one grants — object access, field ' +
+        'access (optionally on one object), tabs, apps — and who has it. Read this before proposing ' +
+        'access, taking any away, or assignments.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         search: z.string().optional().describe('Words in the name or label.'),
         permissionSet: z.string().optional().describe('A set’s API name or label, to read it.'),
-        object: z.string().optional().describe('With permissionSet: field access on this object.'),
+        profile: z
+          .string()
+          .optional()
+          .describe('A profile’s name ("Standard User"), to read what it grants.'),
+        profiles: z.boolean().optional().describe('List the org’s profiles, not its sets.'),
+        security: z
+          .boolean()
+          .optional()
+          .describe(
+            'With permissionSet or profile: also the system permissions it turns on, and a profile’s login hours and IP ranges.'
+          ),
+        object: z
+          .string()
+          .optional()
+          .describe('With permissionSet or profile: field access on this object.'),
         limit: limitField(200, 100),
       }),
     },
     async (args) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      if (!args.permissionSet) {
+      if (args.permissionSet && args.profile) {
+        return errText('Name a permissionSet or a profile, not both.');
+      }
+      if (!args.permissionSet && !args.profile && args.profiles) {
+        const search = args.search?.trim();
+        const [found, counts] = await Promise.all([
+          sfQuery(
+            context,
+            access,
+            `SELECT Id, Name, UserLicense.Name FROM Profile${
+              search ? ` WHERE Name LIKE ${soqlString(`%${search}%`)}` : ''
+            } ORDER BY Name LIMIT ${args.limit ?? 100}`
+          ),
+          sfQuery(
+            context,
+            access,
+            'SELECT ProfileId, COUNT(Id) n FROM User WHERE IsActive = true GROUP BY ProfileId'
+          ),
+        ]);
+        if (!found.ok) return errText(found.error);
+        if (found.records.length === 0) return textResult('No profiles match.');
+        return textResult(
+          found.records
+            .map((row) => {
+              const count = counts.ok
+                ? Number(counts.records.find((c) => str(c.ProfileId) === str(row.Id))?.n ?? 0)
+                : null;
+              const license = str(rec(row.UserLicense).Name);
+              return [
+                `• ${str(row.Name)}`,
+                count === null ? '' : ` — ${count} active ${count === 1 ? 'person' : 'people'}`,
+                license ? `, ${license} licence` : '',
+              ].join('');
+            })
+            .join('\n')
+        );
+      }
+      if (!args.permissionSet && !args.profile) {
         const search = args.search?.trim();
         const found = await sfQuery(
           context,
@@ -283,7 +415,12 @@ export function registerAdminPermissionTools(
         );
       }
 
-      const set = await resolvePermissionSet(context, access, args.permissionSet);
+      const profile = args.profile
+        ? await resolveProfileAccess(context, access, args.profile)
+        : null;
+      if (typeof profile === 'string') return errText(profile);
+      const set =
+        profile ?? (await resolvePermissionSet(context, access, args.permissionSet ?? ''));
       if (typeof set === 'string') return errText(set);
       const parent = soqlString(set.id);
       const object = args.object ? await resolveObject(context, access, args.object) : null;
@@ -306,13 +443,34 @@ export function registerAdminPermissionTools(
           access,
           `SELECT Name, Visibility FROM PermissionSetTabSetting WHERE ParentId = ${parent} ORDER BY Name`
         ),
-        sfQuery(
-          context,
-          access,
-          `SELECT Assignee.Name, Assignee.Username FROM PermissionSetAssignment WHERE PermissionSetId = ${parent} AND Assignee.IsActive = true ORDER BY Assignee.Name LIMIT 200`
-        ),
+        // A profile's people are the users on it; a set's, its assignments.
+        profile
+          ? sfQuery(
+              context,
+              access,
+              `SELECT Name, Username FROM User WHERE ProfileId = ${soqlString(profile.profileId)} AND IsActive = true ORDER BY Name LIMIT 200`
+            )
+          : sfQuery(
+              context,
+              access,
+              `SELECT Assignee.Name, Assignee.Username FROM PermissionSetAssignment WHERE PermissionSetId = ${parent} AND Assignee.IsActive = true ORDER BY Assignee.Name LIMIT 200`
+            ),
       ]);
-      const lines = [`Permission set ${set.name}`];
+      // The apps it may open: its SetupEntityAccess rows that name an app.
+      const appAccess = await sfQuery(
+        context,
+        access,
+        `SELECT SetupEntityId FROM SetupEntityAccess WHERE ParentId = ${parent} AND SetupEntityType = 'TabSet' LIMIT 200`
+      );
+      const apps =
+        appAccess.ok && appAccess.records.length > 0
+          ? await sfQuery(
+              context,
+              access,
+              `SELECT DurableId, DeveloperName, Label FROM AppDefinition WHERE DurableId IN ${inList(appAccess.records.map((row) => str(row.SetupEntityId)))} ORDER BY Label`
+            )
+          : appAccess;
+      const lines = [profile ? `Profile ${profile.profile}` : `Permission set ${set.name}`];
       lines.push(
         '',
         'Records:',
@@ -352,15 +510,81 @@ export function registerAdminPermissionTools(
             : ['• none']
           : [`• could not be read: ${tabs.error}`]),
         '',
+        'Apps:',
+        ...(apps.ok
+          ? apps.records.length
+            ? apps.records.map((row) => `• ${str(row.Label)} (${str(row.DeveloperName)})`)
+            : ['• none']
+          : [`• could not be read: ${apps.error}`]),
+        '',
         'Who has it:',
         ...(people.ok
           ? people.records.length
-            ? people.records.map(
-                (row) => `• ${str(rec(row.Assignee).Name)} (${str(rec(row.Assignee).Username)})`
-              )
+            ? people.records.map((row) => {
+                const person = profile ? row : rec(row.Assignee);
+                return `• ${str(person.Name)} (${str(person.Username)})`;
+              })
             : ['• nobody']
           : [`• could not be read: ${people.error}`])
       );
+      if (args.security) {
+        const all = await systemPermissions(context, access);
+        if (typeof all === 'string') {
+          lines.push('', `System permissions could not be read: ${all}`);
+        } else {
+          // Every Permissions… checkbox of the row, a hundred fields a query.
+          const on: string[] = [];
+          let failed = '';
+          for (let at = 0; at < all.length && !failed; at += 100) {
+            const part = all.slice(at, at + 100);
+            const found = await sfQuery(
+              context,
+              access,
+              `SELECT ${part.map((p) => p.field).join(', ')} FROM PermissionSet WHERE Id = ${parent} LIMIT 1`
+            );
+            if (!found.ok) failed = found.error;
+            else
+              on.push(
+                ...part.filter((p) => found.records[0]?.[p.field] === true).map((p) => p.label)
+              );
+          }
+          lines.push(
+            '',
+            'System permissions:',
+            ...(failed
+              ? [`• could not be read: ${failed}`]
+              : on.length
+                ? on.map((l) => `• ${l}`)
+                : ['• none'])
+          );
+        }
+        if (profile) {
+          const named = await readProfile(context, access, profile.profile);
+          const whole =
+            typeof named === 'string'
+              ? named
+              : await readWholeMetadata(context, access, 'Profile', named.fullName);
+          if (typeof whole === 'string' || !whole) {
+            lines.push(
+              '',
+              `Login hours and IP ranges could not be read${whole ? `: ${whole}` : '.'}`
+            );
+          } else {
+            const ranges = many(whole.metadata.loginIpRanges);
+            lines.push(
+              '',
+              `Login hours: ${loginHoursWords(whole.metadata.loginHours)}`,
+              'Login IP ranges:',
+              ...(ranges.length
+                ? ranges.map(
+                    (range) =>
+                      `• ${str(range.startAddress)}–${str(range.endAddress)}${str(range.description) ? ` (${str(range.description)})` : ''}`
+                  )
+                : ['• any address'])
+            );
+          }
+        }
+      }
       return textResult(lines.join('\n'));
     }
   );
@@ -370,17 +594,28 @@ export function registerAdminPermissionTools(
     {
       title: 'Salesforce Admin · Act — Propose a permission set, or more access',
       description:
-        'Propose a new permission set (newSet) with the access it grants, or more access in an ' +
-        'existing one (permissionSet): records of objects (read, create, edit, delete, view ' +
-        'all, modify all), fields (read or edit), and custom objects’ tabs. Access added to an ' +
-        'existing set never takes any away. The person reviews and applies it from the link ' +
-        'this returns; who has the set is salesforce_admin_propose_assignments.',
+        'Propose a new permission set (newSet) with the access it grants, or a change to the ' +
+        'access in an existing permission set (permissionSet) or a profile (profile): records ' +
+        'of objects (read, create, edit, delete, view all, modify all), fields (read or edit), ' +
+        'custom objects’ tabs, apps, and the record types a permission set may use. Access ' +
+        'given never takes any away; to take access away ' +
+        'from an existing set or profile, name it: removeFields (all of a field’s access, or ' +
+        'only edit), removeObjects (all access to an object’s records, or named rights), ' +
+        'removeTabs and removeApps. Read what it grants first (salesforce_admin_list_permission_sets). The ' +
+        'person reviews and applies it from the link this returns; who has a set is ' +
+        'salesforce_admin_propose_assignments.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         permissionSet: z
           .string()
           .optional()
-          .describe('An existing set’s API name or label, to add access to it.'),
+          .describe('An existing set’s API name or label, to change the access in it.'),
+        profile: z
+          .string()
+          .optional()
+          .describe(
+            'A profile’s name ("Standard User"), to change the access in it, instead of permissionSet.'
+          ),
         newSet: z
           .object({
             label: z.string().min(1).max(80),
@@ -388,31 +623,98 @@ export function registerAdminPermissionTools(
             description: z.string().max(255).optional(),
           })
           .optional()
-          .describe('A new permission set, instead of permissionSet.'),
+          .describe('A new permission set, instead of permissionSet or profile.'),
         ...accessInput,
+        removeFields: z
+          .array(
+            z.object({
+              object: z.string().min(1),
+              field: z.string().min(1).describe('The field’s API name.'),
+              keepRead: z
+                .boolean()
+                .optional()
+                .describe('Take only edit away, leaving read (default: take all access away).'),
+            })
+          )
+          .max(200)
+          .optional()
+          .describe(
+            'Existing sets and profiles only: field access to take away. People keep any access another set or their profile gives them.'
+          ),
+        removeObjects: z
+          .array(
+            z.object({
+              object: z.string().min(1).describe('The object’s API name or label.'),
+              rights: z
+                .array(z.enum(['read', 'create', 'edit', 'delete', 'viewAll', 'modifyAll']))
+                .max(6)
+                .optional()
+                .describe(
+                  'The rights to take away (default all). A right goes with what it stands on: without read, none; without edit, no delete; modify all goes when any other right does.'
+                ),
+            })
+          )
+          .max(50)
+          .optional()
+          .describe(
+            'Existing sets and profiles only: access to an object’s records to take away. Salesforce refuses to take read away while field access on the object remains, so name those fields in removeFields too.'
+          ),
+        removeTabs: z
+          .array(z.string().min(1))
+          .max(50)
+          .optional()
+          .describe('Existing sets and profiles only: custom objects’ tabs to stop showing.'),
         recordTypes: z
           .array(z.string().min(1))
           .max(50)
           .optional()
           .describe(
-            'New sets only: record types people with it can use, as Object.RecordType (API name or label).'
+            'Permission sets, new or existing: record types people with it can use, as Object.RecordType (API name or label). On an existing set this deploys the set whole, as read, with the record types added.'
           ),
+        apps: z
+          .array(z.string().min(1))
+          .max(20)
+          .optional()
+          .describe('Existing sets and profiles only: apps it may open, by API name or label.'),
+        removeApps: z
+          .array(z.string().min(1))
+          .max(20)
+          .optional()
+          .describe('Existing sets and profiles only: apps it may no longer open.'),
         reason: reasonField,
         replaces: replacesField,
       }),
     },
     async (args) => {
-      if (Boolean(args.permissionSet) === Boolean(args.newSet)) {
-        return errText('Name either permissionSet (an existing set) or newSet (a new one).');
+      if ([args.permissionSet, args.newSet, args.profile].filter(Boolean).length !== 1) {
+        return errText(
+          'Name one of permissionSet (an existing set), profile (a profile) or newSet (a new set).'
+        );
+      }
+      const removing = args.removeFields ?? [];
+      const removingObjects = args.removeObjects ?? [];
+      const removingTabs = args.removeTabs ?? [];
+      const takesAway = removing.length + removingObjects.length + removingTabs.length > 0;
+      if (args.newSet && takesAway) {
+        return errText(
+          'A new permission set has no access to take away: leave removeFields, removeObjects and removeTabs out.'
+        );
       }
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const refused = await refusesChanges(access);
       if (refused) return errText(refused);
       const checkedErrors: string[] = [];
-      if (!args.newSet && (args.recordTypes ?? []).length > 0) {
+      const wantsRecordTypes = (args.recordTypes ?? []).length > 0;
+      if (args.profile && wantsRecordTypes) {
         return errText(
-          'Record types can be given in a new permission set only: an existing set deploys whole, which would drop everything else it grants. Give the record type to profiles (salesforce_admin_propose_record_type), or create a set for it.'
+          'A profile is given a record type, with its layout, by salesforce_admin_propose_record_type (profiles).'
+        );
+      }
+      const appRefs = [...(args.apps ?? []), ...(args.removeApps ?? [])];
+      if (args.newSet && appRefs.length > 0) {
+        return errText(
+          'Apps are given to a set once it exists: propose the new set, and once it is applied, propose apps for it.'
         );
       }
 
@@ -420,29 +722,15 @@ export function registerAdminPermissionTools(
         context,
         access,
         args,
-        Boolean(args.newSet) && (args.recordTypes ?? []).length > 0
+        wantsRecordTypes || appRefs.length > 0 || takesAway
       );
       if (Array.isArray(checked))
         return errText(`Nothing was proposed:\n${checked.map((e) => `• ${e}`).join('\n')}`);
 
       if (args.newSet) {
-        const recordTypes: string[] = [];
-        for (const ref of args.recordTypes ?? []) {
-          const dot = ref.indexOf('.');
-          if (dot < 1) {
-            checkedErrors.push(`"${ref}": name it as Object.RecordType.`);
-            continue;
-          }
-          const describe = await resolveObject(context, access, ref.slice(0, dot));
-          if (typeof describe === 'string') {
-            checkedErrors.push(describe);
-            continue;
-          }
-          const types = await listRecordTypes(context, access, describe.name);
-          const rt = typeof types === 'string' ? types : findRecordType(types, ref.slice(dot + 1));
-          if (typeof rt === 'string') checkedErrors.push(`${describe.name}: ${rt}`);
-          else recordTypes.push(`${describe.name}.${rt.developerName}`);
-        }
+        const resolved = await resolveRecordTypes(context, access, args.recordTypes ?? []);
+        const recordTypes = resolved.recordTypes;
+        checkedErrors.push(...resolved.errors);
         if (checkedErrors.length > 0)
           return errText(`Nothing was proposed:\n${checkedErrors.map((e) => `• ${e}`).join('\n')}`);
         const label = args.newSet.label.trim();
@@ -515,16 +803,72 @@ export function registerAdminPermissionTools(
         });
       }
 
-      const set = await resolvePermissionSet(context, access, args.permissionSet ?? '');
+      const profile = args.profile
+        ? await resolveProfileAccess(context, access, args.profile)
+        : null;
+      if (typeof profile === 'string') return errText(profile);
+      const set =
+        profile ?? (await resolvePermissionSet(context, access, args.permissionSet ?? ''));
       if (typeof set === 'string') return errText(set);
       const parent = soqlString(set.id);
+
+      // Field access to take away: each field named as the org spells it,
+      // and not one this same proposal gives access to.
+      const removals = new Map<string, boolean>();
+      const removalErrors: string[] = [];
+      for (const entry of removing) {
+        const describe = await resolveObject(context, access, entry.object);
+        if (typeof describe === 'string') {
+          removalErrors.push(describe);
+          continue;
+        }
+        const key = `${describe.name}.${entry.field.trim()}`;
+        if ([...checked.fields.keys()].some((f) => f.toLowerCase() === key.toLowerCase())) {
+          removalErrors.push(`${key} is both given and taken away: name it once.`);
+          continue;
+        }
+        removals.set(key, entry.keepRead === true);
+      }
+      // Records' access and tabs to take away, by the org's own names.
+      const objectRemovals = new Map<string, readonly (keyof ObjectRights)[]>();
+      for (const entry of removingObjects) {
+        const describe = await resolveObject(context, access, entry.object);
+        if (typeof describe === 'string') {
+          removalErrors.push(describe);
+          continue;
+        }
+        if (checked.objects.has(describe.name)) {
+          removalErrors.push(
+            `${describe.name} records are both given and taken away: name them once.`
+          );
+          continue;
+        }
+        objectRemovals.set(describe.name, entry.rights?.length ? entry.rights : ALL_RIGHTS);
+      }
+      const tabRemovals: string[] = [];
+      for (const ref of removingTabs) {
+        const describe = await resolveObject(context, access, ref);
+        if (typeof describe === 'string') {
+          removalErrors.push(describe);
+          continue;
+        }
+        if (checked.tabs.includes(describe.name)) {
+          removalErrors.push(`The ${describe.name} tab is both shown and hidden: name it once.`);
+          continue;
+        }
+        if (!tabRemovals.includes(describe.name)) tabRemovals.push(describe.name);
+      }
+      if (removalErrors.length > 0) {
+        return errText(`Nothing was proposed:\n${removalErrors.map((e) => `• ${e}`).join('\n')}`);
+      }
       const objectNames = [
         ...new Set([
+          ...objectRemovals.keys(),
           ...checked.objects.keys(),
           ...[...checked.fields.keys()].map((f) => f.split('.')[0]),
         ]),
       ];
-      const [objectRows, fieldRows, tabRows] = await Promise.all([
+      const [objectRows, fieldRows, removalRows, tabRows] = await Promise.all([
         objectNames.length > 0
           ? sfQuery(
               context,
@@ -539,15 +883,22 @@ export function registerAdminPermissionTools(
               `SELECT Field, PermissionsRead, PermissionsEdit FROM FieldPermissions WHERE ParentId = ${parent} AND Field IN ${inList([...checked.fields.keys()])}`
             )
           : null,
-        checked.tabs.length > 0
+        removals.size > 0
           ? sfQuery(
               context,
               access,
-              `SELECT Name FROM PermissionSetTabSetting WHERE ParentId = ${parent} AND Name IN ${inList(checked.tabs)}`
+              `SELECT Field, PermissionsRead, PermissionsEdit FROM FieldPermissions WHERE ParentId = ${parent} AND Field IN ${inList([...removals.keys()])}`
+            )
+          : null,
+        checked.tabs.length + tabRemovals.length > 0
+          ? sfQuery(
+              context,
+              access,
+              `SELECT Name FROM PermissionSetTabSetting WHERE ParentId = ${parent} AND Name IN ${inList([...checked.tabs, ...tabRemovals])}`
             )
           : null,
       ]);
-      for (const result of [objectRows, fieldRows, tabRows]) {
+      for (const result of [objectRows, fieldRows, tabRows, removalRows]) {
         if (result && !result.ok) return errText(result.error);
       }
       const recordsOf = (result: typeof fieldRows) => (result?.ok ? result.records : []);
@@ -594,12 +945,327 @@ export function registerAdminPermissionTools(
           from: nowEdit ? 'read and edit' : nowRead ? 'read' : 'none',
         });
       }
-      if (steps.length === 0) {
-        return errText(`Nothing was proposed: ${set.name} already grants all of that.`);
+      const unchanged: string[] = [];
+      for (const [key, keepRead] of removals) {
+        const row = recordsOf(removalRows).find(
+          (r) => str(r.Field).toLowerCase() === key.toLowerCase()
+        );
+        const nowRead = row?.PermissionsRead === true;
+        const nowEdit = row?.PermissionsEdit === true;
+        if (!row || (!nowRead && !nowEdit)) {
+          unchanged.push(`${set.name} gives no access to ${key} to take away.`);
+          continue;
+        }
+        if (keepRead && !nowEdit) {
+          unchanged.push(`${set.name} already gives read-only access to ${key}.`);
+          continue;
+        }
+        // The org's own spelling of the field, from the row.
+        const name = str(row.Field) || key;
+        const [object, field] = [
+          name.slice(0, name.indexOf('.')),
+          name.slice(name.indexOf('.') + 1),
+        ];
+        steps.push({
+          kind: 'field-permission',
+          ...base,
+          object,
+          field,
+          read: keepRead,
+          edit: false,
+          remove: keepRead ? 'edit' : 'all',
+        });
+        rows.push({
+          label: name,
+          value: keepRead ? 'read' : 'none',
+          from: nowEdit ? 'read and edit' : 'read',
+        });
       }
+      // Records' access goes after the field access that stands on it.
+      for (const [object, rights] of objectRemovals) {
+        const row = recordsOf(objectRows).find(
+          (r) => str(r.SobjectType).toLowerCase() === object.toLowerCase()
+        );
+        const now = row ? rightsOf(row) : NO_RIGHTS;
+        const next = withoutRights(now, rights);
+        if (!now.read) {
+          unchanged.push(`${set.name} gives no access to ${object} records to take away.`);
+          continue;
+        }
+        if (sameRights(now, next)) {
+          unchanged.push(`${set.name} does not give ${rights.join(', ')} on ${object} records.`);
+          continue;
+        }
+        steps.push({ kind: 'object-permission', ...base, object, ...next, remove: true });
+        rows.push({
+          label: `${object} records`,
+          value: next.read ? rightsLabel(next) : 'none',
+          from: rightsLabel(now),
+        });
+      }
+      for (const tab of tabRemovals) {
+        if (!recordsOf(tabRows).some((r) => str(r.Name).toLowerCase() === tab.toLowerCase())) {
+          unchanged.push(`${set.name} does not show the ${tab} tab.`);
+          continue;
+        }
+        steps.push({ kind: 'tab-visibility', ...base, tab, visibility: 'DefaultOn', remove: true });
+        rows.push({ label: `${tab} tab`, value: 'hidden', from: 'shown' });
+      }
+      // Apps: a SetupEntityAccess row each.
+      const [wantedApps, unwantedApps] = await Promise.all([
+        resolveApps(context, access, args.apps ?? []),
+        resolveApps(context, access, args.removeApps ?? []),
+      ]);
+      const appErrors = [...wantedApps.errors, ...unwantedApps.errors];
+      for (const app of wantedApps.apps) {
+        if (unwantedApps.apps.some((other) => other.id === app.id))
+          appErrors.push(`The app ${app.name} is both given and taken away: name it once.`);
+      }
+      if (appErrors.length > 0)
+        return errText(`Nothing was proposed:\n${appErrors.map((e) => `• ${e}`).join('\n')}`);
+      const appIds = [...wantedApps.apps, ...unwantedApps.apps].map((app) => app.id);
+      const appRows =
+        appIds.length > 0
+          ? await sfQuery(
+              context,
+              access,
+              `SELECT SetupEntityId FROM SetupEntityAccess WHERE ParentId = ${parent} AND SetupEntityId IN ${inList(appIds)}`
+            )
+          : null;
+      if (appRows && !appRows.ok) return errText(appRows.error);
+      const opens = (id: string) =>
+        recordsOf(appRows).some((row) => str(row.SetupEntityId).slice(0, 15) === id.slice(0, 15));
+      for (const app of wantedApps.apps) {
+        if (opens(app.id)) {
+          unchanged.push(`${set.name} can already open the app ${app.name}.`);
+          continue;
+        }
+        steps.push({ kind: 'app-visibility', ...base, appId: app.id, app: app.name });
+        rows.push({ label: `${app.name} app`, value: 'may open', from: 'may not' });
+      }
+      for (const app of unwantedApps.apps) {
+        if (!opens(app.id)) {
+          unchanged.push(`${set.name} does not open the app ${app.name}.`);
+          continue;
+        }
+        steps.push({ kind: 'app-visibility', ...base, appId: app.id, app: app.name, remove: true });
+        rows.push({ label: `${app.name} app`, value: 'may not', from: 'may open' });
+      }
+
+      // Record types have no row of their own to write: the set deploys
+      // whole, exactly as read, with the record types added — and applying
+      // is refused if the set moved since.
+      const files: Record<string, string> = {};
+      const members: { type: string; member: string }[] = [];
+      const preconditions: Precondition[] = [];
+      if (wantsRecordTypes) {
+        const resolved = await resolveRecordTypes(context, access, args.recordTypes ?? []);
+        if (resolved.errors.length > 0) {
+          return errText(
+            `Nothing was proposed:\n${resolved.errors.map((e) => `• ${e}`).join('\n')}`
+          );
+        }
+        const live = await readWholeMetadata(context, access, 'PermissionSet', set.name);
+        if (typeof live === 'string') return errText(`Nothing was proposed: ${live}`);
+        if (!live) return errText(`Nothing was proposed: ${set.name} could not be read whole.`);
+        const visible = many(live.metadata.recordTypeVisibilities);
+        const adding = resolved.recordTypes.filter(
+          (recordType) =>
+            !visible.some(
+              (entry) =>
+                str(entry.recordType).toLowerCase() === recordType.toLowerCase() &&
+                String(entry.visible) === 'true'
+            )
+        );
+        for (const recordType of resolved.recordTypes.filter((rt) => !adding.includes(rt))) {
+          unchanged.push(`${set.name} may already use the record type ${recordType}.`);
+        }
+        if (adding.length > 0) {
+          files[`permissionsets/${metadataFileName(set.name)}.permissionset`] = metadataFile(
+            'PermissionSet',
+            {
+              ...live.metadata,
+              recordTypeVisibilities: [
+                ...visible.filter(
+                  (entry) =>
+                    !adding.some((rt) => rt.toLowerCase() === str(entry.recordType).toLowerCase())
+                ),
+                ...adding.map((recordType) => ({ recordType, visible: true })),
+              ],
+            }
+          );
+          members.push({ type: 'PermissionSet', member: set.name });
+          files['package.xml'] = packageXml(members);
+          preconditions.push({
+            kind: 'component-unchanged',
+            type: 'PermissionSet',
+            object: '',
+            name: set.name,
+            fingerprint: live.fingerprint,
+          });
+          for (const recordType of adding) {
+            rows.push({ label: `${recordType} record type`, value: 'may use', from: 'may not' });
+          }
+        }
+      }
+
+      if (steps.length + members.length === 0) {
+        return errText(
+          unchanged.length > 0
+            ? `Nothing was proposed: nothing would change.\n${unchanged.map((e) => `• ${e}`).join('\n')}`
+            : `Nothing was proposed: ${set.name} already grants all of that.`
+        );
+      }
+      const takes = (step: DataStep) => 'remove' in step && Boolean(step.remove);
+      const taking = steps.some(takes);
+      const giving = steps.some((step) => !takes(step)) || members.length > 0;
+      const profileName = profile?.profile ?? null;
+      const holder = profileName ? `The profile ${profileName}` : set.name;
+      const componentName = profileName ?? set.name;
       return proposeAndValidate(context, access, {
         kind: PERMISSION_SET_KIND,
-        title: `${set.name}: more access`,
+        title: `${holder}: ${taking ? (giving ? 'change access' : 'less access') : 'more access'}`,
+        reason: args.reason,
+        replaces: args.replaces,
+        payload: {
+          files,
+          members,
+          components: [
+            {
+              type: profileName ? 'Profile' : 'PermissionSet',
+              name: componentName,
+              action: 'update',
+              rows,
+            },
+          ],
+          preconditions,
+          dataSteps: steps,
+        },
+        summary: [
+          taking
+            ? `• ${holder} changes (only what is listed; people keep any access another set or their profile gives them):`
+            : `• ${holder} gets (nothing it grants now is taken away):`,
+          ...rows.map((row) => `  ${row.label}: ${row.from} → ${row.value}`),
+          ...unchanged,
+          ...checked.notes,
+        ],
+      });
+    }
+  );
+
+  server.registerTool(
+    'salesforce_admin_propose_permission_set_details',
+    {
+      title: 'Salesforce Admin · Act — Propose renaming or deleting a permission set',
+      description:
+        'Propose a new label or description for an existing permission set (its API name ' +
+        'stays, so nothing that refers to it breaks), or deleting one nobody is assigned ' +
+        '(delete: true). The person reviews and applies it from the link this returns. A ' +
+        'deleted set cannot be brought back from Renkei.',
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      inputSchema: z.object({
+        permissionSet: z.string().min(1).describe('The set’s API name or label.'),
+        label: z.string().min(1).max(80).optional().describe('Its new label.'),
+        description: z.string().max(255).optional().describe('Its new description.'),
+        delete: z.boolean().optional().describe('Delete the set, in place of changing it.'),
+        reason: reasonField,
+        replaces: replacesField,
+      }),
+    },
+    async (args) => {
+      const changing = args.label !== undefined || args.description !== undefined;
+      if (Boolean(args.delete) === changing) {
+        return errText('Give a new label or description, or delete: true — one or the other.');
+      }
+      const access = await auth.resolve();
+      if (typeof access === 'string') return errText(access);
+      const refused = await refusesChanges(access);
+      if (refused) return errText(refused);
+      const set = await resolvePermissionSet(context, access, args.permissionSet);
+      if (typeof set === 'string') return errText(set);
+      const found = await sfQuery(
+        context,
+        access,
+        `SELECT Label, Description, NamespacePrefix FROM PermissionSet WHERE Id = ${soqlString(set.id)} LIMIT 1`
+      );
+      if (!found.ok) return errText(found.error);
+      const now = found.records[0] ?? {};
+      if (str(now.NamespacePrefix)) {
+        return errText(
+          `Nothing was proposed: ${set.name} belongs to the managed package ${str(now.NamespacePrefix)} and cannot be changed.`
+        );
+      }
+      const base = { permissionSetId: set.id, permissionSetName: set.name };
+
+      if (args.delete) {
+        const held = await sfQuery(
+          context,
+          access,
+          `SELECT COUNT(Id) n FROM PermissionSetAssignment WHERE PermissionSetId = ${soqlString(set.id)}`
+        );
+        if (!held.ok) return errText(held.error);
+        const people = Number(held.records[0]?.n ?? 0);
+        if (people > 0) {
+          return errText(
+            `Nothing was proposed: ${people} ${people === 1 ? 'person has' : 'people have'} ${set.name}. Take it away from them first (salesforce_admin_propose_assignments), then delete it.`
+          );
+        }
+        return proposeAndValidate(context, access, {
+          kind: PERMISSION_SET_KIND,
+          title: `Delete the permission set ${str(now.Label) || set.name}`,
+          reason: args.reason,
+          replaces: args.replaces,
+          payload: {
+            files: {},
+            members: [],
+            components: [
+              {
+                type: 'PermissionSet',
+                name: set.name,
+                action: 'delete',
+                rows: [
+                  { label: 'Label', value: str(now.Label) },
+                  { label: 'Assigned to', value: 'nobody' },
+                ],
+              },
+            ],
+            preconditions: [],
+            dataSteps: [{ kind: 'permission-set-delete', ...base }],
+          },
+          summary: [
+            `• Delete the permission set ${set.name}, which nobody is assigned. It cannot be brought back from Renkei.`,
+          ],
+        });
+      }
+
+      const label = args.label?.trim();
+      const description = args.description?.trim();
+      const rows: ViewRow[] = [];
+      if (label !== undefined && label !== str(now.Label)) {
+        const taken = await sfQuery(
+          context,
+          access,
+          `SELECT Name FROM PermissionSet WHERE Label = ${soqlString(label)} AND Id != ${soqlString(set.id)} LIMIT 1`
+        );
+        if (!taken.ok) return errText(taken.error);
+        if (taken.records.length > 0) {
+          return errText(
+            `Nothing was proposed: there is already a permission set labelled “${label}” (${str(taken.records[0].Name)}).`
+          );
+        }
+        rows.push({ label: 'Label', value: label, from: str(now.Label) });
+      }
+      if (description !== undefined && description !== str(now.Description)) {
+        rows.push({ label: 'Description', value: description, from: str(now.Description) });
+      }
+      if (rows.length === 0) {
+        return errText(`Nothing was proposed: ${set.name} already reads that way.`);
+      }
+      const renamed = rows.some((row) => row.label === 'Label');
+      const described = rows.some((row) => row.label === 'Description');
+      return proposeAndValidate(context, access, {
+        kind: PERMISSION_SET_KIND,
+        title: `${set.name}: ${renamed ? 'rename' : 'describe'}`,
         reason: args.reason,
         replaces: args.replaces,
         payload: {
@@ -607,12 +1273,20 @@ export function registerAdminPermissionTools(
           members: [],
           components: [{ type: 'PermissionSet', name: set.name, action: 'update', rows }],
           preconditions: [],
-          dataSteps: steps,
+          dataSteps: [
+            {
+              kind: 'permission-set-details',
+              ...base,
+              ...(renamed && label !== undefined ? { label } : {}),
+              ...(described && description !== undefined ? { description } : {}),
+            },
+          ],
         },
         summary: [
-          `• ${set.name} gets (nothing it grants now is taken away):`,
-          ...rows.map((row) => `  ${row.label}: ${row.from} → ${row.value}`),
-          ...checked.notes,
+          `• ${set.name} (its API name stays):`,
+          ...rows.map(
+            (row) => `  ${row.label}: ${row.from || '(blank)'} → ${row.value || '(blank)'}`
+          ),
         ],
       });
     }
