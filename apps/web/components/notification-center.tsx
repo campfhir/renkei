@@ -110,11 +110,7 @@ export function useNotifications(): NotificationState {
   return useContext(Context);
 }
 
-export function NotificationCenter({
-  children,
-}: {
-  children: ReactNode;
-}) {
+export function NotificationCenter({ children }: { children: ReactNode }) {
   const [unread, setUnread] = useState(0);
   const [arrivals, setArrivals] = useState<AppNotification[]>([]);
   // The cursor, always a server timestamp. In a ref because the polling
@@ -217,6 +213,8 @@ export function NotificationCenter({
   );
 
   return (
-    <Context.Provider value={{ unread, arrivals, dismiss, markRead, refresh }}>{children}</Context.Provider>
+    <Context.Provider value={{ unread, arrivals, dismiss, markRead, refresh }}>
+      {children}
+    </Context.Provider>
   );
 }

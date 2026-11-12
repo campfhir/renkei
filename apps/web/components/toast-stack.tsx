@@ -51,7 +51,9 @@ const LAYERS = [
  * itself a batch — a bulk mail job — is already ONE tallied row per run by
  * the time it gets here; see the worker's act-tally.ts.)
  */
-function coalesce(arrivals: AppNotification[]): { entry: AppNotification; extra: number; ids: string[] }[] {
+function coalesce(
+  arrivals: AppNotification[]
+): { entry: AppNotification; extra: number; ids: string[] }[] {
   const groups = new Map<string, { entry: AppNotification; extra: number; ids: string[] }>();
   for (const entry of arrivals) {
     const key = entry.runId && entry.tool ? `${entry.runId}:${entry.tool}` : entry.id;
