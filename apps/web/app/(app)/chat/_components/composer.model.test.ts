@@ -16,6 +16,7 @@ import {
   batchWarning,
   composerReducer,
   dropQuestion,
+  dropShown,
   extractStatusLabel,
   filesChosen,
   hasDraft,
@@ -588,5 +589,35 @@ describe('the model in use is at a token limit', () => {
       disabled: false,
     });
     expect(sendStep(typed, false, false).kind).toBe('submit');
+  });
+});
+
+describe('files dragged over the chat window', () => {
+  it('the window shows where they land as soon as they are over it', () => {
+    expect(dropShown(run([]))).toBe(false);
+    expect(dropShown(run([{ type: 'dragEntered' }]))).toBe(true);
+  });
+
+  it('moving from a reply to the prompt above it does not flicker', () => {
+    // The next element is entered before the last one is left.
+    const moved = run([{ type: 'dragEntered' }, { type: 'dragEntered' }, { type: 'dragLeft' }]);
+    expect(dropShown(moved)).toBe(true);
+  });
+
+  it('dragged back out of the window, it stops showing', () => {
+    const out = run([
+      { type: 'dragEntered' },
+      { type: 'dragEntered' },
+      { type: 'dragLeft' },
+      { type: 'dragLeft' },
+    ]);
+    expect(dropShown(out)).toBe(false);
+    // A stray leave never leaves it owing an enter.
+    expect(dropShown(run([{ type: 'dragLeft' }, { type: 'dragEntered' }]))).toBe(true);
+  });
+
+  it('dropped or called off, it stops showing however deep the drag was', () => {
+    const deep = run([{ type: 'dragEntered' }, { type: 'dragEntered' }, { type: 'dragEntered' }]);
+    expect(dropShown(run([{ type: 'dragEnded' }], deep))).toBe(false);
   });
 });

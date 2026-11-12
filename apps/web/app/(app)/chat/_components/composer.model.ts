@@ -73,7 +73,13 @@ export interface ComposerState<F extends NamedFile = NamedFile> {
   sendWhenUploaded: boolean;
   listOpen: boolean;
   queueOpen: boolean;
-  dragging: boolean;
+  /**
+   * Files being dragged over the chat window: how many of its elements the
+   * drag has entered and not yet left. Moving from one message to the next
+   * enters the new one before leaving the old, so the count stays above
+   * zero until the drag leaves the window, is dropped or is called off.
+   */
+  dragDepth: number;
   prompts: boolean;
   /** A picked prompt with variables, waiting on the form that fills them. */
   variables: { title: string; body: string; variables: PromptVariables } | null;
@@ -102,7 +108,7 @@ export function initialComposer<F extends NamedFile = NamedFile>(
     sendWhenUploaded: false,
     listOpen: false,
     queueOpen: false,
-    dragging: false,
+    dragDepth: 0,
     prompts: false,
     variables: null,
     dictating: false,
@@ -157,7 +163,11 @@ export type ComposerAction<F extends NamedFile = NamedFile> =
   | { type: 'queueOpened' }
   | { type: 'queueClosed' }
   | { type: 'queueLengthChanged'; length: number }
-  | { type: 'dragOver' }
+  /** Files dragged onto an element of the chat window. */
+  | { type: 'dragEntered' }
+  /** …and off one. */
+  | { type: 'dragLeft' }
+  /** Dropped, or the drag was called off: nothing is over the window any more. */
   | { type: 'dragEnded' }
   | { type: 'promptsOpened' }
   | { type: 'promptsClosed' }
@@ -300,10 +310,12 @@ export function composerReducer<F extends NamedFile>(
     case 'queueLengthChanged':
       // Down to one item (or none), that item belongs inline again, not behind a dialog.
       return action.length <= 1 ? { ...state, queueOpen: false } : state;
-    case 'dragOver':
-      return { ...state, dragging: true };
+    case 'dragEntered':
+      return { ...state, dragDepth: state.dragDepth + 1 };
+    case 'dragLeft':
+      return { ...state, dragDepth: Math.max(0, state.dragDepth - 1) };
     case 'dragEnded':
-      return { ...state, dragging: false };
+      return { ...state, dragDepth: 0 };
     case 'promptsOpened':
       return { ...state, prompts: true };
     case 'promptsClosed':
@@ -384,6 +396,11 @@ export function proceedWith<F extends NamedFile>(
 }
 
 /** Files are waiting for the person to say where they go. */
+/** Files are held over the chat window: it shows where they will land. */
+export function dropShown(state: ComposerState): boolean {
+  return state.dragDepth > 0;
+}
+
 export function placing(state: ComposerState): boolean {
   return (state.pendingDrop?.length ?? 0) > 0;
 }
