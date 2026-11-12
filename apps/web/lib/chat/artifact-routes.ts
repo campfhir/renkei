@@ -67,33 +67,39 @@ function actError(error: ArtifactActError, failure?: ActFailure): Response {
       error,
     });
   }
-  switch (error) {
-    case 'NOT_FOUND':
-      return jsonError(404, 'not-found', 'No such file');
-    case 'FORBIDDEN':
-      return jsonError(403, 'forbidden', 'You may use this file, not change it.');
-    case 'CONTENT_KEY':
-      return jsonError(
-        409,
-        'content-key',
-        'The file’s text could not be re-keyed. Its owner has to be signed in for this.'
-      );
-    case 'UNCONFIGURED':
-      return jsonError(503, 'uploads-off', 'File storage is not set up.');
-    case 'STORE':
-      return jsonError(502, 'store', 'The file store refused.');
-    case 'SELF':
-      return jsonError(400, 'self', 'That is you');
-    case 'BUDGET':
-      return jsonError(
-        409,
-        'budget',
-        `Keeping this file in context would exceed the project’s ${Math.round(ALWAYS_BUDGET_TOKENS / 1000)}k-token budget. Make room, or use it on demand.`
-      );
-    case 'INVALID':
-      return jsonError(400, 'invalid', 'This file has no text to keep in context.');
-  }
+  const { status, code, message } = ACT_ERRORS[error];
+  return jsonError(status, code, message);
 }
+
+/** What each refused act answers, here and in a bulk job's line for the file. */
+const ACT_ERRORS: Record<ArtifactActError, { status: number; code: string; message: string }> = {
+  NOT_FOUND: { status: 404, code: 'not-found', message: 'No such file' },
+  FORBIDDEN: { status: 403, code: 'forbidden', message: 'You may use this file, not change it.' },
+  CONTENT_KEY: {
+    status: 409,
+    code: 'content-key',
+    message: 'The file’s text could not be re-keyed. Its owner has to be signed in for this.',
+  },
+  UNCONFIGURED: { status: 503, code: 'uploads-off', message: 'File storage is not set up.' },
+  STORE: { status: 502, code: 'store', message: 'The file store refused.' },
+  SELF: { status: 400, code: 'self', message: 'That is you' },
+  BUDGET: {
+    status: 409,
+    code: 'budget',
+    message: `Keeping this file in context would exceed the project’s ${Math.round(ALWAYS_BUDGET_TOKENS / 1000)}k-token budget. Make room, or use it on demand.`,
+  },
+  INVALID: { status: 400, code: 'invalid', message: 'This file has no text to keep in context.' },
+};
+
+/** The sentence a refused act shows the person. */
+export const actErrorMessage = (error: ArtifactActError): string => ACT_ERRORS[error].message;
+
+/** What a refused OCR request says, and its status. */
+export const OCR_REFUSALS: Record<OcrRefusal, { status: number; message: string }> = {
+  unsupported: { status: 422, message: 'OCR reads PDFs and images only.' },
+  unconfigured: { status: 503, message: 'OCR is not set up for this organization.' },
+  running: { status: 409, message: 'OCR is already running on this file.' },
+};
 
 const modeOf = (value: unknown): ReferenceMode => (isReferenceMode(value) ? value : 'on_demand');
 
@@ -228,13 +234,7 @@ export async function startOcrRoute(request: NextRequest, artifactId: string): P
   if (access.role !== 'owner') return actError('FORBIDDEN');
   const refusal = ocrRefusalFor(access) ?? (await claimArtifactOcr(artifactId));
   if (refusal) {
-    const message: Record<OcrRefusal, string> = {
-      unsupported: 'OCR reads PDFs and images only.',
-      unconfigured: 'OCR is not set up for this organization.',
-      running: 'OCR is already running on this file.',
-    };
-    const status = refusal === 'unconfigured' ? 503 : refusal === 'running' ? 409 : 422;
-    return jsonError(status, refusal, message[refusal]);
+    return jsonError(OCR_REFUSALS[refusal].status, refusal, OCR_REFUSALS[refusal].message);
   }
   after(() => runArtifactOcr(artifactId, session.subject));
   return NextResponse.json({ ok: true }, { status: 202 });

@@ -420,6 +420,22 @@ export interface BatchProcessedFiles {
   size: number;
 }
 
+export interface ArtifactBulkJobs {
+  action: string;
+  artifact_ids: Json;
+  created_at: Generated<Timestamp>;
+  dismissed_at: Timestamp | null;
+  finished_at: Timestamp | null;
+  id: string;
+  last_error: string | null;
+  mode: string | null;
+  project_id: string | null;
+  results: Generated<Json>;
+  status: Generated<string>;
+  subject: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface ArtifactReferences {
   added_by: string;
   artifact_id: string;
@@ -1731,6 +1747,7 @@ export interface DB {
   agent_run_log: AgentRunLog;
   agent_run_steps: AgentRunSteps;
   agent_runs: AgentRuns;
+  artifact_bulk_jobs: ArtifactBulkJobs;
   artifact_references: ArtifactReferences;
   artifacts: Artifacts;
   agent_trigger_firings: AgentTriggerFirings;

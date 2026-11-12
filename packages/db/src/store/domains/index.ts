@@ -26,6 +26,7 @@ import { usage } from './usage';
 import { userPreferences } from './user-preferences';
 import { salesforceChanges } from './salesforce-changes';
 import { jiraChanges } from './jira-changes';
+import { artifactBulkJobs } from './artifact-bulk-jobs';
 import { jiraSpaceTemplates } from './jira-space-templates';
 import { adminChangeQueue } from './admin-change-queue';
 import { salesforceGrants } from './salesforce-grants';
@@ -97,6 +98,7 @@ export const DOMAINS = {
   notifications,
   salesforceChanges,
   jiraChanges,
+  artifactBulkJobs,
   jiraSpaceTemplates,
   adminChangeQueue,
   salesforceGrants,

@@ -40,6 +40,7 @@ import ShareModal from './share-modal';
 import AttachArtifactsPicker from './attach-to-project-modal';
 import { CopyArtifactModal, DeleteArtifactModal, RenameArtifactModal } from './artifact-dialogs';
 import { BulkAddModal, BulkDeleteModal } from './artifact-bulk-dialogs';
+import type { BulkJobView } from '@/lib/chat/artifact-bulk-job';
 import ArtifactUploadModal from './artifact-upload-modal';
 import OcrPanel from './artifact-ocr-panel';
 import { ModeToggle, sizeOf, statusFor, TypeBadge } from './artifact-bits';
@@ -52,7 +53,6 @@ import {
   detachSends,
   digestLabel,
   emptyMessage,
-  failureLine,
   filterStep,
   filtersOf,
   indexReducer,
@@ -62,6 +62,10 @@ import {
   originWord,
   ownerLabel,
   pager,
+  isPicked,
+  jobLine,
+  rowJobStatus,
+  pageCheck,
   pickedItems as pickedOn,
   rowOrigin,
   rowPress,
@@ -98,6 +102,7 @@ export default function ArtifactsIndex({
   digests,
   projects,
   selectedId,
+  jobs,
 }: {
   /** The page the server chose for `query`. */
   page: LibraryPage;
@@ -108,6 +113,8 @@ export default function ArtifactsIndex({
   digests: boolean;
   projects: { id: string; name: string; kind: string }[];
   selectedId: string | null;
+  /** This person's bulk jobs on the server: live ones, and finished ones with failures not closed. */
+  jobs: BulkJobView[];
 }) {
   const router = useRouter();
   const narrow = useMediaQuery(NARROW);
@@ -163,7 +170,7 @@ export default function ArtifactsIndex({
   // lands; it stops once nothing on the page is being read or summarized.
   const readHere = useRef<Set<string>>(new Set());
   readHere.current = seenReading(readHere.current, items);
-  const polling = keepsReading(items, digests, readHere.current);
+  const polling = keepsReading(items, digests, readHere.current, jobs);
   useEffect(() => {
     if (!polling) return;
     const timer = setInterval(reload, OCR_POLL_MS);
@@ -172,7 +179,7 @@ export default function ArtifactsIndex({
   // A new page of the library is the server's answer to a detach, so the
   // one in flight is over.
   useEffect(() => {
-    dispatch({ type: 'pageArrived' });
+    dispatch({ type: 'pageArrived', items: page.artifacts });
   }, [page]);
 
   // A filter change starts over at the first page of what it shows; the
@@ -265,17 +272,11 @@ export default function ArtifactsIndex({
     reload();
   };
 
-  /** Asks for a read of each file in turn; each one then goes on in the background. */
-  const runOcrOn = async (list: LibraryItem[]) => {
-    dispatch({ type: 'actSent' });
-    const failures: string[] = [];
-    for (const item of list) {
-      const result = await chatClient.startArtifactOcr(item.id);
-      if (result.error) failures.push(`${item.filename}: ${result.error}`);
-    }
-    dispatch({ type: 'actAnswered', error: failureLine(failures) });
-    reload();
-  };
+  /** Asks the server to read every file; it works through them as a job, one read at a time. */
+  const runOcrOn = (list: LibraryItem[]) =>
+    act(() =>
+      chatClient.startArtifactBulk({ action: 'ocr', artifactIds: list.map((item) => item.id) })
+    );
 
   const leave = (item: LibraryItem) =>
     act(() => chatClient.deleteArtifact(item.id), { type: 'selected', item: null });
@@ -552,7 +553,11 @@ export default function ArtifactsIndex({
       {bulk === 'delete' && pickedItems.length > 0 ? (
         <BulkDeleteModal
           items={pickedItems}
-          onDone={reload}
+          onDone={(sent) => {
+            // The job takes them away; they are no longer the person's to tick.
+            dispatch({ type: 'picksRemoved', ids: sent });
+            reload();
+          }}
           onClose={() => dispatch({ type: 'bulkClosed' })}
         />
       ) : null}
@@ -627,6 +632,7 @@ export default function ArtifactsIndex({
 
   const pages = pager(page);
   const bar = toolbar(state, items);
+  const all = pageCheck(state, items);
 
   return (
     <div
@@ -726,18 +732,131 @@ export default function ArtifactsIndex({
           </span>
         </div>
 
+        {jobs.length > 0 ? (
+          <ul aria-label="Bulk jobs" className="flex shrink-0 flex-col gap-2">
+            {jobs.map((job) => {
+              const line = jobLine(job, projects);
+              return (
+                <li
+                  key={job.id}
+                  role={line.live ? 'status' : 'alert'}
+                  className={`rounded-lg border px-3 py-2 text-sm ${
+                    line.live
+                      ? 'border-gray-200 dark:border-gray-800'
+                      : 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200'
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="font-medium">{line.text}</span>
+                    {line.progress !== null ? (
+                      <span className="text-xs text-gray-500">{line.progress}</span>
+                    ) : null}
+                    {!line.live ? (
+                      <button
+                        type="button"
+                        onClick={() => void act(() => chatClient.dismissArtifactBulk(job.id))}
+                        className="ml-auto text-xs hover:underline"
+                      >
+                        Dismiss
+                      </button>
+                    ) : null}
+                  </div>
+                  {line.fraction !== null ? (
+                    <div
+                      role="progressbar"
+                      aria-label={line.text}
+                      aria-valuemin={0}
+                      aria-valuemax={job.total}
+                      aria-valuenow={job.answered}
+                      className="mt-1.5 h-1 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800"
+                    >
+                      <div
+                        className="h-full bg-blue-600"
+                        style={{ width: `${Math.round(line.fraction * 100)}%` }}
+                      />
+                    </div>
+                  ) : null}
+                  {line.failures.length > 0 ? (
+                    <ul className="mt-1 space-y-0.5 text-xs">
+                      {line.failures.map((failure, index) => (
+                        <li key={index}>{failure}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+
         <div className="flex min-h-0 flex-1 items-stretch gap-4">
           <section
             aria-label="Artifacts"
             aria-busy={isPending}
             className={`flex min-h-0 min-w-0 flex-1 flex-col rounded-lg border border-gray-200 transition-opacity dark:border-gray-800 ${isPending ? 'opacity-60' : ''}`}
           >
-            <div className="flex h-9 shrink-0 items-center justify-end border-b border-gray-200 px-3 dark:border-gray-800">
+            {/* At the top of the list: in select mode the box that ticks
+                this page, what is ticked over every page and what to do
+                with it, so the rows below stay put as files are ticked. */}
+            <div
+              role={selecting ? 'toolbar' : undefined}
+              aria-label={selecting ? 'Selected artifacts' : undefined}
+              className="flex min-h-9 shrink-0 flex-wrap items-center gap-2 border-b border-gray-200 px-3 py-1.5 text-sm dark:border-gray-800"
+            >
+              {selecting ? (
+                <>
+                  <input
+                    type="checkbox"
+                    checked={all.checked}
+                    disabled={all.disabled}
+                    ref={(box) => {
+                      if (box) box.indeterminate = all.indeterminate;
+                    }}
+                    onChange={() => dispatch({ type: 'pagePickToggled', items })}
+                    aria-label={all.label}
+                    title={all.label}
+                    className="h-4 w-4 shrink-0 rounded border-gray-300 disabled:opacity-40"
+                  />
+                  <span className="font-medium">{bar.label}</span>
+                  <button
+                    type="button"
+                    disabled={!bar.anyPicked}
+                    onClick={() => dispatch({ type: 'bulkOpened', bulk: 'add' })}
+                    className={`${smallButton} disabled:opacity-40`}
+                  >
+                    Add to project…
+                  </button>
+                  <button
+                    type="button"
+                    disabled={bar.ocrTargets.length === 0}
+                    onClick={() => void runOcrOn(bar.ocrTargets)}
+                    className={`${smallButton} disabled:opacity-40`}
+                  >
+                    Run OCR
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!bar.anyPicked}
+                    onClick={() => dispatch({ type: 'bulkOpened', bulk: 'delete' })}
+                    className={`${smallButton} disabled:opacity-40`}
+                  >
+                    Delete…
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => dispatch({ type: 'pickCleared' })}
+                    disabled={!bar.anyPicked}
+                    className="text-xs text-gray-500 hover:underline disabled:opacity-40 disabled:hover:no-underline"
+                  >
+                    Clear
+                  </button>
+                </>
+              ) : null}
               <button
                 type="button"
                 aria-pressed={selecting}
                 onClick={() => dispatch({ type: 'selectModeToggled' })}
-                className={smallButton}
+                className={`${smallButton} ml-auto`}
               >
                 {selecting ? 'Done selecting' : 'Select'}
               </button>
@@ -754,11 +873,11 @@ export default function ArtifactsIndex({
                 className="min-h-0 flex-1 divide-y divide-gray-100 overflow-y-auto max-md:space-y-1.5 max-md:divide-y-0 max-md:p-2 dark:divide-gray-900"
               >
                 {items.map((item) => {
-                  const status = item.ocr
-                    ? 'OCR running'
-                    : statusFor(item.extractStatus, item.contentType);
+                  const status =
+                    rowJobStatus(item.id, jobs, projects) ??
+                    (item.ocr ? 'OCR running' : statusFor(item.extractStatus, item.contentType));
                   const isSelected = item.id === selected;
-                  const ticked = state.picked.includes(item.id);
+                  const ticked = isPicked(state, item.id);
                   const shownProjects = rowProjects(item.projects);
                   // In select mode the whole row is the checkmark: a click
                   // ticks or unticks it and never opens the details.
@@ -774,7 +893,7 @@ export default function ArtifactsIndex({
                           <input
                             type="checkbox"
                             checked={ticked}
-                            onChange={() => dispatch({ type: 'pickToggled', id: item.id })}
+                            onChange={() => dispatch({ type: 'pickToggled', item })}
                             aria-label={`Select ${item.filename}`}
                             className="ml-3 h-4 w-4 shrink-0 rounded border-gray-300"
                           />
@@ -849,56 +968,6 @@ export default function ArtifactsIndex({
                 })}
               </ul>
             )}
-            {selecting ? (
-              // Below the list, so the rows above it stay where they are when
-              // a file is ticked; on a phone it wraps under the list.
-              <div
-                role="toolbar"
-                aria-label="Selected artifacts"
-                className="flex shrink-0 flex-wrap items-center gap-2 border-t border-gray-200 px-3 py-2 text-sm dark:border-gray-800"
-              >
-                <span className="font-medium">{bar.label}</span>
-                <button
-                  type="button"
-                  disabled={!bar.anyPicked}
-                  onClick={() => dispatch({ type: 'bulkOpened', bulk: 'add' })}
-                  className={`${smallButton} disabled:opacity-40`}
-                >
-                  Add to project…
-                </button>
-                <button
-                  type="button"
-                  disabled={bar.ocrTargets.length === 0}
-                  onClick={() => void runOcrOn(bar.ocrTargets)}
-                  className={`${smallButton} disabled:opacity-40`}
-                >
-                  Run OCR
-                </button>
-                <button
-                  type="button"
-                  disabled={!bar.anyPicked}
-                  onClick={() => dispatch({ type: 'bulkOpened', bulk: 'delete' })}
-                  className={`${smallButton} disabled:opacity-40`}
-                >
-                  Delete…
-                </button>
-                <button
-                  type="button"
-                  onClick={() => dispatch({ type: 'pickedAll', ids: items.map((item) => item.id) })}
-                  className="text-xs text-gray-500 hover:underline"
-                >
-                  Select all on this page
-                </button>
-                <button
-                  type="button"
-                  onClick={() => dispatch({ type: 'pickCleared' })}
-                  disabled={!bar.anyPicked}
-                  className="ml-auto text-xs text-gray-500 hover:underline disabled:opacity-40 disabled:hover:no-underline"
-                >
-                  Clear
-                </button>
-              </div>
-            ) : null}
             <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-gray-200 px-3 py-2 text-xs text-gray-500 dark:border-gray-800">
               {uploads ? (
                 <span className="hidden items-center gap-2 md:flex">

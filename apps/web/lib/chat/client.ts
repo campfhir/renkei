@@ -440,6 +440,22 @@ export const chatClient = {
   deleteArtifact: (artifactId: string) =>
     sendJsonFull<{ outcome: 'deleted' | 'left' }>(`${base()}/artifacts/${artifactId}`, 'DELETE'),
 
+  /** Many files at once: taken as a job the server works through after answering. */
+  startArtifactBulk: (
+    request:
+      | { action: 'delete' | 'ocr'; artifactIds: string[] }
+      | {
+          action: 'attach';
+          artifactIds: string[];
+          projectId: string;
+          mode: 'always' | 'on_demand';
+        }
+  ) => sendJsonFull<{ jobId: string }>(`${base()}/artifacts/bulk`, 'POST', request),
+
+  /** Closes a finished bulk job's line on the library page. */
+  dismissArtifactBulk: (jobId: string) =>
+    sendJsonFull(`${base()}/artifacts/bulk/${jobId}`, 'DELETE'),
+
   artifactImpact: (artifactId: string) =>
     getJson<{ impact: ArtifactImpact }>(`${base()}/artifacts/${artifactId}/impact`),
 

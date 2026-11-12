@@ -9,6 +9,7 @@ import { queryLibrary } from '@/lib/chat/artifact-library-query';
 import { digestPendingArtifactIds } from '@/lib/chat/artifact-digest';
 import { listProjectsById } from '@/lib/chat/projects';
 import { listAccessibleProjectIds } from '@/lib/chat/access';
+import { listShownBulkJobs } from '@/lib/chat/artifact-bulk-job';
 import ArtifactsIndex from '../_components/artifacts-index';
 
 /**
@@ -20,7 +21,9 @@ import ArtifactsIndex from '../_components/artifacts-index';
  * and turn; `?artifact=<id>` opens one — the link a notification
  * carries — on the page it sits on. With the organization's digest
  * switch on, rows on the page still waiting for their digest are asked
- * for after the response, a few at a time.
+ * for after the response, a few at a time. The person's bulk jobs (delete,
+ * OCR, add to a project over many files) come along, so the page shows how
+ * far each got and what failed (lib/chat/artifact-bulk-job.ts).
  */
 export default async function ArtifactsPage({
   searchParams,
@@ -30,11 +33,12 @@ export default async function ArtifactsPage({
   const session = await getSessionFromCookies();
   if (!session) redirect(signInUrl(`/chat/artifacts`));
   const query = parseLibraryQuery(await searchParams);
-  const [page, uploads, projectIds, settings] = await Promise.all([
+  const [page, uploads, projectIds, settings, jobs] = await Promise.all([
     queryLibrary(session.subject, query),
     tenantBlobStoreConfigured(),
     listAccessibleProjectIds(session.subject),
     getOrgSettings(),
+    listShownBulkJobs(session.subject),
   ]);
   const digests = settings.ok && settings.val.artifactDigestEnabled;
   const projects = (await listProjectsById(projectIds, { orderBy: 'name' })).map((project) => ({
@@ -59,6 +63,7 @@ export default async function ArtifactsPage({
       digests={digests}
       projects={projects}
       selectedId={query.focus}
+      jobs={jobs}
     />
   );
 }

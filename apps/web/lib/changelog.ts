@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-12',
     entries: [
       {
+        kind: 'changed',
+        title: 'Select artifacts across pages, and bulk actions run on the server',
+        detail:
+          'On the Artifacts page, files you tick stay ticked as you turn pages, search or filter, and a box at the top of the list ticks the whole page. Delete, Run OCR and Add to project now run on the server: you can leave the page while they work, the page shows how far each has got, and any files that could not be done are listed until you dismiss them.',
+      },
+      {
         kind: 'added',
         title: 'Drop files anywhere in a chat',
         detail:
