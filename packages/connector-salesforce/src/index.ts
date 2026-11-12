@@ -136,8 +136,11 @@ export {
 export {
   impliedRights,
   rightsLabel,
+  mergePermissionSetAccess,
+  permissionSetGrantCounts,
   unionRights,
   withoutRights,
+  type PermissionSetAccessChanges,
   checkPermissionSetName,
   permissionSetFile,
   type ObjectRights,

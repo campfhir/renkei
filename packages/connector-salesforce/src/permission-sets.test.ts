@@ -3,6 +3,8 @@ import {
   impliedRights,
   permissionSetFile,
   rightsLabel,
+  mergePermissionSetAccess,
+  permissionSetGrantCounts,
   unionRights,
   withoutRights,
 } from './permission-sets';
@@ -84,5 +86,54 @@ describe('withoutRights', () => {
     expect(rightsLabel(withoutRights(all, ['read']))).toBe('none');
     const reader = impliedRights({ read: true });
     expect(withoutRights(reader, ['delete'])).toEqual(reader);
+  });
+});
+
+describe('mergePermissionSetAccess', () => {
+  // As readMetadata gives it: one entry alone is an object, values are strings.
+  const set = {
+    label: 'Program Staff',
+    fieldPermissions: { editable: 'true', field: 'Visit__c.Stage__c', readable: 'true' },
+    objectPermissions: [
+      { allowRead: 'true', allowEdit: 'true', object: 'Visit__c' },
+      { allowRead: 'true', object: 'Account' },
+    ],
+    userPermissions: { enabled: 'true', name: 'ViewSetup' },
+  };
+
+  it('adds field access beside what is there, and leaves everything not named as read', () => {
+    const next = mergePermissionSetAccess(set, {
+      fields: [{ field: 'Visit__c.Years__c', access: { read: true, edit: false } }],
+    });
+    expect(next.fieldPermissions).toEqual([
+      set.fieldPermissions,
+      { editable: false, field: 'Visit__c.Years__c', readable: true },
+    ]);
+    expect(next.objectPermissions).toBe(set.objectPermissions);
+    expect(next.userPermissions).toBe(set.userPermissions);
+    expect(next.label).toBe('Program Staff');
+  });
+
+  it('replaces an entry it changes, and drops one whose access is taken away', () => {
+    const next = mergePermissionSetAccess(set, {
+      fields: [{ field: 'visit__c.stage__c', access: null }],
+      objects: [
+        { object: 'Account', rights: null },
+        { object: 'Visit__c', rights: impliedRights({ read: true }) },
+      ],
+      tabs: [{ tab: 'Visit__c', shown: true }],
+      recordTypes: ['Visit__c.Home'],
+    });
+    expect(next.fieldPermissions).toEqual([]);
+    expect(next.objectPermissions).toEqual([
+      expect.objectContaining({ object: 'Visit__c', allowRead: true, allowEdit: false }),
+    ]);
+    expect(next.tabSettings).toEqual([{ tab: 'Visit__c', visibility: 'Visible' }]);
+    expect(next.recordTypeVisibilities).toEqual([{ recordType: 'Visit__c.Home', visible: true }]);
+  });
+
+  it('counts what a whole definition grants', () => {
+    expect(permissionSetGrantCounts(set)).toEqual({ fields: 1, objects: 2 });
+    expect(permissionSetGrantCounts({})).toEqual({ fields: 0, objects: 0 });
   });
 });

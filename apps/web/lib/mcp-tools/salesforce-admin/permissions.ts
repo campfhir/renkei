@@ -19,7 +19,6 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import {
   checkPermissionSetName,
   impliedRights,
-  metadataFile,
   metadataFileName,
   packageXml,
   permissionSetFile,
@@ -58,6 +57,7 @@ import {
   readProfile,
   readWholeMetadata,
 } from '@/lib/salesforce-admin/whole-components';
+import { accessChangesOf, groupsOf, planWholeSetChange } from './grouped-sets';
 import { loginHoursWords, systemPermissions } from './security-tools';
 import { proposeAndValidate, reasonField, refusesChanges, replacesField } from './shared';
 
@@ -484,6 +484,16 @@ export function registerAdminPermissionTools(
             )
           : appAccess;
       const lines = [profile ? `Profile ${profile.profile}` : `Permission set ${set.name}`];
+      if (!profile) {
+        const groups = await groupsOf(context, access, set.id);
+        lines.push(
+          typeof groups === 'string'
+            ? `Permission set groups: could not be read: ${groups}`
+            : groups.length > 0
+              ? `In the permission set group${groups.length === 1 ? '' : 's'}: ${groups.join(', ')} — a change to this set reaches everyone in ${groups.length === 1 ? 'it' : 'them'}.`
+              : 'In no permission set group.'
+        );
+      }
       lines.push(
         '',
         'Records:',
@@ -1065,12 +1075,16 @@ export function registerAdminPermissionTools(
         rows.push({ label: `${app.name} app`, value: 'may not', from: 'may open' });
       }
 
-      // Record types have no row of their own to write: the set deploys
-      // whole, exactly as read, with the record types added — and applying
-      // is refused if the set moved since.
+      // Salesforce takes no access row for a set in a permission set
+      // group, and record types have no row at all: either way the set
+      // deploys whole, as read, with only these changes — and applying is
+      // refused if the set moved since (grouped-sets.ts).
       const files: Record<string, string> = {};
       const members: { type: string; member: string }[] = [];
       const preconditions: Precondition[] = [];
+      const groups = profile ? [] : await groupsOf(context, access, set.id);
+      if (typeof groups === 'string') return errText(groups);
+      let recordTypes: string[] = [];
       if (wantsRecordTypes) {
         const resolved = await resolveRecordTypes(context, access, args.recordTypes ?? []);
         if (resolved.errors.length > 0) {
@@ -1082,7 +1096,7 @@ export function registerAdminPermissionTools(
         if (typeof live === 'string') return errText(`Nothing was proposed: ${live}`);
         if (!live) return errText(`Nothing was proposed: ${set.name} could not be read whole.`);
         const visible = many(live.metadata.recordTypeVisibilities);
-        const adding = resolved.recordTypes.filter(
+        recordTypes = resolved.recordTypes.filter(
           (recordType) =>
             !visible.some(
               (entry) =>
@@ -1090,35 +1104,39 @@ export function registerAdminPermissionTools(
                 String(entry.visible) === 'true'
             )
         );
-        for (const recordType of resolved.recordTypes.filter((rt) => !adding.includes(rt))) {
+        for (const recordType of resolved.recordTypes.filter((rt) => !recordTypes.includes(rt))) {
           unchanged.push(`${set.name} may already use the record type ${recordType}.`);
         }
-        if (adding.length > 0) {
-          files[`permissionsets/${metadataFileName(set.name)}.permissionset`] = metadataFile(
-            'PermissionSet',
-            {
-              ...live.metadata,
-              recordTypeVisibilities: [
-                ...visible.filter(
-                  (entry) =>
-                    !adding.some((rt) => rt.toLowerCase() === str(entry.recordType).toLowerCase())
-                ),
-                ...adding.map((recordType) => ({ recordType, visible: true })),
-              ],
-            }
+        for (const recordType of recordTypes) {
+          rows.push({ label: `${recordType} record type`, value: 'may use', from: 'may not' });
+        }
+      }
+      const takes = (step: DataStep) => 'remove' in step && Boolean(step.remove);
+      const taking = steps.some(takes);
+      const giving = steps.some((step) => !takes(step)) || recordTypes.length > 0;
+      const whole = groups.length > 0 && steps.length > 0;
+      const notes: string[] = [];
+      if (whole || recordTypes.length > 0) {
+        const folded = whole ? accessChangesOf(steps) : { changes: {}, left: steps };
+        if (whole && folded.left.length > 0) {
+          return errText(
+            `Nothing was proposed: ${set.name} is in the permission set group ${groups.join(', ')}, and Salesforce does not let its apps be changed from here. Change them in Setup, or propose the rest without apps.`
           );
-          members.push({ type: 'PermissionSet', member: set.name });
-          files['package.xml'] = packageXml(members);
-          preconditions.push({
-            kind: 'component-unchanged',
-            type: 'PermissionSet',
-            object: '',
-            name: set.name,
-            fingerprint: live.fingerprint,
-          });
-          for (const recordType of adding) {
-            rows.push({ label: `${recordType} record type`, value: 'may use', from: 'may not' });
-          }
+        }
+        const part = await planWholeSetChange(context, access, set, {
+          ...folded.changes,
+          recordTypes,
+        });
+        if (typeof part === 'string') return errText(`Nothing was proposed: ${part}`);
+        files[part.path] = part.content;
+        members.push(part.member);
+        files['package.xml'] = packageXml(members);
+        preconditions.push(part.precondition);
+        if (whole) {
+          steps.length = 0;
+          notes.push(
+            `${set.name} is in the permission set group ${groups.join(', ')}, where Salesforce takes no single access change: the set deploys whole, as it is now, with only this changed. Everyone in the group gets the change.`
+          );
         }
       }
 
@@ -1129,9 +1147,6 @@ export function registerAdminPermissionTools(
             : `Nothing was proposed: ${set.name} already grants all of that.`
         );
       }
-      const takes = (step: DataStep) => 'remove' in step && Boolean(step.remove);
-      const taking = steps.some(takes);
-      const giving = steps.some((step) => !takes(step)) || members.length > 0;
       const profileName = profile?.profile ?? null;
       const holder = profileName ? `The profile ${profileName}` : set.name;
       const componentName = profileName ?? set.name;
@@ -1161,6 +1176,7 @@ export function registerAdminPermissionTools(
           ...rows.map((row) => `  ${row.label}: ${row.from} → ${row.value}`),
           ...unchanged,
           ...checked.notes,
+          ...notes,
         ],
       });
     }

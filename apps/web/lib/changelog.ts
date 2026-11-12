@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'fixed',
+        title: 'Salesforce Admin can change a permission set that is in a permission set group',
+        detail:
+          'Giving or taking away access in a set that belongs to a group no longer fails when it is applied: the set is deployed whole with only that change, and refused up front if Salesforce does not hand over everything the set grants. Reading a permission set now names the groups it is in.',
+      },
+      {
+        kind: 'fixed',
         title: 'Salesforce Admin can give access to a field nobody can see yet',
         detail:
           'Proposing permission-set or profile access to a newly created field no longer fails with "has no field". The same field can now be placed on a page layout, and its name counts as taken when a new field is proposed.',
