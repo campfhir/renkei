@@ -16,8 +16,10 @@
  *
  * The model is the stand-in, put on the roster with this test's tag and
  * taken off after; the draft carries the script that makes it answer
- * through propose_instructions (e2e/llm-stub.mjs). Projects and chats are
- * the person's own.
+ * through propose_instructions (e2e/llm-stub.mjs). The roster the page
+ * reads is answered with that stand-in alone (`page.route`), since the
+ * real one is shared and moves under a running test. Projects and chats
+ * are the person's own.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -46,6 +48,25 @@ test.describe('project instructions', () => {
       });
       expect(created.status(), await created.text()).toBe(201);
       const { projectId } = await created.json();
+
+      // The roster is the organization's, and other tests add and remove
+      // models on it while this one runs. The dialog asks on whichever model
+      // the roster offers first, so one that is removed a moment later is
+      // refused ("That model is not available") and no rewrite is drawn. The
+      // roster this page reads is answered with this test's stand-in alone.
+      await page.route('**/api/chat/models', async (route) => {
+        const response = await route.fetch();
+        const body: { models: { id: string }[] } = await response.json();
+        await route.fulfill({
+          response,
+          json: {
+            ...body,
+            models: body.models
+              .filter((model) => model.id === modelId)
+              .map((model) => ({ ...model, isDefault: true })),
+          },
+        });
+      });
 
       await page.goto(`/chat/projects/${projectId}`);
       const field = page.getByLabel(/^Instructions/).filter({ visible: true });
@@ -78,6 +99,8 @@ test.describe('project instructions', () => {
         page.getByRole('button', { name: 'Refine', exact: true }).click(),
       ]);
       expect(JSON.stringify(first.postDataJSON())).toContain('help w/ interviews');
+      // It asks on this test's own model, which nobody else removes.
+      expect(first.postDataJSON()).toMatchObject({ llmModelId: modelId });
       const dialog = page.getByRole('dialog', { name: 'Refine instructions' });
       await expect(dialog.getByLabel('Original instructions')).toContainText('help w/ interviews');
       const recommended = dialog.getByLabel('Recommended instructions');

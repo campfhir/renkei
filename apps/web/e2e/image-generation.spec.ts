@@ -448,7 +448,12 @@ test('an animated GIF plays inline once it is made', async ({ page }, testInfo) 
   await expect(card).toHaveAttribute('data-kind', 'animation');
   const picture = card.getByRole('img', { name: 'ball.gif' });
   await expect(picture).toBeVisible();
-  // 16:9, as asked.
+  // 16:9, as asked — read once the picture has loaded: the element is
+  // visible (it has its box) before the file arrives, and until then its
+  // natural size is 0 by 0.
+  await expect
+    .poll(() => picture.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0))
+    .toBe(true);
   const [width, height] = await picture.evaluate((img: HTMLImageElement) => [
     img.naturalWidth,
     img.naturalHeight,
