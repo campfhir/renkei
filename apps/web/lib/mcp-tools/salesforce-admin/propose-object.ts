@@ -9,12 +9,7 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import {
-  buildObjectPackage,
-  checkObjectSpec,
-  packageXml,
-  SHARING_MODELS,
-} from '@renkei/connector-salesforce';
+import { buildObjectPackage, checkObjectSpec, SHARING_MODELS } from '@renkei/connector-salesforce';
 import type { MCPToolContext } from '../common';
 import type { SalesforceAuth } from '../salesforce/salesforce-auth';
 import { errText } from '../salesforce/client';
@@ -26,7 +21,6 @@ import {
   type ComponentView,
   type DataStep,
 } from '@/lib/salesforce-admin/plan';
-import { foldGroupedSteps } from './grouped-sets';
 import { grantToField } from './propose';
 import {
   fieldInput,
@@ -164,13 +158,6 @@ export function registerAdminObjectTools(
       steps.push(...fieldSteps);
 
       const built = buildObjectPackage(spec);
-      // A set in a permission set group takes no access row: its access
-      // rides in this same deploy, as the set's whole definition.
-      const grouped = await foldGroupedSteps(context, access, steps);
-      if (typeof grouped === 'string') return errText(`Nothing was proposed: ${grouped}`);
-      Object.assign(built.files, grouped.files);
-      built.members.push(...grouped.members);
-      built.files['package.xml'] = packageXml(built.members);
       const components: ComponentView[] = [
         {
           type: 'CustomObject',
@@ -223,11 +210,8 @@ export function registerAdminObjectTools(
         payload: {
           ...built,
           components,
-          preconditions: [
-            { kind: 'object-absent', object: spec.apiName },
-            ...grouped.preconditions,
-          ],
-          dataSteps: grouped.steps,
+          preconditions: [{ kind: 'object-absent', object: spec.apiName }],
+          dataSteps: steps,
         },
         summary: [
           `• ${spec.apiName} — “${spec.label}”, sharing ${spec.sharingModel}, with a tab`,
@@ -235,7 +219,6 @@ export function registerAdminObjectTools(
           sets.length > 0
             ? `Then: ${sets.join(', ')} get access to its records, tab and fields.`
             : 'No permission set is given access: nobody will see this object until one is.',
-          ...grouped.notes,
         ],
       });
     }

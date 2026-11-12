@@ -1,18 +1,20 @@
 /**
- * Permission sets Salesforce will not take a row at a time.
+ * A permission set and the permission set groups it is in, and the one
+ * change that has no access row to write: record types.
  *
- * Access in an existing set is normally data: one FieldPermissions,
- * ObjectPermissions or tab-setting row per step. A set that belongs to a
- * permission set group refuses that ("its parent is associated with a
- * permission set group"), so for one of those the same steps are folded
- * into the set's whole definition — read with readMetadata, changed only
- * where the steps say, deployed whole, and refused on apply if the set
- * moved since it was read. Record types, which have no row at all, go the
- * same way.
+ * Access in an existing set is data — one FieldPermissions,
+ * ObjectPermissions or tab-setting row per step — whether or not the set is
+ * in a group; a set in a group is changed like any other, and the group
+ * picks the change up. (The group itself is not: it has a permission set
+ * row of its own that Salesforce derives and will not let anyone write —
+ * resolvePermissionSet tells it apart and names the group's sets.)
  *
- * A whole deploy replaces the set, so it is only as safe as the read: the
- * definition read is checked against the access rows the set has, and a
- * read that holds fewer grants than the org does is not deployed.
+ * Record types have no row, so for those the set deploys whole: read with
+ * readMetadata, the record types added, deployed, and refused on apply if
+ * the set moved since. A whole deploy replaces the set, so it is only as
+ * safe as the read: the definition read is checked against the access rows
+ * the set has, and a read that holds fewer grants than the org does is not
+ * deployed.
  */
 
 import {
@@ -26,7 +28,7 @@ import {
 } from '@renkei/connector-salesforce';
 import type { MCPToolContext } from '../common';
 import { rec, sfQuery, str, type SalesforceAccess } from '../salesforce/client';
-import type { DataStep, Precondition } from '@/lib/salesforce-admin/plan';
+import type { Precondition } from '@/lib/salesforce-admin/plan';
 import { readWholeMetadata } from '@/lib/salesforce-admin/whole-components';
 
 /** The permission set groups a set belongs to, by label; empty when it is in none. */
@@ -45,55 +47,6 @@ export async function groupsOf(
     const group = rec(row.PermissionSetGroup);
     return str(group.MasterLabel) || str(group.DeveloperName) || 'a permission set group';
   });
-}
-
-/** The steps a whole definition can carry, as changes to it; the rest are returned as they are. */
-export function accessChangesOf(steps: readonly DataStep[]): {
-  changes: PermissionSetAccessChanges;
-  left: DataStep[];
-} {
-  const changes: Required<Omit<PermissionSetAccessChanges, 'recordTypes'>> = {
-    fields: [],
-    objects: [],
-    tabs: [],
-  };
-  const left: DataStep[] = [];
-  for (const step of steps) {
-    switch (step.kind) {
-      case 'field-permission':
-        changes.fields.push({
-          field: `${step.object}.${step.field}`,
-          access:
-            step.remove === 'all'
-              ? null
-              : step.remove === 'edit'
-                ? { read: true, edit: false }
-                : { read: true, edit: step.edit },
-        });
-        break;
-      case 'object-permission':
-        changes.objects.push({
-          object: step.object,
-          rights: step.read
-            ? {
-                read: true,
-                create: step.create,
-                edit: step.edit,
-                delete: step.delete,
-                viewAll: step.viewAll,
-                modifyAll: step.modifyAll,
-              }
-            : null,
-        });
-        break;
-      case 'tab-visibility':
-        changes.tabs.push({ tab: step.tab, shown: !step.remove });
-        break;
-      default:
-        left.push(step);
-    }
-  }
-  return { changes, left };
 }
 
 export interface WholeSetPart {
@@ -156,56 +109,4 @@ export async function planWholeSetChange(
       fingerprint: live.fingerprint,
     },
   };
-}
-
-/**
- * A proposal's access steps, with those for a set in a permission set
- * group folded into that set's whole definition — the files, members and
- * preconditions the package gains, the steps left to run as data, and a
- * line for each set that deploys whole. Used where access rides along with
- * something else (new fields, a new object).
- */
-export async function foldGroupedSteps(
-  context: MCPToolContext,
-  access: SalesforceAccess,
-  steps: readonly DataStep[]
-): Promise<
-  | {
-      files: Record<string, string>;
-      members: PackageMember[];
-      preconditions: Precondition[];
-      steps: DataStep[];
-      notes: string[];
-    }
-  | string
-> {
-  const files: Record<string, string> = {};
-  const members: PackageMember[] = [];
-  const preconditions: Precondition[] = [];
-  const notes: string[] = [];
-  const left: DataStep[] = [];
-  const bySet = new Map<string, DataStep[]>();
-  for (const step of steps) {
-    bySet.set(step.permissionSetId, [...(bySet.get(step.permissionSetId) ?? []), step]);
-  }
-  for (const [id, own] of bySet) {
-    const groups = await groupsOf(context, access, id);
-    if (typeof groups === 'string') return groups;
-    if (groups.length === 0) {
-      left.push(...own);
-      continue;
-    }
-    const name = own[0].permissionSetName;
-    const folded = accessChangesOf(own);
-    const part = await planWholeSetChange(context, access, { id, name }, folded.changes);
-    if (typeof part === 'string') return part;
-    files[part.path] = part.content;
-    members.push(part.member);
-    preconditions.push(part.precondition);
-    left.push(...folded.left);
-    notes.push(
-      `${name} is in the permission set group ${groups.join(', ')}, where Salesforce takes no single access change: the set deploys whole, as it is now, with this access added. Everyone in the group gets it.`
-    );
-  }
-  return { files, members, preconditions, steps: left, notes };
 }

@@ -32,6 +32,7 @@ const TYPE_LABELS: Record<string, string> = {
   CustomObject: 'object',
   CustomTab: 'tab',
   PermissionSet: 'permission set',
+  PermissionSetGroup: 'permission set group',
   RecordType: 'record type',
   BusinessProcess: 'business process',
   GlobalValueSet: 'global value set',

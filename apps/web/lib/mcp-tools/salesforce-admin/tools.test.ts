@@ -155,6 +155,8 @@ let opensApp: boolean;
 let systemOn: string[];
 /** The permission set groups the set being changed belongs to. */
 let inGroups: string[];
+/** Whether the name resolves to a permission set group's own row. */
+let isGroup: boolean;
 /** How many field and object grants the org says the set has. */
 let grantRows: { fields: number; objects: number };
 /** The tabs it shows now. */
@@ -661,6 +663,35 @@ function fakeOrg(method: string, path: string, query: string): Response {
         : [],
     });
   }
+  if (method === 'GET' && path === `${V}/query` && /FROM PermissionSetGroup( |$)/.test(q)) {
+    return answer(200, {
+      totalSize: 1,
+      done: true,
+      records: [
+        {
+          Id: '0PG000000000001AAA',
+          DeveloperName: 'PACE_Staff',
+          MasterLabel: 'PACE Staff',
+          Status: 'Updated',
+        },
+      ],
+    });
+  }
+  if (
+    method === 'GET' &&
+    path === `${V}/query` &&
+    /FROM PermissionSetGroupComponent WHERE PermissionSetGroupId/.test(q)
+  ) {
+    // The sets a group is made of.
+    return answer(200, {
+      totalSize: 2,
+      done: true,
+      records: [
+        { PermissionSet: { Name: 'ActionPlans', Label: 'Action Plans', Type: 'Standard' } },
+        { PermissionSet: { Name: 'Visit_Objects', Label: 'Visit Objects', Type: 'Regular' } },
+      ],
+    });
+  }
   if (method === 'GET' && path === `${V}/query` && /FROM PermissionSetGroupComponent/.test(q)) {
     return answer(200, {
       totalSize: inGroups.length,
@@ -729,6 +760,7 @@ function fakeOrg(method: string, path: string, query: string): Response {
           Id: '0PS000000000001AAA',
           Name: 'Program_Staff',
           Label: 'Program Staff',
+          ...(isGroup ? { Type: 'Group', PermissionSetGroupId: '0PG000000000001AAA' } : {}),
           // The system permissions it has on, for a query that asks for them.
           ...Object.fromEntries(systemOn.map((field) => [field, true])),
         },
@@ -860,6 +892,7 @@ beforeEach(() => {
   opensApp = false;
   systemOn = [];
   inGroups = [];
+  isGroup = false;
   grantRows = { fields: 0, objects: 1 };
   tabRows = [];
   deployedSince = [];
@@ -2395,60 +2428,20 @@ describe('a permission set in a permission set group', () => {
     inGroups = ['PACE Staff'];
   });
 
-  it('deploys whole, as read, with the access added — Salesforce takes no row for it', async () => {
+  it('is changed like any other set, a row at a time, and the proposal says who else gets it', async () => {
     const result = await call('salesforce_admin_propose_permission_set', {
       permissionSet: 'Program Staff',
       fields: [{ object: 'Site_Visit__c', field: 'Visit_Date__c' }],
     });
     expect(result.isError).toBeUndefined();
-    const { files } = await received();
-    expect(Object.keys(files).sort()).toEqual([
-      'package.xml',
-      'permissionsets/Program_Staff.permissionset',
-    ]);
-    const set = files['permissionsets/Program_Staff.permissionset'];
-    // What it granted stays; the field joins it.
-    expect(set).toContain('<name>ViewSetup</name>');
-    expect(set).toContain('<recordType>Opportunity.Grant</recordType>');
-    expect(set).toContain('<object>Site_Visit__c</object>');
-    expect(set).toMatch(
-      /<editable>false<\/editable>\s*<field>Site_Visit__c.Visit_Date__c<\/field>\s*<readable>true<\/readable>/
-    );
-    // Nothing is left to write as a row, which Salesforce would refuse.
-    expect(stored().payload.dataSteps).toEqual([]);
-    expect(stored().payload.preconditions).toEqual([
-      expect.objectContaining({ kind: 'component-unchanged', type: 'PermissionSet' }),
-    ]);
-    expect(text(result)).toContain('is in the permission set group PACE Staff');
-    expect(text(result)).toContain('Everyone in the group gets the change');
-  });
-
-  it('is not deployed when Salesforce hands over less than the set grants', async () => {
-    grantRows = { fields: 40, objects: 1 };
-    const result = await call('salesforce_admin_propose_permission_set', {
-      permissionSet: 'Program Staff',
-      fields: [{ object: 'Site_Visit__c', field: 'Visit_Date__c' }],
-    });
-    expect(result.isError).toBe(true);
-    expect(text(result)).toContain('0 of its 40 field grants');
-    expect(text(result)).toContain('would take the rest away');
+    // No whole-set deploy: the set keeps everything it has, untouched.
     expect(deploys()).toHaveLength(0);
-    expect(store.createChangeRequest).not.toHaveBeenCalled();
-  });
-
-  it('gets access to new fields in the same deploy as the fields', async () => {
-    const result = await call('salesforce_admin_propose_fields', {
-      object: 'Site_Visit__c',
-      fields: [{ label: 'Outcome', type: 'Text', length: 80 }],
-      grantTo: [{ permissionSet: 'Program Staff' }],
-    });
-    expect(result.isError).toBeUndefined();
-    const { files } = await received();
-    expect(files['permissionsets/Program_Staff.permissionset']).toContain(
-      '<field>Site_Visit__c.Outcome__c</field>'
+    expect(stored().payload.dataSteps).toContainEqual(
+      expect.objectContaining({ kind: 'field-permission', field: 'Visit_Date__c', read: true })
     );
-    expect(files['package.xml']).toContain('<name>PermissionSet</name>');
-    expect(stored().payload.dataSteps).toEqual([]);
+    expect(text(result)).toContain(
+      'is in the permission set group PACE Staff: everyone with the group gets this change'
+    );
   });
 
   it('is named with its groups when the set is read', async () => {
@@ -2456,6 +2449,108 @@ describe('a permission set in a permission set group', () => {
       permissionSet: 'Program Staff',
     });
     expect(text(result)).toContain('In the permission set group: PACE Staff');
+  });
+});
+
+describe('a permission set group, named where a permission set is asked for', () => {
+  beforeEach(() => {
+    // The group's own row: what it grants in total, which Salesforce derives.
+    isGroup = true;
+  });
+
+  it('is refused for a change, naming the sets in it to change instead', async () => {
+    const result = await call('salesforce_admin_propose_permission_set', {
+      permissionSet: 'Program Staff',
+      fields: [{ object: 'Site_Visit__c', field: 'Visit_Date__c' }],
+    });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain('Program_Staff is a permission set group');
+    expect(text(result)).toContain(
+      'Make the change in its permission set Visit Objects (Visit_Objects), and everyone with the group gets it.'
+    );
+    // The licence's own set is in the group, and is not offered.
+    expect(text(result)).toContain('The other 1 in the group comes with a Salesforce licence');
+    expect(text(result)).not.toContain('ActionPlans');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
+  });
+
+  it('is refused the same way for access given with new fields, and for system permissions', async () => {
+    const fields = await call('salesforce_admin_propose_fields', {
+      object: 'Site_Visit__c',
+      fields: [{ label: 'Outcome', type: 'Text', length: 80 }],
+      grantTo: [{ permissionSet: 'Program Staff' }],
+    });
+    expect(text(fields)).toContain('is a permission set group');
+    const system = await call('salesforce_admin_propose_system_permissions', {
+      permissionSet: 'Program Staff',
+      enable: ['Manage Users'],
+    });
+    expect(text(system)).toContain('is a permission set group');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
+  });
+
+  it('is refused when read as a permission set too, pointing at the tool that reads groups', async () => {
+    const result = await call('salesforce_admin_list_permission_sets', {
+      permissionSet: 'Program Staff',
+    });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain('is a permission set group');
+    expect(text(result)).toContain('salesforce_admin_list_permission_set_groups reads the group');
+  });
+});
+
+describe('salesforce_admin_list_permission_set_groups', () => {
+  it('lists the groups, apart from the permission sets', async () => {
+    const groups = await call('salesforce_admin_list_permission_set_groups', {});
+    expect(text(groups)).toContain('• PACE Staff (PACE_Staff)');
+    const sets = await call('salesforce_admin_list_permission_sets', {});
+    expect(text(sets)).not.toContain('PACE Staff');
+  });
+
+  it('reads one: the sets that can be changed, the ones that cannot, its total and who has it', async () => {
+    objectRows = [{ SobjectType: 'Site_Visit__c', PermissionsRead: true, PermissionsEdit: true }];
+    const result = await call('salesforce_admin_list_permission_set_groups', {
+      group: 'PACE Staff',
+    });
+    expect(result.isError).toBeUndefined();
+    const lines = text(result).split('\n');
+    expect(lines[0]).toBe('Permission set group PACE Staff (PACE_Staff)');
+    // The org's own set first, the licence's apart.
+    expect(lines.indexOf('• Visit Objects (Visit_Objects)')).toBeLessThan(
+      lines.indexOf('• Action Plans (ActionPlans)')
+    );
+    expect(text(result)).toContain('from a Salesforce licence or a package (not changeable)');
+    expect(text(result)).toContain('• Site_Visit__c: read, edit');
+    expect(text(result)).toContain('Who has the group:');
+  });
+});
+
+describe('salesforce_admin_propose_permission_set_group_changes', () => {
+  it('puts a permission set in a group as one row, and leaves out one already as asked', async () => {
+    const result = await call('salesforce_admin_propose_permission_set_group_changes', {
+      group: 'PACE_Staff',
+      addSets: ['Program Staff'],
+    });
+    expect(result.isError).toBeUndefined();
+    expect(deploys()).toHaveLength(0);
+    expect(stored().title).toBe('Permission set group PACE Staff: its permission sets');
+    expect(stored().payload.dataSteps).toEqual([
+      {
+        kind: 'group-member',
+        permissionSetId: '0PS000000000001AAA',
+        permissionSetName: 'Program_Staff',
+        groupId: '0PG000000000001AAA',
+        group: 'PACE_Staff',
+      },
+    ]);
+    expect(stored().payload.components[0]).toMatchObject({ type: 'PermissionSetGroup' });
+    store.createChangeRequest.mockClear();
+    const nothing = await call('salesforce_admin_propose_permission_set_group_changes', {
+      group: 'PACE_Staff',
+      removeSets: ['Program Staff'],
+    });
+    expect(text(nothing)).toContain('Program_Staff is not in PACE_Staff');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
   });
 });
 

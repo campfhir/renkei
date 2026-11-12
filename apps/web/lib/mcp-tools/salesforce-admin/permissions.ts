@@ -57,7 +57,7 @@ import {
   readProfile,
   readWholeMetadata,
 } from '@/lib/salesforce-admin/whole-components';
-import { accessChangesOf, groupsOf, planWholeSetChange } from './grouped-sets';
+import { groupsOf, planWholeSetChange } from './grouped-sets';
 import { loginHoursWords, systemPermissions } from './security-tools';
 import { proposeAndValidate, reasonField, refusesChanges, replacesField } from './shared';
 
@@ -322,7 +322,8 @@ export function registerAdminPermissionTools(
     {
       title: 'Salesforce Admin · Read — Permission sets',
       description:
-        'The org’s permission sets with how many people have each, or its profiles (profiles: ' +
+        'The org’s permission sets (not permission set groups: those are ' +
+        'salesforce_admin_list_permission_set_groups) with how many people have each, or its profiles (profiles: ' +
         'true); with `permissionSet` or `profile`, what that one grants — object access, field ' +
         'access (optionally on one object), tabs, apps — and who has it. Read this before proposing ' +
         'access, taking any away, or assignments.',
@@ -1075,9 +1076,8 @@ export function registerAdminPermissionTools(
         rows.push({ label: `${app.name} app`, value: 'may not', from: 'may open' });
       }
 
-      // Salesforce takes no access row for a set in a permission set
-      // group, and record types have no row at all: either way the set
-      // deploys whole, as read, with only these changes — and applying is
+      // Record types have no row of their own to write: the set deploys
+      // whole, as read, with the record types added — and applying is
       // refused if the set moved since (grouped-sets.ts).
       const files: Record<string, string> = {};
       const members: { type: string; member: string }[] = [];
@@ -1114,30 +1114,19 @@ export function registerAdminPermissionTools(
       const takes = (step: DataStep) => 'remove' in step && Boolean(step.remove);
       const taking = steps.some(takes);
       const giving = steps.some((step) => !takes(step)) || recordTypes.length > 0;
-      const whole = groups.length > 0 && steps.length > 0;
       const notes: string[] = [];
-      if (whole || recordTypes.length > 0) {
-        const folded = whole ? accessChangesOf(steps) : { changes: {}, left: steps };
-        if (whole && folded.left.length > 0) {
-          return errText(
-            `Nothing was proposed: ${set.name} is in the permission set group ${groups.join(', ')}, and Salesforce does not let its apps be changed from here. Change them in Setup, or propose the rest without apps.`
-          );
-        }
-        const part = await planWholeSetChange(context, access, set, {
-          ...folded.changes,
-          recordTypes,
-        });
+      if (recordTypes.length > 0) {
+        const part = await planWholeSetChange(context, access, set, { recordTypes });
         if (typeof part === 'string') return errText(`Nothing was proposed: ${part}`);
         files[part.path] = part.content;
         members.push(part.member);
         files['package.xml'] = packageXml(members);
         preconditions.push(part.precondition);
-        if (whole) {
-          steps.length = 0;
-          notes.push(
-            `${set.name} is in the permission set group ${groups.join(', ')}, where Salesforce takes no single access change: the set deploys whole, as it is now, with only this changed. Everyone in the group gets the change.`
-          );
-        }
+      }
+      if (groups.length > 0) {
+        notes.push(
+          `${set.name} is in the permission set group ${groups.join(', ')}: everyone with the group gets this change.`
+        );
       }
 
       if (steps.length + members.length === 0) {

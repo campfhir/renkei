@@ -49,6 +49,8 @@ export function salesforceAdminScopeFor(toolName: string): string[] {
       return ['sfa-read', 'sfa-layouts'];
 
     case 'salesforce_admin_list_permission_sets':
+    case 'salesforce_admin_list_permission_set_groups':
+    case 'salesforce_admin_propose_permission_set_group_changes':
     case 'salesforce_admin_propose_permission_set':
     case 'salesforce_admin_propose_permission_set_details':
       return ['sfa-read', 'sfa-permissions'];

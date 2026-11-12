@@ -84,7 +84,9 @@ export const SALESFORCE_ADMIN_SCOPE_OPTIONS: ScopeOption[] = [
     scopes: ['sfa-permissions'],
     label: 'Propose permission sets',
     hint:
-      'salesforce_admin_list_permission_sets, salesforce_admin_propose_permission_set — a new ' +
+      'salesforce_admin_list_permission_sets, salesforce_admin_list_permission_set_groups, ' +
+      'salesforce_admin_propose_permission_set, ' +
+      'salesforce_admin_propose_permission_set_group_changes (which sets are in a group) — a new ' +
       'permission set, or object, field and tab access added to an existing one or to a profile ' +
       '(each access row written on its own, so nothing else in it changes), reading what a ' +
       'profile grants, object, field and tab access taken away from one where the proposal ' +

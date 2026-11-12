@@ -49,6 +49,18 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-12',
     entries: [
       {
+        kind: 'added',
+        title: 'Salesforce Admin has its own tools for permission set groups',
+        detail:
+          'Renkei can list permission set groups, show which permission sets a group is made of (yours, and the ones that come with a Salesforce licence), what the group grants in total and who has it, and propose adding a set to a group or taking one out.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Salesforce Admin tells a permission set group from a permission set',
+        detail:
+          'Asking to change a permission set group by name is now refused up front, with the permission sets inside it listed so the change can go in one of them, instead of failing after approval. Groups are listed and can be read like sets. A permission set that is merely inside a group is changed like any other set again.',
+      },
+      {
         kind: 'fixed',
         title: 'Salesforce Admin can change a permission set that is in a permission set group',
         detail:
