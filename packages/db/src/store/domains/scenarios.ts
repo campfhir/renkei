@@ -24,6 +24,7 @@ import { usageScenarios } from './usage/scenarios';
 import { userPreferenceScenarios } from './user-preferences/scenarios';
 import { salesforceChangeScenarios } from './salesforce-changes/scenarios';
 import { jiraChangeScenarios } from './jira-changes/scenarios';
+import { artifactBulkJobScenarios } from './artifact-bulk-jobs/scenarios';
 import { jiraSpaceTemplateScenarios } from './jira-space-templates/scenarios';
 import { adminChangeQueueScenarios } from './admin-change-queue/scenarios';
 import { salesforceGrantScenarios } from './salesforce-grants/scenarios';
@@ -99,6 +100,7 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...notificationScenarios,
   ...salesforceChangeScenarios,
   ...jiraChangeScenarios,
+  ...artifactBulkJobScenarios,
   ...jiraSpaceTemplateScenarios,
   ...adminChangeQueueScenarios,
   ...salesforceGrantScenarios,

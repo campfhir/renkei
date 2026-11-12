@@ -2,9 +2,9 @@
  * Acting on several library files at once (artifact-bulk-dialogs.model.ts),
  * as the person ticking them would describe it. artifacts.spec.ts walked
  * "several files ticked, deleted with the impact warned, or added to a
- * project" by pressing; the rules are here. Each file goes out as the
- * one-file attach or delete does, which the spec and the route tests
- * already cover.
+ * project" by pressing; the rules are here. Confirming sends one request
+ * the server takes as a job (lib/chat/artifact-bulk-job.test.ts), so the
+ * dialog only waits for it to be taken.
  */
 
 import type { ArtifactImpact, LibraryItem } from '@/lib/chat/artifact-library';
@@ -83,25 +83,18 @@ describe('add to a project', () => {
     expect(bulkAddView(busy, [item('a')], projects).disabled).toBe(true);
   });
 
-  it('a partial failure says how many of how many, and a retry sends only the ones that failed', () => {
-    const items = [item('a'), item('b'), item('c')];
-    const actions: BulkAddAction[] = [
-      { type: 'sent' },
-      {
-        type: 'answered',
-        projectId: 'billing',
-        outcomes: [
-          { id: 'a', error: null },
-          { id: 'b', error: 'Over the budget' },
-          { id: 'c', error: null },
-        ],
-      },
-    ];
-    const answered = actions.reduce(bulkAddReducer, initialBulkAdd(projects));
-    expect(answered.error).toBe('1 of 3 could not be added: Over the budget');
-    const view = bulkAddView(answered, items, projects);
-    expect(view.toAdd.map((file) => file.id)).toEqual(['b']);
-    expect(view.label).toBe('Add 1');
+  it('works while the request goes out; a refusal keeps the dialog open with why, ready to retry', () => {
+    const items = [item('a'), item('b')];
+    const sent = bulkAddReducer(initialBulkAdd(projects), { type: 'sent' });
+    expect(bulkAddView(sent, items, projects).disabled).toBe(true);
+    const actions: BulkAddAction[] = [{ type: 'answered', error: 'No such project' }];
+    const refused = actions.reduce(bulkAddReducer, sent);
+    expect(refused.error).toBe('No such project');
+    expect(bulkAddView(refused, items, projects)).toMatchObject({
+      label: 'Add 2',
+      disabled: false,
+    });
+    expect(bulkAddReducer(refused, { type: 'sent' }).error).toBeNull();
   });
 
   it('the how-it-is-used choice is kept for the request', () => {
@@ -166,31 +159,19 @@ describe('delete several', () => {
     });
   });
 
-  it('after a partial failure, a second Delete never removes the same file twice', () => {
-    const items = [owned, shared, item('report')];
+  it('works while the request goes out; a refusal keeps the dialog open with why, ready to retry', () => {
+    const items = [owned, shared];
     const actions: BulkDeleteAction[] = [
-      { type: 'impactsLoaded', impacts: { guide: impact(), report: impact() } },
+      { type: 'impactsLoaded', impacts: { guide: impact() } },
       { type: 'sent' },
-      {
-        type: 'answered',
-        outcomes: [
-          { id: 'guide', error: null },
-          { id: 'manual', error: 'No such file' },
-          { id: 'report', error: null },
-        ],
-      },
     ];
-    const answered = actions.reduce(bulkDeleteReducer, initialBulkDelete);
-    expect(answered.error).toBe('1 of 3 could not be removed: No such file');
-    // The page behind has not caught up yet: the dialog still holds all three.
-    const view = bulkDeleteView(answered, items);
-    expect(view.toRemove).toEqual(['manual']);
-    expect(view.label).toBe('Delete 1');
-    const retried = bulkDeleteReducer(answered, {
-      type: 'answered',
-      outcomes: [{ id: 'manual', error: null }],
+    const sent = actions.reduce(bulkDeleteReducer, initialBulkDelete);
+    expect(bulkDeleteView(sent, items).disabled).toBe(true);
+    const refused = bulkDeleteReducer(sent, { type: 'answered', error: 'Not signed in' });
+    expect(refused.error).toBe('Not signed in');
+    expect(bulkDeleteView(refused, items)).toMatchObject({
+      toRemove: ['guide', 'manual'],
+      disabled: false,
     });
-    expect(retried.error).toBeNull();
-    expect(bulkDeleteView(retried, items)).toMatchObject({ toRemove: [], disabled: true });
   });
 });

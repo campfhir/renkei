@@ -164,6 +164,12 @@ export async function register() {
     const { startApplyJobRecovery: startJiraApplyJobRecovery } =
       await import('@/lib/jira-admin/apply-job');
     startJiraApplyJobRecovery();
+
+    // The library's bulk acts (delete, OCR, add to a project) run the same
+    // way: started in after() by the route, picked up here when the process
+    // that took them went away. See lib/chat/artifact-bulk-job.ts.
+    const { startBulkJobRecovery } = await import('@/lib/chat/artifact-bulk-job');
+    startBulkJobRecovery();
   }
 }
 

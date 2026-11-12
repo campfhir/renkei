@@ -4,11 +4,16 @@
  * The two dialogs for acting on several artifacts at once from the library:
  *
  *   - Add to a project: each file the project does not hold yet is attached
- *     with the mode chosen here, the same call the single file's picker makes.
+ *     with the mode chosen here, as the single file's picker attaches it.
  *   - Delete: the impact of every owned file is worked out first, and the
  *     warning lists the projects and people that lose it. Files shared with
  *     the viewer only leave their list. Hand-over is single-file only: use
  *     the one-file delete dialog to hand a file over.
+ *
+ * Confirming sends one request; the server works through the files as a
+ * job after answering (lib/chat/artifact-bulk-job.ts), and the library
+ * page shows its progress and failures. The dialog closes once the job is
+ * taken.
  *
  * What each decides is artifact-bulk-dialogs.model.ts.
  */
@@ -31,21 +36,7 @@ import {
   initialBulkAdd,
   initialBulkDelete,
   splitByOwner,
-  type Outcome,
 } from './artifact-bulk-dialogs.model';
-
-/** Runs an act for each id in turn; the first failure does not stop the rest. */
-async function eachInTurn(
-  ids: string[],
-  act: (id: string) => Promise<{ error: string | null }>
-): Promise<Outcome[]> {
-  const outcomes: Outcome[] = [];
-  for (const id of ids) {
-    const result = await act(id);
-    outcomes.push({ id, error: result.error });
-  }
-  return outcomes;
-}
 
 export function BulkAddModal({
   items,
@@ -55,7 +46,8 @@ export function BulkAddModal({
 }: {
   items: LibraryItem[];
   projects: { id: string; name: string; kind: string }[];
-  onDone: () => void;
+  /** The job was taken: the files it was sent for. */
+  onDone: (sent: string[]) => void;
   onClose: () => void;
 }) {
   const [state, dispatch] = useReducer(bulkAddReducer, projects, initialBulkAdd);
@@ -65,16 +57,16 @@ export function BulkAddModal({
   const confirm = async () => {
     if (!target || toAdd.length === 0) return;
     dispatch({ type: 'sent' });
-    const outcomes = await eachInTurn(
-      toAdd.map((item) => item.id),
-      (id) =>
-        chatClient
-          .attachArtifact(target.id, id, state.mode)
-          .then((result) => ({ error: result.error }))
-    );
-    dispatch({ type: 'answered', projectId: target.id, outcomes });
-    onDone();
-    if (outcomes.some((outcome) => outcome.error !== null)) return;
+    const artifactIds = toAdd.map((item) => item.id);
+    const result = await chatClient.startArtifactBulk({
+      action: 'attach',
+      artifactIds,
+      projectId: target.id,
+      mode: state.mode,
+    });
+    dispatch({ type: 'answered', error: result.error });
+    if (result.error) return;
+    onDone(artifactIds);
     onClose();
   };
 
@@ -144,8 +136,8 @@ export function BulkDeleteModal({
   onClose,
 }: {
   items: LibraryItem[];
-  /** The deletes were answered: the ids of the files they removed. */
-  onDone: (removed: string[]) => void;
+  /** The job was taken: the files it was sent for. */
+  onDone: (sent: string[]) => void;
   onClose: () => void;
 }) {
   const [state, dispatch] = useReducer(bulkDeleteReducer, initialBulkDelete);
@@ -174,10 +166,11 @@ export function BulkDeleteModal({
   const confirm = async () => {
     if (view.toRemove.length === 0) return;
     dispatch({ type: 'sent' });
-    const outcomes = await eachInTurn(view.toRemove, (id) => chatClient.deleteArtifact(id));
-    dispatch({ type: 'answered', outcomes });
-    onDone(outcomes.filter((outcome) => outcome.error === null).map((outcome) => outcome.id));
-    if (outcomes.some((outcome) => outcome.error !== null)) return;
+    const artifactIds = view.toRemove;
+    const result = await chatClient.startArtifactBulk({ action: 'delete', artifactIds });
+    dispatch({ type: 'answered', error: result.error });
+    if (result.error) return;
+    onDone(artifactIds);
     onClose();
   };
 

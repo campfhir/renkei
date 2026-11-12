@@ -9,6 +9,7 @@
  * own box, the phone layout, and one real upload end to end.
  */
 
+import type { BulkJobView } from '@/lib/chat/artifact-bulk-job';
 import type { LibraryItem } from '@/lib/chat/artifact-library';
 import type { LibraryQuery } from '@/lib/chat/artifact-library-params';
 import {
@@ -25,6 +26,9 @@ import {
   filtersOf,
   indexReducer,
   initialIndex,
+  jobLine,
+  rowJobStatus,
+  FAILURES_NAMED,
   keepsReading,
   keyOf,
   originWord,
@@ -511,5 +515,103 @@ describe('reading the page again', () => {
   it('remembers every file it saw being read, and only adds to that', () => {
     const first = seenReading(new Set(['old']), [file('a', { ocr: running }), file('b')]);
     expect([...first].sort()).toEqual(['a', 'old']);
+  });
+});
+
+describe('bulk jobs on the server', () => {
+  const projects = [{ id: 'billing', name: 'Billing API' }];
+  const job = (more: Partial<BulkJobView> = {}): BulkJobView => ({
+    id: 'j1',
+    action: 'delete',
+    status: 'running',
+    projectId: null,
+    total: 26,
+    answered: 10,
+    pendingIds: ['p1', 'p2'],
+    failures: [],
+    lastError: null,
+    ...more,
+  });
+
+  it('a running job says what it does and how far it got', () => {
+    expect(jobLine(job(), projects)).toEqual({
+      text: 'Deleting 26 files',
+      progress: '10 of 26 done',
+      fraction: 10 / 26,
+      live: true,
+      failures: [],
+    });
+    expect(jobLine(job({ action: 'ocr', total: 1, answered: 0 }), projects).text).toBe(
+      'Running OCR on 1 file'
+    );
+    expect(jobLine(job({ action: 'attach', projectId: 'billing', total: 3 }), projects).text).toBe(
+      'Adding 3 files to Billing API'
+    );
+  });
+
+  it('a job not yet started says it is waiting', () => {
+    expect(jobLine(job({ status: 'queued', answered: 0 }), projects)).toMatchObject({
+      progress: 'waiting to start',
+      fraction: 0,
+      live: true,
+    });
+  });
+
+  it('a finished job with failures names the files and why, and can be closed', () => {
+    const failures = Array.from({ length: FAILURES_NAMED + 2 }, (_, n) => ({
+      id: `f${n}`,
+      filename: n === 0 ? null : `f${n}.pdf`,
+      error: 'The file store refused.',
+    }));
+    const line = jobLine(
+      job({ status: 'partial', answered: 26, pendingIds: [], failures }),
+      projects
+    );
+    expect(line).toMatchObject({
+      text: '7 of 26 files could not be deleted',
+      progress: null,
+      fraction: null,
+      live: false,
+    });
+    expect(line.failures[0]).toBe('A file: The file store refused.');
+    expect(line.failures[1]).toBe('f1.pdf: The file store refused.');
+    expect(line.failures.at(-1)).toBe('and 2 more');
+  });
+
+  it('a job that stopped partway says how many it never reached, and why', () => {
+    expect(
+      jobLine(
+        job({
+          action: 'attach',
+          projectId: 'gone',
+          status: 'failed',
+          answered: 20,
+          lastError: 'Something went wrong partway.',
+        }),
+        projects
+      )
+    ).toMatchObject({
+      text: '6 files of 26 could not be added to a project',
+      failures: ['Something went wrong partway.'],
+    });
+  });
+
+  it('a row the live job has yet to reach says so; others say nothing', () => {
+    const jobs = [
+      job(),
+      job({ id: 'j2', action: 'attach', projectId: 'billing', pendingIds: ['p3'] }),
+      job({ id: 'j3', status: 'partial', pendingIds: ['p4'] }),
+    ];
+    expect(rowJobStatus('p1', jobs, projects)).toBe('Deleting…');
+    expect(rowJobStatus('p3', jobs, projects)).toBe('Adding to Billing API…');
+    expect(rowJobStatus('p4', jobs, projects)).toBeNull();
+    expect(rowJobStatus('other', jobs, projects)).toBeNull();
+    expect(rowJobStatus('p1', [job({ action: 'ocr' })], projects)).toBe('Waiting for OCR');
+  });
+
+  it('the page keeps reading itself while a job works, and stops once none does', () => {
+    expect(keepsReading([], false, new Set(), [job()])).toBe(true);
+    expect(keepsReading([], false, new Set(), [job({ status: 'queued' })])).toBe(true);
+    expect(keepsReading([], false, new Set(), [job({ status: 'partial' })])).toBe(false);
   });
 });

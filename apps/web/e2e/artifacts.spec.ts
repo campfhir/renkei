@@ -382,7 +382,7 @@ test('the library: the list scrolls in its own box, the filters and the pager st
   person,
 }, testInfo) => {
   test.slow();
-  await stage(page, request, person, testInfo, { backlog: true });
+  const staged = await stage(page, request, person, testInfo, { backlog: true });
   // Short enough that a page of rows is taller than the box it scrolls in.
   await page.setViewportSize({ width: 1280, height: 640 });
 
@@ -429,6 +429,24 @@ test('the library: the list scrolls in its own box, the filters and the pager st
   await expect(pager.getByText('26–32 of 32')).toBeVisible();
   await expect(bar.getByText('Tap files to select')).toBeVisible();
   await expect(list.getByLabel('Select backlog-30.txt')).toHaveCount(0);
+
+  // The delete above ran as a job on the server and left nothing on
+  // screen. One that fails stays, naming the file, until it is closed:
+  // asked through the toolbar's own route for a file already gone.
+  const again = await page.request.post('/api/chat/artifacts/bulk', {
+    data: { action: 'delete', artifactIds: [staged.backlog[30]] },
+  });
+  expect(again.status(), await again.text()).toBe(202);
+  await page.reload();
+  const failed = page
+    .getByRole('list', { name: 'Bulk jobs' })
+    .getByRole('alert')
+    .filter({ hasText: '1 of 1 file could not be deleted' });
+  await expect(failed).toBeVisible(COLD);
+  await expect(failed.getByText('A file: No such file')).toBeVisible();
+  await shot(page, testInfo, 'artifacts-19-bulk-job-failed');
+  await failed.getByRole('button', { name: 'Dismiss' }).click();
+  await expect(failed).toBeHidden();
 });
 
 test('the library: a real upload lands, reads back, is sealed at rest, and gets its digest', async ({

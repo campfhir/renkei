@@ -11,10 +11,12 @@
  * decides from that — what a press on a row does, what a filter change
  * asks the server for, what the pager and the select toolbar offer, what
  * the details say about where a file is used and who may do what with
- * it, when the page keeps reading itself again — is here, and tested in
- * artifacts-index.model.test.ts.
+ * it, what a bulk job running on the server says while it works and once
+ * something in it failed, when the page keeps reading itself again — is
+ * here, and tested in artifacts-index.model.test.ts.
  */
 
+import type { BulkJobView } from '@/lib/chat/artifact-bulk-job';
 import type { LibraryItem } from '@/lib/chat/artifact-library';
 import type { LibraryFilters, LibraryQuery } from '@/lib/chat/artifact-library-params';
 import type { LibraryPage } from '@/lib/chat/artifact-library-query';
@@ -336,13 +338,15 @@ export function failureLine(failures: readonly string[]): string | null {
   return failuresLine(failures);
 }
 
-/** Whether the page keeps reading itself again (artifact-ocr.ts): a read in flight, or a summary
- *  still to come for a file this page saw being read. */
+/** Whether the page keeps reading itself again (artifact-ocr.ts): a read in flight, a summary
+ *  still to come for a file this page saw being read, or a bulk job still working. */
 export function keepsReading(
   items: readonly LibraryItem[],
   digests: boolean,
-  readHere: ReadonlySet<string>
+  readHere: ReadonlySet<string>,
+  jobs: readonly Pick<BulkJobView, 'status'>[] = []
 ): boolean {
+  if (jobs.some(isLive)) return true;
   const ocrRunning = items.some((item) => item.ocr !== null);
   const summaryAwaited =
     digests &&
@@ -468,4 +472,90 @@ export function acts(item: Pick<LibraryItem, 'via'>): Acts {
       ? 'Replacing keeps every attachment and re-reads the text. Deleting shows who loses it and offers to hand it over instead.'
       : 'A copy is a separate file you own; the owner is told. Removing it keeps their file and their shares.',
   };
+}
+
+// ---- Bulk jobs on the server ----------------------------------------------
+
+type Job = Pick<
+  BulkJobView,
+  'action' | 'status' | 'projectId' | 'total' | 'answered' | 'pendingIds' | 'failures' | 'lastError'
+>;
+
+const isLive = (job: Pick<BulkJobView, 'status'>) =>
+  job.status === 'queued' || job.status === 'running';
+
+const files = (count: number) => `${count} ${count === 1 ? 'file' : 'files'}`;
+
+/** The most failed files a job's line names; the rest are counted. */
+export const FAILURES_NAMED = 5;
+
+export interface JobLine {
+  /** "Deleting 26 files", "3 of 26 files could not be deleted". */
+  text: string;
+  /** "10 done", "waiting to start", or null once it has ended. */
+  progress: string | null;
+  /** 0–1 while it works, for the bar. */
+  fraction: number | null;
+  /** Whether it is still working; otherwise something in it failed and it can be closed. */
+  live: boolean;
+  /** "a.pdf: The file store refused.", at most FAILURES_NAMED, then "and 3 more". */
+  failures: string[];
+}
+
+/** What a bulk job's line above the list says. */
+export function jobLine(job: Job, projects: readonly { id: string; name: string }[]): JobLine {
+  const project = projects.find((p) => p.id === job.projectId)?.name ?? 'a project';
+  if (isLive(job)) {
+    const doing =
+      job.action === 'delete'
+        ? `Deleting ${files(job.total)}`
+        : job.action === 'ocr'
+          ? `Running OCR on ${files(job.total)}`
+          : `Adding ${files(job.total)} to ${project}`;
+    return {
+      text: doing,
+      progress:
+        job.status === 'queued' && job.answered === 0
+          ? 'waiting to start'
+          : `${job.answered} of ${job.total} done`,
+      fraction: job.total > 0 ? job.answered / job.total : 0,
+      live: true,
+      failures: [],
+    };
+  }
+  const verb =
+    job.action === 'delete' ? 'deleted' : job.action === 'ocr' ? 'read' : `added to ${project}`;
+  const failed = job.failures.length;
+  const named = job.failures
+    .slice(0, FAILURES_NAMED)
+    .map((failure) => `${failure.filename ?? 'A file'}: ${failure.error}`);
+  const more = failed - named.length;
+  const notReached = job.total - job.answered;
+  return {
+    text:
+      failed > 0
+        ? `${failed} of ${files(job.total)} could not be ${verb}`
+        : `${files(notReached)} of ${job.total} could not be ${verb}`,
+    progress: null,
+    fraction: null,
+    live: false,
+    failures: [
+      ...named,
+      ...(more > 0 ? [`and ${more} more`] : []),
+      ...(job.lastError ? [job.lastError] : []),
+    ],
+  };
+}
+
+/** What a row says while a live job has yet to reach its file, or null. */
+export function rowJobStatus(
+  id: string,
+  jobs: readonly Job[],
+  projects: readonly { id: string; name: string }[]
+): string | null {
+  const job = jobs.find((candidate) => isLive(candidate) && candidate.pendingIds.includes(id));
+  if (!job) return null;
+  if (job.action === 'delete') return 'Deleting…';
+  if (job.action === 'ocr') return 'Waiting for OCR';
+  return `Adding to ${projects.find((p) => p.id === job.projectId)?.name ?? 'a project'}…`;
 }

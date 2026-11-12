@@ -201,6 +201,7 @@ export const EXPECTED_MIGRATIONS = [
   '175-token-limits',
   '176-chat-project-model',
   '177-audit-events-append-only',
+  '178-artifact-bulk-jobs',
 ];
 
 export interface MigrationStatus {

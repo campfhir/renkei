@@ -1,47 +1,33 @@
 /**
  * The library's dialogs for several files at once (artifact-bulk-dialogs.tsx):
  *
- *   - Add to a project: the project, how its chats use the files, which
- *     of them it does not hold yet, and which this dialog has added;
+ *   - Add to a project: the project, how its chats use the files, and
+ *     which of them it does not hold yet;
  *   - Delete: which files are the viewer's (removed for good) and which
- *     were shared with them (only leave their list), who loses each owned
- *     one, and which this dialog has already removed.
+ *     were shared with them (only leave their list), and who loses each
+ *     owned one.
  *
- * The dialogs make the calls, one file at a time, and dispatch each
- * answer; what they decide from that — what the warning names, what the
- * confirm button says and sends, what a partial failure says — is here,
- * and tested in artifact-bulk-dialogs.model.test.ts. A file this dialog
- * has already added or removed is never sent again: after a partial
- * failure the button retries only what is left, even before the page
- * behind the dialog has caught up.
+ * Confirming sends one request for every file; the server takes it as a
+ * job and works through the files after answering
+ * (lib/chat/artifact-bulk-job.ts), and the library page shows how far it
+ * got and what failed. So the dialog only waits for the request to be
+ * taken: it closes when it is, and says why when it is not. What the
+ * dialogs decide — what the warning names, what the confirm button says
+ * and sends, what a refusal leaves on screen — is here, and tested in
+ * artifact-bulk-dialogs.model.test.ts.
  */
 
 import type { ArtifactImpact, LibraryItem } from '@/lib/chat/artifact-library';
 
 type Item = Pick<LibraryItem, 'id' | 'filename' | 'via' | 'projects'>;
 
-/** One file's answer: null when it went through. */
-export interface Outcome {
-  id: string;
-  error: string | null;
-}
-
 const plural = (count: number) => (count === 1 ? 'file' : 'files');
-
-/** "3 of 5 could not be removed: No such file", or null when nothing failed. */
-function failureLine(outcomes: readonly Outcome[], verb: string): string | null {
-  const failures = outcomes.filter((outcome) => outcome.error !== null);
-  if (failures.length === 0) return null;
-  return `${failures.length} of ${outcomes.length} could not be ${verb}: ${failures[0].error}`;
-}
 
 // ---- Add to a project ----------------------------------------------------
 
 export interface BulkAddState {
   projectId: string;
   mode: 'always' | 'on_demand';
-  /** "project:file" for each file this dialog has attached. */
-  added: readonly string[];
   busy: boolean;
   error: string | null;
 }
@@ -50,14 +36,14 @@ export type BulkAddAction =
   | { type: 'projectChosen'; projectId: string }
   | { type: 'modeChosen'; mode: 'always' | 'on_demand' }
   | { type: 'sent' }
-  | { type: 'answered'; projectId: string; outcomes: Outcome[] };
+  /** The server took the job (null), or refused it with why. */
+  | { type: 'answered'; error: string | null };
 
 /** The dialog starts on the first project, On demand. */
 export function initialBulkAdd(projects: readonly { id: string }[]): BulkAddState {
   return {
     projectId: projects[0]?.id ?? '',
     mode: 'on_demand',
-    added: [],
     busy: false,
     error: null,
   };
@@ -72,17 +58,7 @@ export function bulkAddReducer(state: BulkAddState, action: BulkAddAction): Bulk
     case 'sent':
       return { ...state, busy: true, error: null };
     case 'answered':
-      return {
-        ...state,
-        busy: false,
-        added: [
-          ...state.added,
-          ...action.outcomes
-            .filter((outcome) => outcome.error === null)
-            .map((outcome) => `${action.projectId}:${outcome.id}`),
-        ],
-        error: failureLine(action.outcomes, 'added'),
-      };
+      return { ...state, busy: false, error: action.error };
   }
 }
 
@@ -103,9 +79,7 @@ export function bulkAddView<I extends Item>(
 ): BulkAddView<I> {
   const target = projects.find((project) => project.id === state.projectId) ?? null;
   const toAdd = items.filter(
-    (item) =>
-      !item.projects.some((project) => project.id === state.projectId) &&
-      !state.added.includes(`${state.projectId}:${item.id}`)
+    (item) => !item.projects.some((project) => project.id === state.projectId)
   );
   return {
     target,
@@ -129,8 +103,6 @@ export function bulkAddTitle(count: number): string {
 export interface BulkDeleteState {
   /** By file id, for the owned files; null until every one has answered. */
   impacts: Readonly<Record<string, ArtifactImpact>> | null;
-  /** Files this dialog has removed (or taken off the list). */
-  removed: readonly string[];
   busy: boolean;
   error: string | null;
 }
@@ -138,11 +110,11 @@ export interface BulkDeleteState {
 export type BulkDeleteAction =
   | { type: 'impactsLoaded'; impacts: Record<string, ArtifactImpact> }
   | { type: 'sent' }
-  | { type: 'answered'; outcomes: Outcome[] };
+  /** The server took the job (null), or refused it with why. */
+  | { type: 'answered'; error: string | null };
 
 export const initialBulkDelete: BulkDeleteState = {
   impacts: null,
-  removed: [],
   busy: false,
   error: null,
 };
@@ -157,17 +129,7 @@ export function bulkDeleteReducer(
     case 'sent':
       return { ...state, busy: true, error: null };
     case 'answered':
-      return {
-        ...state,
-        busy: false,
-        removed: [
-          ...state.removed,
-          ...action.outcomes
-            .filter((outcome) => outcome.error === null)
-            .map((outcome) => outcome.id),
-        ],
-        error: failureLine(action.outcomes, 'removed'),
-      };
+      return { ...state, busy: false, error: action.error };
   }
 }
 
@@ -215,7 +177,7 @@ export function deleteSummary(items: readonly Item[]): string {
 export interface BulkDeleteView {
   /** Still working out who uses the owned files. */
   loading: boolean;
-  /** The files Delete sends: none this dialog has already removed. */
+  /** The files Delete sends. */
   toRemove: string[];
   label: string;
   disabled: boolean;
@@ -223,7 +185,7 @@ export interface BulkDeleteView {
 
 export function bulkDeleteView(state: BulkDeleteState, items: readonly Item[]): BulkDeleteView {
   const loading = splitByOwner(items).owned.length > 0 && state.impacts === null;
-  const toRemove = items.map((item) => item.id).filter((id) => !state.removed.includes(id));
+  const toRemove = items.map((item) => item.id);
   return {
     loading,
     toRemove,
