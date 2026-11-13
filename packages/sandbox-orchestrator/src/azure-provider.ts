@@ -438,7 +438,14 @@ export interface AzureIdentity {
   clientSecret: string;
 }
 
-async function credentialFor(identity: AzureIdentity | null | undefined) {
+async function credentialFor(identity: AzureIdentity | null | undefined, staticToken?: string) {
+  if (staticToken) {
+    // A token got elsewhere (`az account get-access-token`), for a one-off
+    // run where no identity is set up: good until it expires.
+    return {
+      getToken: async () => ({ token: staticToken, expiresOnTimestamp: Date.now() + 3_000_000 }),
+    };
+  }
   const { ClientSecretCredential, DefaultAzureCredential } = await import('@azure/identity');
   return identity
     ? new ClientSecretCredential(identity.tenantId, identity.clientId, identity.clientSecret)
@@ -464,6 +471,8 @@ export interface AzureClientConfig {
   /** The data-plane endpoint itself, when it is not the region's default. */
   endpoint?: string | null;
   identity?: AzureIdentity | null;
+  /** A ready-made data-plane token, in place of an identity (a live test). */
+  staticToken?: string;
 }
 
 /**
@@ -475,7 +484,7 @@ export async function createAzureSandboxClient(
 ): Promise<AzureSandboxClient> {
   const [{ SandboxGroupClient, endpointForRegion }, credential] = await Promise.all([
     import('@azure/containerapps-sandbox'),
-    credentialFor(config.identity),
+    credentialFor(config.identity, config.staticToken),
   ]);
   const group = new SandboxGroupClient(
     credential,
