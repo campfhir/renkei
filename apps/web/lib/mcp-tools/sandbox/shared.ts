@@ -19,12 +19,30 @@ export function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-/** The caller's scratch space: their subject, in the chat or project their token names (migration 169). */
+/**
+ * The sandbox instance assignment an agent's calls go by. An agent acts
+ * as its owner — the owner's scratch space, grants and uid — but its runs
+ * are served by an instance of the agent's own choosing, the same one run
+ * after run, as a code project's are: a person's agents do not all pile
+ * onto the instance their own chats use, and one agent's browser and
+ * working files stay where its last run left them.
+ */
+export function agentRoute(agentId: string): string {
+  return `agent:${agentId}`;
+}
+
+/**
+ * The caller's scratch space: their subject, in the chat or project their
+ * token names (migration 169) — routed by the acting agent's assignment
+ * when an agent is calling, by the person's own otherwise.
+ */
 export function targetOf(context: MCPToolContext): SandboxTarget | string {
   if (!context.subject) return 'No signed-in identity on this request.';
-  return context.sandboxScope
-    ? { subject: context.subject, scope: context.sandboxScope }
-    : { subject: context.subject };
+  return {
+    subject: context.subject,
+    ...(context.sandboxScope ? { scope: context.sandboxScope } : {}),
+    ...(context.agent ? { route: agentRoute(context.agent.agentId) } : {}),
+  };
 }
 
 export function fileLine(file: WireSandboxFile): string {

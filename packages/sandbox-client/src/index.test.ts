@@ -1531,6 +1531,50 @@ describe('previews', () => {
       expect(again?.url.slice(0, A.length)).toBe(first?.url.slice(0, A.length));
     });
 
+    it('a call that names a route goes by that assignment, not its subject’s, and the worker is never told the route', async () => {
+      const calls: { url: string; body: string }[] = [];
+      global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith('/health')) return new Response('{"ok":true}', { status: 200 });
+        calls.push({ url, body: String(init?.body ?? '') });
+        return new Response(JSON.stringify({ files: [] }), { status: 200 });
+      }) as unknown as typeof fetch;
+      const store = getMemoryDataStore();
+      if (!store) throw new Error('the memory store is not registered');
+      // The owner is served by one instance, their agent by the other.
+      const now = new Date();
+      await store.sandboxInstances.assign({
+        subject: 'ann',
+        instanceId: 'sandbox-a',
+        replacing: null,
+        at: now,
+      });
+      await store.sandboxInstances.assign({
+        subject: 'agent:agent-7',
+        instanceId: 'sandbox-b',
+        replacing: null,
+        at: now,
+      });
+      await sbListFiles({ subject: 'ann' });
+      await sbListFiles({ subject: 'ann', route: 'agent:agent-7' });
+      expect(calls.map((call) => call.url)).toEqual([`${A}/v1/list`, `${B}/v1/list`]);
+      // Whose call it is does not change: the owner's, both times.
+      expect(JSON.parse(calls[1]?.body ?? '{}')).toEqual({ subject: 'ann' });
+      expect(calls[1]?.body).not.toContain('route');
+      // The agent has an assignment of its own; the owner's is untouched.
+      expect((await store.sandboxInstances.assignment('ann'))?.instanceId).toBe('sandbox-a');
+    });
+
+    it('an agent with no assignment yet is given one of its own on its first call', async () => {
+      global.fetch = jest.fn(
+        async () => new Response(JSON.stringify({ ok: true, files: [] }), { status: 200 })
+      ) as unknown as typeof fetch;
+      const store = getMemoryDataStore();
+      if (!store) throw new Error('the memory store is not registered');
+      await sbListFiles({ subject: 'ann', route: 'agent:agent-9' });
+      expect(await store.sandboxInstances.assignment('agent:agent-9')).not.toBeNull();
+      expect(await store.sandboxInstances.assignment('ann')).toBeNull();
+    });
+
     it('a share link, which names no caller, goes to the instance that says the token is its own', async () => {
       const asked: string[] = [];
       global.fetch = jest.fn(async (url: string) => {

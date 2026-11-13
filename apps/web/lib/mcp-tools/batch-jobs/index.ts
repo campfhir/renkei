@@ -25,11 +25,7 @@ import {
   resolveMistralOcrConfig,
   describeMistralOcrError,
 } from '@renkei/connector-mistral-ocr';
-import {
-  sbReadFile,
-  clientFailure as sandboxClientFailure,
-  type SandboxTarget,
-} from '@renkei/sandbox-client';
+import { sbReadFile, clientFailure as sandboxClientFailure } from '@renkei/sandbox-client';
 import {
   startDocumentOcrPipeline,
   type AfterProcessing,
@@ -40,6 +36,7 @@ import { listConnectedShares } from '@renkei/connector-fileshares';
 import { logger } from '@/lib/logger';
 import type { MCPToolContext } from '../common';
 import { callerFields } from '../common';
+import { targetOf } from '../sandbox/shared';
 
 /** The connector key the batch-job capabilities register under. */
 export const BATCH_JOBS_MCP_CONNECTOR = 'batch-jobs';
@@ -56,13 +53,6 @@ function errText(text: string) {
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
-}
-
-function targetOf(context: MCPToolContext): SandboxTarget | string {
-  if (!context.subject) return 'No signed-in identity on this request.';
-  return context.sandboxScope
-    ? { subject: context.subject, scope: context.sandboxScope }
-    : { subject: context.subject };
 }
 
 const groupingSchema = z.union([

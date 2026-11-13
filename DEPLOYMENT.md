@@ -784,6 +784,17 @@ it (`packages/sandbox-client` routing). The shared `SANDBOX_WORKER_URL`
 is still what the app is given: it is used for what any instance answers
 alike, and for everything until an instance has registered.
 
+An **agent** has an assignment of its own (`agent:<id>` in
+`sandbox_assignments`), separate from its owner's: every run of the
+agent is served by the same instance, and a person's agents are spread
+over the instances rather than all sharing the one their own chats use.
+An agent's calls are still its owner's — the owner's scratch space,
+variables and uid — so this decides only where they run. It leans on the
+shared `/data`: a file an agent staged is on the agent's instance, and
+the owner opening it from the app is served by theirs, which finds it
+only on a disk the two share. Without that disk, an agent's staged
+files and its browser session are its own instance's alone.
+
 - An instance whose row has not been touched for 45 seconds is taken for
   gone, and its callers are moved to another on their next call. What it
   held for them is made again there: a kernel starts fresh (the notebook
