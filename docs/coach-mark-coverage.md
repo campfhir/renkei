@@ -41,6 +41,7 @@ it in passing (a step in the welcome tour, say) but nothing walks through it.
 | Projects                     | `/[slug]/chat/projects` | everyone | `projects`, `project`                | Covered |
 | Code projects                | `/[slug]/code`          | everyone | `code`, `code-new`                   | Covered |
 | Code pane file tree          | code pane, tree heading | everyone | `code-tree`                          | Covered |
+| Notebooks in the code pane   | code pane, a `.ipynb`   | everyone | `code-notebook`                      | Covered |
 | Prompt libraries             | `/[slug]/chat/prompts`  | everyone | `prompt-libraries`, `prompt-library` | Covered |
 | Memory                       | `/[slug]/chat/memory`   | everyone | `memory`                             | Covered |
 

@@ -122,6 +122,14 @@ export const COACH_ANCHORS = [
   'code-instructions',
   /** The New file button inline with the code pane's tree heading. */
   'code-tree-new-file',
+  /** A notebook's Notebook | Source switch, in the code pane. */
+  'notebook-view-switch',
+  /** A notebook's kernel status, beside the switch. */
+  'notebook-kernel',
+  /** A notebook's Packages button (for someone who may run it). */
+  'notebook-packages',
+  /** A notebook's Run all button (for someone who may run it, while nothing runs). */
+  'notebook-run-all',
 
   // The pages behind the avatar.
   /** The "Choose what appears here" link on the notifications page. */

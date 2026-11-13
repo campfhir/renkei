@@ -26,6 +26,7 @@
  */
 
 import { useEffect, useMemo, useReducer, useRef, type KeyboardEvent, type ReactNode } from 'react';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { highlightedTokens } from '@/components/code-tokens';
 import { Icon, ICONS } from '@/components/icons';
 import {
@@ -103,6 +104,10 @@ export default function NotebookView({
   const change = useRef(onChange);
   change.current = onChange;
   const cellRefs = useRef(new Map<number, HTMLTextAreaElement>());
+  const switchAnchor = useCoachAnchor('notebook-view-switch');
+  const kernelAnchor = useCoachAnchor('notebook-kernel');
+  const packagesAnchor = useCoachAnchor('notebook-packages');
+  const runAllAnchor = useCoachAnchor('notebook-run-all');
 
   const context = {
     canEdit,
@@ -259,6 +264,7 @@ export default function NotebookView({
         <div
           role="group"
           aria-label="Notebook or source"
+          {...switchAnchor}
           className="flex shrink-0 overflow-hidden rounded-md border border-gray-300 text-xs font-medium dark:border-gray-700"
         >
           {(['notebook', 'source'] as const).map((mode) => (
@@ -280,6 +286,7 @@ export default function NotebookView({
         <span
           role="status"
           data-testid="notebook-kernel"
+          {...kernelAnchor}
           title={fromCheckout ? kernelLabel(state) : undefined}
           className="flex min-w-0 flex-1 basis-0 items-center gap-1.5 truncate text-xs text-gray-500"
         >
@@ -306,6 +313,7 @@ export default function NotebookView({
               type="button"
               onClick={() => dispatch({ type: 'packagesToggled' })}
               aria-expanded={state.packages.open}
+              {...packagesAnchor}
               className={`${toolbarButton}${tall}`}
             >
               <Icon path={ICONS.package} className="h-3.5 w-3.5" />
@@ -354,6 +362,7 @@ export default function NotebookView({
             onClick={() => run(cellsToRun(notebook?.cells ?? []))}
             disabled={blocked !== null || cellsToRun(notebook?.cells ?? []).length === 0}
             title={blocked ?? 'Run every cell from the top, in the notebook’s kernel'}
+            {...runAllAnchor}
             className={`${runButton}${tall}`}
           >
             <Icon path={ICONS.play} className="h-3.5 w-3.5" />
