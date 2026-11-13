@@ -88,6 +88,8 @@ const NUMERIC_BOUNDS = {
   sandboxScriptMemoryBytes: [67_108_864, 68_719_476_736],
   sandboxServiceMemoryBytes: [67_108_864, 68_719_476_736],
   sandboxServicePids: [16, 65_536],
+  // An evicted sandbox's archive: a day at least, ten years the typo guard.
+  sandboxArchiveRetentionDays: [1, 3_650],
 } as const;
 
 const NUMERIC_KEYS = [
@@ -117,6 +119,7 @@ const NUMERIC_KEYS = [
   'sandboxScriptMemoryBytes',
   'sandboxServiceMemoryBytes',
   'sandboxServicePids',
+  'sandboxArchiveRetentionDays',
 ] as const;
 
 const BOOLEAN_KEYS = [
@@ -191,6 +194,7 @@ function editable(settings: OrgSettings): Record<EditableKey, EditableValue> {
     sandboxScriptMemoryBytes: settings.sandboxScriptMemoryBytes,
     sandboxServiceMemoryBytes: settings.sandboxServiceMemoryBytes,
     sandboxServicePids: settings.sandboxServicePids,
+    sandboxArchiveRetentionDays: settings.sandboxArchiveRetentionDays,
     sandboxWorkspacesDebug: settings.sandboxWorkspacesDebug,
     admanagerProductName: settings.admanagerProductName,
     codePreviewHost: settings.codePreviewHost,

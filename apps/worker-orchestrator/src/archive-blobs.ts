@@ -6,8 +6,10 @@
  *
  *   SANDBOX_ARCHIVE_CONTAINER       the Azure container, default
  *                                   `renkei-sandbox-archives`.
- *   SANDBOX_ARCHIVE_RETENTION_DAYS  drop an archive nobody has come back
- *                                   for after this long, default 90.
+ *
+ * How long an archive is kept is not a variable here: it is the
+ * organization's setting (`sandboxArchiveRetentionDays`, 90 days unless
+ * changed).
  *
  * With no blob store configured there are no archives: an evicted
  * sandbox's work goes with its machine, and boot says so.
@@ -19,11 +21,8 @@ import {
   createLocalBlobStore,
   type BlobStore,
 } from '@renkei/blob-store';
-import {
-  ARCHIVE_CONTENT_TYPE,
-  DEFAULT_ARCHIVE_RETENTION_MS,
-  type ArchiveBlobs,
-} from '@renkei/sandbox-orchestrator';
+import { ARCHIVE_CONTENT_TYPE, type ArchiveBlobs } from '@renkei/sandbox-orchestrator';
+import { getOrgSettings } from '@renkei/settings';
 
 type Env = Record<string, string | undefined>;
 
@@ -68,14 +67,13 @@ export function archiveBlobsOf(store: BlobStore): ArchiveBlobs {
   };
 }
 
-export function archiveRetentionMs(env: Env): number {
-  const raw = env.SANDBOX_ARCHIVE_RETENTION_DAYS?.trim();
-  if (!raw) return DEFAULT_ARCHIVE_RETENTION_MS;
-  const days = Number(raw);
-  if (!Number.isFinite(days) || days <= 0) {
-    throw new Error(
-      `SANDBOX_ARCHIVE_RETENTION_DAYS must be a positive number, got ${JSON.stringify(raw)}`
-    );
-  }
-  return days * 24 * 60 * 60_000;
+/**
+ * How long an archive nobody comes back for is kept: the organization's
+ * own setting (admin → Settings → Sandbox), read on every sweep. Null
+ * when the settings cannot be read: nothing is dropped on a guess.
+ */
+export async function archiveRetentionMs(): Promise<number | null> {
+  const settings = await getOrgSettings();
+  if (!settings.ok) return null;
+  return settings.val.sandboxArchiveRetentionDays * 24 * 60 * 60_000;
 }

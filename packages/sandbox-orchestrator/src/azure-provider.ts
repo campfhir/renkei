@@ -241,9 +241,16 @@ export class AzureSandboxProvider implements SandboxProvider {
       const kept = current
         .filter((existing) => existing.port !== port)
         .map(({ url: _url, ...rest }) => rest);
+      // Whoever was let in already stays: each person is added as they
+      // open it, and the list empties when the port is closed.
+      const already =
+        current.find((existing) => existing.port === port)?.auth?.entraId?.emails ?? [];
+      const emails = [
+        ...new Set([...already, ...access.emails].map((email) => email.toLowerCase())),
+      ];
       const ports = await this.client.updatePorts(providerId, [
         ...kept,
-        { port, protocol: 'Http', auth: { entraId: { enabled: true, emails: access.emails } } },
+        { port, protocol: 'Http', auth: { entraId: { enabled: true, emails } } },
       ]);
       const url = ports.find((opened) => opened.port === port)?.url;
       if (!url) throw new ProviderError('the platform opened the port without an address');

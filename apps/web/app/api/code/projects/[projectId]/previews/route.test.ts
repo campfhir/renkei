@@ -18,6 +18,7 @@ jest.mock('@renkei/sandbox-client', () => ({
   sbPreviewStart: jest.fn(),
   sbPreviewLogs: jest.fn(),
   sbPreviewStop: jest.fn(),
+  unexposeSandboxPort: jest.fn(async () => undefined),
 }));
 
 import { NextRequest } from 'next/server';
@@ -71,6 +72,38 @@ function member(workspaceId: string | null = 'ws-chat', chat: { id: string } | n
 
 beforeEach(() => {
   jest.clearAllMocks();
+});
+
+describe('GET …/previews', () => {
+  const list = () =>
+    GET(new NextRequest(`https://r.example/api/code/projects/${PROJECT}/previews`), {
+      params: Promise.resolve({ projectId: PROJECT }),
+    });
+
+  afterEach(() => {
+    delete process.env.SANDBOX_ORCHESTRATOR_URL;
+    delete process.env.SANDBOX_ORCHESTRATOR_API_KEY;
+  });
+
+  it('with orchestrated sandboxes, a member’s link goes through the open route, which knows who is signed in', async () => {
+    process.env.SANDBOX_ORCHESTRATOR_URL = 'http://orchestrator:8097';
+    process.env.SANDBOX_ORCHESTRATOR_API_KEY = 'k';
+    member();
+    sandbox.sbPreviewList.mockResolvedValue({ ok: true, val: [PREVIEW] });
+    const body = await (await list()).json();
+    expect(body.previews[0].url).toBe(
+      `https://r.example/api/code/projects/${PROJECT}/previews/web/open`
+    );
+  });
+
+  it('otherwise it is the relay’s address, as it always was', async () => {
+    member();
+    sandbox.sbPreviewList.mockResolvedValue({ ok: true, val: [PREVIEW] });
+    const body = await (await list()).json();
+    expect(body.previews[0].url).toBe(
+      `https://r.example/api/code/projects/${PROJECT}/previews/web/app/`
+    );
+  });
 });
 
 describe('POST …/previews', () => {

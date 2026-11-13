@@ -38,8 +38,10 @@ export {
   resetSandboxRoutingForTests,
   sandboxConfig,
   sandboxEndpointFor,
+  exposeSandboxPort,
   sandboxOrchestratorConfig,
   sandboxRouteKey,
+  unexposeSandboxPort,
   type SandboxEndpoint,
 } from './routing';
 
@@ -85,7 +87,7 @@ export interface SandboxTarget {
 const REQUEST_TIMEOUT_MS = 90_000;
 
 /** The assignment a call for `target` goes by: its route when it names one, else its subject (routing.ts). */
-function routeOf(target: { subject: string; route?: string; scope?: string }): string {
+function routeOf(target: { subject: string; route?: string; scope?: string }): Promise<string> {
   return sandboxRouteKey(target);
 }
 
@@ -328,7 +330,7 @@ async function callOp(
   // Whose instance: the call's route when its target names one, else its subject.
   const subject =
     isRecord(body) && typeof body.subject === 'string'
-      ? sandboxRouteKey({
+      ? await sandboxRouteKey({
           subject: body.subject,
           route: typeof body.route === 'string' ? body.route : null,
           scope: typeof body.scope === 'string' ? body.scope : null,
@@ -480,7 +482,7 @@ export async function sbWriteFile(
   input: { filename: string; contentType?: string; source?: string; batchId?: string },
   bytes: Uint8Array
 ): Promise<ClientResult<WireSandboxFile>> {
-  const cfg = await sandboxEndpointFor(routeOf(target));
+  const cfg = await sandboxEndpointFor(await routeOf(target));
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   const query = new URLSearchParams({
     subject: target.subject,
@@ -1037,7 +1039,7 @@ export async function sbWorkspaceDownload(
   target: SandboxTarget,
   input: { id: string; path: string }
 ): Promise<ClientResult<WireWorkspaceDownload>> {
-  const cfg = await sandboxEndpointFor(routeOf(target));
+  const cfg = await sandboxEndpointFor(await routeOf(target));
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   let response: Response;
   try {
@@ -1185,7 +1187,7 @@ export async function sbWorkspaceUpload(
   target: SandboxTarget,
   input: { id: string; path: string; bytes: Uint8Array<ArrayBuffer> }
 ): Promise<ClientResult<{ path: string; created: boolean; sizeBytes: number }>> {
-  const cfg = await sandboxEndpointFor(routeOf(target));
+  const cfg = await sandboxEndpointFor(await routeOf(target));
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   const query = new URLSearchParams({
     subject: target.subject,
@@ -1298,7 +1300,7 @@ export async function sbWorkspaceExec(
     signal?: AbortSignal;
   } = {}
 ): Promise<ClientResult<WireExecResult>> {
-  const cfg = await sandboxEndpointFor(routeOf(target));
+  const cfg = await sandboxEndpointFor(await routeOf(target));
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   // The client waits a little beyond the command's own limit: the worker
   // kills the process at timeoutMs and still has to answer.
@@ -2090,7 +2092,7 @@ export async function sbServiceStart(
     exports?: Record<string, string>;
   }
 ): Promise<ClientResult<WireService>> {
-  const cfg = await sandboxEndpointFor(routeOf(target));
+  const cfg = await sandboxEndpointFor(await routeOf(target));
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   let response: Response;
   try {
@@ -2317,7 +2319,7 @@ export async function sbPreviewStart(
     waitMs?: number;
   }
 ): Promise<ClientResult<{ preview: WirePreview; listening: string[]; logs: string }>> {
-  const cfg = await sandboxEndpointFor(routeOf(target));
+  const cfg = await sandboxEndpointFor(await routeOf(target));
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   let response: Response;
   try {
@@ -2597,7 +2599,7 @@ export async function sbRunScript(
     signal?: AbortSignal;
   } = {}
 ): Promise<ClientResult<WireScriptResult>> {
-  const cfg = await sandboxEndpointFor(routeOf(target));
+  const cfg = await sandboxEndpointFor(await routeOf(target));
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   // The client waits a little beyond the script's own limit: the worker
   // kills the process at timeoutMs, stages what it wrote, and answers.
@@ -2882,7 +2884,7 @@ export async function sbKernelExecute(
   target: SandboxTarget,
   input: { id: string; path: string; code: string; timeoutMs?: number }
 ): Promise<ClientResult<WireKernelRun>> {
-  const cfg = await sandboxEndpointFor(routeOf(target));
+  const cfg = await sandboxEndpointFor(await routeOf(target));
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   // The cell's own limit, the interrupt's grace, and a first start's time on top.
   const wait = (input.timeoutMs ?? 10 * 60_000) + 150_000;
@@ -3048,7 +3050,7 @@ export async function sbLspEvents(
   input: { session: string },
   signal: AbortSignal
 ): Promise<ClientResult<ReadableStream<Uint8Array>>> {
-  const cfg = await sandboxEndpointFor(routeOf(target));
+  const cfg = await sandboxEndpointFor(await routeOf(target));
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   let response: Response;
   try {

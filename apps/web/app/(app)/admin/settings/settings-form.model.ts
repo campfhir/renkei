@@ -78,6 +78,7 @@ export interface EditableSettings {
   sandboxScriptMemoryBytes: number;
   sandboxServiceMemoryBytes: number;
   sandboxServicePids: number;
+  sandboxArchiveRetentionDays: number;
   sandboxWorkspacesDebug: boolean;
   admanagerProductName: string;
   codePreviewHost: string;

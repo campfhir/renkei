@@ -81,6 +81,7 @@ export default async function SettingsPage(): Promise<React.ReactNode> {
     sandboxScriptMemoryBytes: settings.sandboxScriptMemoryBytes,
     sandboxServiceMemoryBytes: settings.sandboxServiceMemoryBytes,
     sandboxServicePids: settings.sandboxServicePids,
+    sandboxArchiveRetentionDays: settings.sandboxArchiveRetentionDays,
     sandboxWorkspacesDebug: settings.sandboxWorkspacesDebug,
     admanagerProductName: settings.admanagerProductName,
     codePreviewHost: settings.codePreviewHost,

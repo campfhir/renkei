@@ -617,6 +617,24 @@ export function SettingsForm({ initial }: { initial: EditableSettings }) {
           </span>
         </Row>
         <Row
+          label="Sandbox archive retention"
+          hint="A sandbox nobody has used for a day is evicted and what it held is archived, to be brought back the next time it is needed. An archive nobody comes back for is deleted after this many days."
+        >
+          <span className="flex items-center gap-2">
+            <input
+              type="number"
+              aria-label="sandboxArchiveRetentionDays"
+              min={1}
+              max={3650}
+              step={1}
+              value={values.sandboxArchiveRetentionDays}
+              onChange={(event) => set('sandboxArchiveRetentionDays', Number(event.target.value))}
+              className={inputClass}
+            />
+            <span className="w-20 text-xs text-gray-400 dark:text-gray-600">days</span>
+          </span>
+        </Row>
+        <Row
           label="Workspace debug logging"
           hint="Log every workspace operation on the sandbox worker in detail. A diagnostic for a checkout that misbehaves; leave off otherwise, since it is noisy."
         >

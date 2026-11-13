@@ -117,6 +117,7 @@ export function resetSandboxRoutingForTests(): void {
   cache.clear();
   reachable.clear();
   suspect.clear();
+  chatProjects.clear();
 }
 
 /** A call to the caller's instance did not connect: look it up again next time. */
@@ -372,26 +373,121 @@ async function runningSandboxes(orchestrator: SandboxEndpoint): Promise<SandboxE
   }
 }
 
+/** How long a chat's project is remembered: a chat moved between projects is noticed within this. */
+const CHAT_PROJECT_CACHE_MS = 60_000;
+const chatProjects = new Map<string, { route: string | null; until: number }>();
+
 /**
- * The scope a call for `target` is served in. Its route when it names one
- * (an agent's runs); else the caller's own — except that, with an
- * orchestrator, a call made in a code project's scratch space
- * (`project:<id>`) is served by the PROJECT's sandbox, beside its
- * checkout, so everything a project works with is in the one machine.
+ * The sandbox of the project a chat is in — `chat-project:<id>`, or
+ * `code-project:<id>` for a code project — or null when the chat is in
+ * none (or cannot be read: it is then served as its person's own).
  */
-export function sandboxRouteKey(target: {
-  subject: string;
-  route?: string | null;
-  scope?: string | null;
-}): string {
+async function projectRouteOfChat(chatId: string, now: number): Promise<string | null> {
+  const known = chatProjects.get(chatId);
+  if (known && known.until > now) return known.route;
+  let route: string | null = null;
+  try {
+    const store = getDataStore();
+    const chat = await store.chats.get(chatId);
+    const project = chat?.projectId ? await store.chatProjects.get(chat.projectId) : null;
+    if (project) route = `${project.kind === 'code' ? 'code' : 'chat'}-project:${project.id}`;
+  } catch {
+    return null;
+  }
+  chatProjects.set(chatId, { route, until: now + CHAT_PROJECT_CACHE_MS });
+  return route;
+}
+
+/**
+ * The scope a call for `target` is served in: which sandbox.
+ *
+ * Its route when it names one (an agent's runs); else the caller's own.
+ * With an orchestrator, a PROJECT has a sandbox of its own, and what is
+ * done in a project is served there rather than in the sandbox of
+ * whoever is doing it:
+ *
+ *  - a call in a code project's scratch space (`project:<id>`) goes to
+ *    `code-project:<id>`, beside the checkout;
+ *  - a call in a chat's scratch space (`chat:<id>`) goes to the sandbox
+ *    of the project that chat is in, when it is in one — so a project
+ *    shared with others never works inside one member's personal
+ *    sandbox, and each member is still their own caller (their own uid,
+ *    their own files) inside the project's.
+ *
+ * Who may work in a project at all is not decided here: the web app
+ * checks that before it makes the call (lib/chat/access.ts), and nothing
+ * else reaches a sandbox.
+ */
+export async function sandboxRouteKey(
+  target: { subject: string; route?: string | null; scope?: string | null },
+  now: number = Date.now()
+): Promise<string> {
   if (target.route) return target.route;
-  if (
-    target.scope &&
-    target.scope.startsWith('project:') &&
-    !target.subject.startsWith('code-project:') &&
-    sandboxOrchestratorConfig()
-  ) {
-    return `code-project:${target.scope.slice('project:'.length)}`;
+  const scope = target.scope ?? '';
+  if (!scope || target.subject.startsWith('code-project:') || !sandboxOrchestratorConfig()) {
+    return target.subject;
+  }
+  if (scope.startsWith('project:')) return `code-project:${scope.slice('project:'.length)}`;
+  if (scope.startsWith('chat:')) {
+    return (await projectRouteOfChat(scope.slice('chat:'.length), now)) ?? target.subject;
   }
   return target.subject;
+}
+
+/**
+ * Open a port of a scope's sandbox straight to the named people's own
+ * browsers, each signing in as themselves (the orchestrator's
+ * `/v1/expose`). The address, or null where there is no orchestrator or
+ * its provider has no such door — the caller then serves the port as it
+ * always did, through the web app. `emails` must come from the server's
+ * own knowledge of who is signed in, never from a request body.
+ */
+export async function exposeSandboxPort(
+  routeKey: string,
+  port: number,
+  emails: string[]
+): Promise<{ ok: true; url: string | null } | { ok: false; message: string }> {
+  const orchestrator = sandboxOrchestratorConfig();
+  if (!orchestrator) return { ok: true, url: null };
+  try {
+    const response = await fetch(`${orchestrator.url}/v1/expose`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${orchestrator.key}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ key: routeKey, port, emails }),
+      signal: AbortSignal.timeout(ENSURE_TIMEOUT_MS),
+    });
+    const body: unknown = await response.json().catch(() => null);
+    if (!response.ok) {
+      const error = isRecord(body) && isRecord(body.error) ? body.error.message : null;
+      return {
+        ok: false,
+        message: typeof error === 'string' ? error : `the orchestrator answered ${response.status}`,
+      };
+    }
+    return { ok: true, url: isRecord(body) && typeof body.url === 'string' ? body.url : null };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** Close a port opened with `exposeSandboxPort`. Best effort: a port left open closes with its sandbox. */
+export async function unexposeSandboxPort(routeKey: string, port: number): Promise<void> {
+  const orchestrator = sandboxOrchestratorConfig();
+  if (!orchestrator) return;
+  try {
+    await fetch(`${orchestrator.url}/v1/unexpose`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${orchestrator.key}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ key: routeKey, port }),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch {
+    // Left open; it closes with the sandbox.
+  }
 }

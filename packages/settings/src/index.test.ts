@@ -90,12 +90,14 @@ describe('org settings', () => {
     expect(DEFAULT_ORG_SETTINGS.sandboxScriptMemoryBytes).toBe(2 * 1_073_741_824);
     expect(DEFAULT_ORG_SETTINGS.sandboxServiceMemoryBytes).toBe(1_073_741_824);
     expect(DEFAULT_ORG_SETTINGS.sandboxServicePids).toBe(512);
+    expect(DEFAULT_ORG_SETTINGS.sandboxArchiveRetentionDays).toBe(90);
     expect(DEFAULT_ORG_SETTINGS.sandboxWorkspacesDebug).toBe(false);
     expect(DEFAULT_ORG_SETTINGS.admanagerProductName).toBe('Renkei');
 
     await setOrgSettings({
       sandboxServiceMemoryBytes: 1536 * 1_048_576,
       sandboxServicePids: 128,
+      sandboxArchiveRetentionDays: 30,
       sandboxWorkspacesDebug: true,
       admanagerProductName: 'Acme Renkei',
     });
@@ -104,6 +106,7 @@ describe('org settings', () => {
     if (result.ok) {
       expect(result.val.sandboxServiceMemoryBytes).toBe(1536 * 1_048_576);
       expect(result.val.sandboxServicePids).toBe(128);
+      expect(result.val.sandboxArchiveRetentionDays).toBe(30);
       expect(result.val.sandboxWorkspacesDebug).toBe(true);
       expect(result.val.admanagerProductName).toBe('Acme Renkei');
       expect(result.val.sandboxScriptMemoryBytes).toBe(

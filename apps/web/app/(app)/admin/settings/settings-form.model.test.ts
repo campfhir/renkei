@@ -65,6 +65,7 @@ const STORED: EditableSettings = {
   sandboxScriptMemoryBytes: 2 * GB,
   sandboxServiceMemoryBytes: 1 * GB,
   sandboxServicePids: 512,
+  sandboxArchiveRetentionDays: 90,
   sandboxWorkspacesDebug: false,
   admanagerProductName: 'Renkei',
   codePreviewHost: '',

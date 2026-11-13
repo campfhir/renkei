@@ -696,7 +696,6 @@ services:
       # (compressed), to be unpacked into the scope's next sandbox.
       <<: [*runtime-database-urls, *logging-env, *blob-store]
       SANDBOX_ARCHIVE_CONTAINER:
-      SANDBOX_ARCHIVE_RETENTION_DAYS:
       SANDBOX_ORCHESTRATOR_API_KEY: ${SANDBOX_ORCHESTRATOR_API_KEY:-}
       SANDBOX_WORKER_API_KEY:
       SANDBOX_PROVIDER: ${SANDBOX_PROVIDER:-docker}

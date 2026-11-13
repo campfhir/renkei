@@ -204,7 +204,7 @@ export class Orchestrator {
   ) => Promise<unknown | null>;
   private readonly archives: ArchiveOptions | null;
   private readonly transfer: ArchiveTransfer;
-  private readonly archiveRetentionMs: number;
+  private readonly archiveRetentionMs: () => Promise<number | null>;
   private readonly evictRetryMs: number;
   /** One `ensure` at a time per scope in this process; the row settles it between processes. */
   private readonly inflight = new Map<string, Promise<SandboxEndpoint>>();
@@ -227,7 +227,9 @@ export class Orchestrator {
     this.probe = options.probe ?? defaultProbe;
     this.archives = options.archives ?? null;
     this.transfer = options.archives?.transfer ?? httpArchiveTransfer;
-    this.archiveRetentionMs = options.archives?.retentionMs ?? DEFAULT_ARCHIVE_RETENTION_MS;
+    const retention = options.archives?.retentionMs ?? DEFAULT_ARCHIVE_RETENTION_MS;
+    this.archiveRetentionMs =
+      typeof retention === 'number' ? () => Promise.resolve(retention) : retention;
     // Never longer than the time between the two idle rules: a sandbox
     // suspended for being idle must be due the moment its day is up.
     this.evictRetryMs = Math.min(
@@ -931,9 +933,11 @@ export class Orchestrator {
     if (this.archives) {
       const archives = this.archives;
       try {
-        const stale = await archives
-          .store()
-          .listOlderThan(new Date(now - this.archiveRetentionMs), this.sweepBatch);
+        const retentionMs = await this.archiveRetentionMs();
+        const stale =
+          retentionMs === null
+            ? []
+            : await archives.store().listOlderThan(new Date(now - retentionMs), this.sweepBatch);
         for (const archive of stale) {
           await archives.store().remove(archive.routeKey);
           await archives.blobs.delete(archive.blobKey);

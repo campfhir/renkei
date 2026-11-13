@@ -253,6 +253,12 @@ describe('the Azure provider', () => {
         [5173, ['ada@contoso.com', 'bob@contoso.com']],
       ]);
 
+      // The next person to open it is added; nobody is put out.
+      await provider.exposePort('az-1', 5173, { emails: ['Cy@contoso.com', 'ada@contoso.com'] });
+      expect(
+        sandboxes.get('az-1')?.ports?.find((open) => open.port === 5173)?.auth?.entraId?.emails
+      ).toEqual(['ada@contoso.com', 'bob@contoso.com', 'cy@contoso.com']);
+
       await provider.unexposePort('az-1', 5173);
       expect((sandboxes.get('az-1')?.ports ?? []).map((port) => port.port)).toEqual([8092]);
     });

@@ -88,7 +88,8 @@ export interface SandboxProvider {
   /**
    * Open another port of a running sandbox straight to the browsers of
    * the named people, each signing in as themselves (a code project's
-   * preview, opened by its members): the address it is served at.
+   * preview, opened by its members): the address it is served at. People
+   * already let in at that port stay let in; `unexposePort` lets nobody.
    * Absent where the provider has no such door — a preview is then
    * reached through the worker's own proxy, as before.
    */

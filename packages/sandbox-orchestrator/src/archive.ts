@@ -40,8 +40,13 @@ export interface ArchiveOptions {
   store: () => SandboxArchiveStore;
   blobs: ArchiveBlobs;
   transfer?: ArchiveTransfer;
-  /** Drop an archive nobody has come back for after this long. */
-  retentionMs?: number;
+  /**
+   * Drop an archive nobody has come back for after this long: a fixed
+   * time, or one asked for on every sweep (the organization's setting).
+   * A null answer — the setting could not be read — drops nothing this
+   * sweep.
+   */
+  retentionMs?: number | (() => Promise<number | null>);
 }
 
 export const DEFAULT_ARCHIVE_RETENTION_MS = 90 * 24 * 60 * 60_000;

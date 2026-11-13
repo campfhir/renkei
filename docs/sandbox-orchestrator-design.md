@@ -14,12 +14,23 @@ were _assigned_ to an instance (`sandbox_instances`, migration 179).
 With the orchestrator there is no shared sandbox. Each **scope** gets a
 machine of its own, made the first time it is needed:
 
-| Scope          | Key callers route by | Used for                                                |
-| -------------- | -------------------- | ------------------------------------------------------- |
-| a person       | their subject        | their chats' scratch space, browser, scripts            |
-| an agent       | `agent:<id>`         | that agent's runs (acting as its owner)                 |
-| a code project | `code-project:<id>`  | the checkout, and every chat's scratch space inside it  |
-| nobody         | `system`             | calls made for no caller (image rules, capability asks) |
+| Scope          | Key callers route by | Used for                                                      |
+| -------------- | -------------------- | ------------------------------------------------------------- |
+| a person       | their subject        | their own chats' scratch space, browser, scripts              |
+| an agent       | `agent:<id>`         | that agent's runs (acting as its owner)                       |
+| a chat project | `chat-project:<id>`  | every chat in the project, whoever in the project is chatting |
+| a code project | `code-project:<id>`  | the checkout, and every chat in the project                   |
+| nobody         | `system`             | calls made for no caller (image rules, capability asks)       |
+
+A chat that is in a project is served by the **project's** sandbox, not
+its person's (`sandboxRouteKey`, packages/sandbox-client routing.ts): a
+project shared with others never works inside one member's personal
+sandbox. Inside it each member is still their own caller — their own
+uid, their own staged files. **Who may work in a project at all is the
+web app's check** (`lib/chat/access.ts`, before any call is made), and
+nothing but the web app and the queue worker can reach a sandbox; on
+Azure a preview port is additionally opened only to the members who
+asked for it, by name (below).
 
 A sandbox is a Linux machine running the same sandbox image as before —
 the sandbox worker, serving one scope. It is **suspended** when nothing
@@ -141,8 +152,8 @@ eviction up (in the end-to-end run, 11 MB of text became 1.2 KB).
 Archives go to the deployment's blob store (`BLOB_STORE_PROVIDER`), in
 their own container on Azure (`SANDBOX_ARCHIVE_CONTAINER`, default
 `renkei-sandbox-archives`). An archive is kept until the scope's next
-eviction replaces it, or `SANDBOX_ARCHIVE_RETENTION_DAYS` (default 90)
-pass with nobody coming back. Removing a scope's sandbox on request
+eviction replaces it, or the organization's archive retention (admin →
+Settings → Sandbox, 90 days unless changed) passes with nobody coming back. Removing a scope's sandbox on request
 (`/v1/remove`) removes its archive too. **Without a blob store
 configured, an eviction removes the work with the machine**; the
 orchestrator says so at boot.
@@ -204,9 +215,21 @@ sandbox (`SANDBOX_AZURE_PORT_AUTH=entra`, the default).
   Azure identity. The ingress strips `authorization` before the request
   reaches the sandbox, so the per-sandbox key — still checked, as a
   second lock — rides `x-sandbox-key`.
-- **A preview port** can be opened to named people
-  (`POST /v1/expose { key, port, emails }`), who then sign in to it in
-  their own browsers as themselves.
+- **A preview port** is opened to the people who open the preview, by
+  name. A preview's link in the Code section goes to the web app's own
+  route (`…/previews/[name]/open`), which checks the session is a member
+  of the project and reads the person's email **from that session** —
+  nothing the browser sends says who it is. It asks the orchestrator to
+  let that person in at the port (`POST /v1/expose`), added to whoever
+  was let in before, and redirects the browser to the sandbox, where
+  they sign in with the same account. Stopping the preview closes the
+  port. Where there is no such door (Docker, no orchestrator, a session
+  without an email) the route redirects to the web app's relay, as
+  before.
+
+  Two limits: someone removed from a project keeps a port they had
+  already opened until that preview is stopped; and the project's own
+  server must listen on all interfaces to be reached this way.
 
 With `SANDBOX_AZURE_PORT_AUTH=anonymous` the worker's port is guarded by
 the per-sandbox key alone. On Docker there is no ingress: the key is the
@@ -268,10 +291,9 @@ describes users) and whether Podman starts as it is in the microVM.
   than everyone's, and the role is narrow, but the end state is a worker
   that reaches no database: metadata through the orchestrator or the web
   app. On Azure this is also what requires the VNet connection.
-- **Chat projects.** A chat in a (non-code) project uses its person's
-  sandbox. Giving a chat project a sandbox of its own means its chats
-  sharing one scratch space, which is a product change as well as a
-  routing one.
+- **A chat moved between projects.** Which project a chat is in is
+  remembered for a minute, and what the chat staged before the move stays
+  in the sandbox it was staged in.
 - **Shared preview links while suspended.** A share link names no caller,
   so it is looked for among _running_ sandboxes only, and following one
   does not count as activity. A member opening the preview resumes it.
@@ -288,10 +310,6 @@ describes users) and whether Podman starts as it is in the microVM.
   host's engine behind a socket proxy for services). With services now
   inside the sandbox nothing in the orchestrated path needs the proxy;
   removing the old path, and the proxy with it, is the remaining step.
-- **Previews in the browser still go through the web app.** The
-  orchestrator can open a preview port straight to named people
-  (`/v1/expose`), but the Code section's preview links do not use it yet:
-  they are relayed through the worker's own proxy as before.
 - **Sandbox egress policy.** Azure's per-sandbox egress rules (and secret
   injection at the proxy) are not configured; a sandbox has the network
   its group and VNet give it.

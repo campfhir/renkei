@@ -12,7 +12,12 @@
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { clientFailure, sbPreviewList, sbPreviewStart } from '@renkei/sandbox-client';
+import {
+  clientFailure,
+  sandboxOrchestratorConfig,
+  sbPreviewList,
+  sbPreviewStart,
+} from '@renkei/sandbox-client';
 import { jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { codeProjectContext } from '@/lib/code/route-access';
 import { codeProjectTarget } from '@/lib/code/scope';
@@ -64,7 +69,9 @@ export async function GET(
         preview,
         origin.ok ? origin.val : '',
         { projectId, chatId: chatId ?? null },
-        previewHost
+        previewHost,
+        // Orchestrated: a click goes through `open`, which knows who is signed in.
+        sandboxOrchestratorConfig() !== null
       )
     ),
   });

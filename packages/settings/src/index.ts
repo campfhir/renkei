@@ -367,6 +367,12 @@ export interface OrgSettings {
   sandboxServiceMemoryBytes: number;
   /** Each code-project service container's process ceiling. */
   sandboxServicePids: number;
+  /**
+   * How long an evicted sandbox's archive is kept when nobody comes back
+   * for it (docs/sandbox-orchestrator-design.md); the orchestrator drops
+   * older ones.
+   */
+  sandboxArchiveRetentionDays: number;
   /** Verbose per-operation logging from the sandbox worker's workspace code: a diagnostic. */
   sandboxWorkspacesDebug: boolean;
   /**
@@ -490,6 +496,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   sandboxScriptMemoryBytes: 2 * 1_073_741_824, // 2GB
   sandboxServiceMemoryBytes: 1_073_741_824, // 1GB
   sandboxServicePids: 512,
+  sandboxArchiveRetentionDays: 90,
   sandboxWorkspacesDebug: false,
   admanagerProductName: 'Renkei',
   codePreviewHost: '',
@@ -686,6 +693,9 @@ export async function getOrgSettings(): Promise<Result<OrgSettings, 'DB_ERROR'>>
       coerce(stored.get('sandbox_service_memory_bytes'), d.sandboxServiceMemoryBytes)
     ),
     sandboxServicePids: Number(coerce(stored.get('sandbox_service_pids'), d.sandboxServicePids)),
+    sandboxArchiveRetentionDays: Number(
+      coerce(stored.get('sandbox_archive_retention_days'), d.sandboxArchiveRetentionDays)
+    ),
     sandboxWorkspacesDebug: Boolean(
       coerce(stored.get('sandbox_workspaces_debug'), d.sandboxWorkspacesDebug)
     ),
@@ -803,6 +813,7 @@ export async function setOrgSettings(
     ['sandbox_script_memory_bytes', updates.sandboxScriptMemoryBytes],
     ['sandbox_service_memory_bytes', updates.sandboxServiceMemoryBytes],
     ['sandbox_service_pids', updates.sandboxServicePids],
+    ['sandbox_archive_retention_days', updates.sandboxArchiveRetentionDays],
     ['sandbox_workspaces_debug', updates.sandboxWorkspacesDebug],
     ['admanager_product_name', updates.admanagerProductName],
     ['code_preview_host', updates.codePreviewHost],

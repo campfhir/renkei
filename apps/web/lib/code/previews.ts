@@ -164,11 +164,59 @@ export type ListedPreview = Omit<WirePreview, 'ports'> & {
   ports: Array<WirePreviewPort & { publicUrl: string | null }>;
 };
 
+/**
+ * Where a member's click on a preview goes when sandboxes are
+ * orchestrated: this app's own `open` route (previews/[name]/open), which
+ * knows who is signed in and sends the browser on — straight to the
+ * sandbox's port where the platform can let that person in as themselves,
+ * else to the relay below as always. The link carries no identity: the
+ * route reads it from the session.
+ */
+export function previewOpenPath(input: {
+  projectId: string;
+  chatId?: string | null;
+  name: string;
+  /** A named port; absent means the first. */
+  port?: string | null;
+}): string {
+  const chat = input.chatId ? `/chats/${input.chatId}` : '';
+  const query = input.port ? `?port=${encodeURIComponent(input.port)}` : '';
+  return `/api/code/projects/${input.projectId}${chat}/previews/${input.name}/open${query}`;
+}
+
+/**
+ * The port of a listed preview a click means: the one named, else the
+ * first — with the path the relay serves it at. Null when the preview
+ * has no such port.
+ */
+export function previewPortToOpen(
+  preview: WirePreview,
+  scope: { projectId: string; chatId: string | null },
+  portName: string | null
+): { port: number; relayPath: string } | null {
+  const index = portName ? preview.ports.findIndex((port) => port.name === portName) : 0;
+  const found = preview.ports[index];
+  if (!found) return null;
+  return {
+    port: found.port,
+    relayPath: previewProxyPath({
+      ...scope,
+      name: preview.name,
+      ...(index === 0 ? {} : { port: found.name }),
+    }),
+  };
+}
+
 export function withAddresses(
   preview: WirePreview,
   origin: string,
   scope: { projectId: string; chatId: string | null },
-  previewHost = ''
+  previewHost = '',
+  /**
+   * Send a member's click through the `open` route (orchestrated
+   * sandboxes, previews served on this app's own origin).
+   */
+  throughOpen = false
 ): ListedPreview {
   const addresses = previewAddresses(
     origin,
@@ -179,13 +227,22 @@ export function withAddresses(
     },
     previewHost
   );
+  const base = origin.replace(/\/$/, '');
+  const memberUrl = (index: number): string | undefined =>
+    throughOpen && !previewHost
+      ? `${base}${previewOpenPath({
+          ...scope,
+          name: preview.name,
+          ...(index === 0 ? {} : { port: preview.ports[index]?.name ?? null }),
+        })}`
+      : addresses.ports[index]?.url;
   return {
     ...preview,
-    url: addresses.url,
+    url: memberUrl(0) ?? addresses.url,
     publicUrl: addresses.publicUrl,
     ports: preview.ports.map((port, index) => ({
       ...port,
-      url: addresses.ports[index]?.url ?? port.url,
+      url: memberUrl(index) ?? port.url,
       publicUrl: addresses.ports[index]?.publicUrl ?? null,
     })),
   };

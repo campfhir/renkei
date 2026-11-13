@@ -82,6 +82,7 @@ describe('GET/PUT /api/admin/org-settings', () => {
       sandboxServiceMemoryBytes: 1 * GB,
       sandboxScriptMemoryBytes: 2 * GB,
       sandboxServicePids: 512,
+      sandboxArchiveRetentionDays: 90,
     });
   });
 
@@ -228,6 +229,14 @@ describe('GET/PUT /api/admin/org-settings', () => {
 
     it('a process limit below what a container runs in goes to the floor of 16', async () => {
       expect((await answered(await put({ sandboxServicePids: 1 }))).sandboxServicePids).toBe(16);
+    });
+
+    it('sandbox archives are kept 90 days unless changed, and never less than a day', async () => {
+      const settings = await answered(await put({ sandboxArchiveRetentionDays: 30 }));
+      expect(settings.sandboxArchiveRetentionDays).toBe(30);
+      expect(
+        (await answered(await put({ sandboxArchiveRetentionDays: 0 }))).sandboxArchiveRetentionDays
+      ).toBe(1);
     });
 
     it('a checkout limit of 500 GB is stored as the 64 GB ceiling; 12 GB as asked', async () => {

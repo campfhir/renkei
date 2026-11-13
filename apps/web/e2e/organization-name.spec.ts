@@ -29,6 +29,7 @@ import { test, expect } from './fixtures';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const DEFAULT_NAME = 'Renkei';
+const DEFAULT_ARCHIVE_DAYS = 90;
 
 test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
@@ -77,11 +78,17 @@ test('an operator names the organization', async ({ page, person: _person }, tes
   try {
     // ── Rename, save: the press reaches the route, which answers the trimmed name ──
     await field.fill(`  ${name}  `);
+    // In the same save: how long an evicted sandbox's archive is kept.
+    const retention = main.getByLabel('sandboxArchiveRetentionDays');
+    await expect(retention).toHaveValue(String(DEFAULT_ARCHIVE_DAYS));
+    await retention.fill('45');
     await main.getByRole('button', { name: 'Save settings' }).click();
     await expect(main.getByText('Saved.')).toBeVisible();
     expect((await settings(page)).organizationName).toBe(name);
+    expect((await settings(page)).sandboxArchiveRetentionDays).toBe(45);
     // The form adopts the server's answer.
     await expect(field).toHaveValue(name);
+    await expect(retention).toHaveValue('45');
     await shot(page, testInfo, '02-saved');
     await page.emulateMedia({ colorScheme: 'dark' });
     await shot(page, testInfo, '02-saved-dark');
@@ -101,9 +108,10 @@ test('an operator names the organization', async ({ page, person: _person }, tes
   } finally {
     // The default back for everyone else on the server.
     const restored = await page.request.put('/api/admin/org-settings', {
-      data: { organizationName: DEFAULT_NAME },
+      data: { organizationName: DEFAULT_NAME, sandboxArchiveRetentionDays: DEFAULT_ARCHIVE_DAYS },
     });
     expect(restored.ok()).toBe(true);
   }
   expect((await settings(page)).organizationName).toBe(DEFAULT_NAME);
+  expect((await settings(page)).sandboxArchiveRetentionDays).toBe(DEFAULT_ARCHIVE_DAYS);
 });

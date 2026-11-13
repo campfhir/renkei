@@ -60,7 +60,11 @@ function archiveFakes(provider: FakeSandboxProvider) {
 }
 
 function setup(
-  overrides: { probe?: (address: string) => Promise<unknown | null>; archives?: boolean } = {}
+  overrides: {
+    probe?: (address: string) => Promise<unknown | null>;
+    archives?: boolean;
+    retentionMs?: () => Promise<number | null>;
+  } = {}
 ) {
   const clock = { now: Date.UTC(2026, 0, 1) };
   const data = createMemoryDataStore();
@@ -76,6 +80,7 @@ function setup(
             store: () => data.sandboxArchives,
             blobs: fakes.archiveBlobs,
             transfer: fakes.transfer,
+            ...(overrides.retentionMs ? { retentionMs: overrides.retentionMs } : {}),
           },
         }
       : {}),
@@ -517,6 +522,23 @@ describe('a scope’s archive', () => {
     expect((await env.orchestrator.sweep()).archivesExpired).toBe(1);
     expect(env.fakes.blobs.size).toBe(0);
     expect(await env.data.sandboxArchives.get('ann')).toBeNull();
+  });
+
+  it('is kept for as long as the organization says, asked on every sweep; nothing is dropped while that cannot be read', async () => {
+    let days: number | null = 30;
+    const env = setup({
+      archives: true,
+      retentionMs: async () => (days === null ? null : days * 24 * HOUR),
+    });
+    await env.orchestrator.ensure('ann');
+    await idleForADay(env);
+    env.clock.now += 31 * 24 * HOUR;
+    days = null;
+    expect(await env.orchestrator.sweep()).toMatchObject({ archivesExpired: 0, failures: 0 });
+    days = 60;
+    expect((await env.orchestrator.sweep()).archivesExpired).toBe(0);
+    days = 30;
+    expect((await env.orchestrator.sweep()).archivesExpired).toBe(1);
   });
 
   it('goes with the sandbox when the scope’s sandbox is removed on request', async () => {

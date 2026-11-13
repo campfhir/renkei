@@ -103,12 +103,6 @@ async function main(): Promise<void> {
 
   const store = () => getDataStore().sandboxes;
   const blobStore = archiveBlobStore(process.env);
-  let retentionMs: number;
-  try {
-    retentionMs = archiveRetentionMs(process.env);
-  } catch (error) {
-    fatal(error instanceof Error ? error.message : String(error));
-  }
   if (!blobStore) {
     logger.warn(
       'no blob store is configured (BLOB_STORE_PROVIDER): a sandbox evicted after {deleteHours} idle hours is removed with everything it holds, and nothing is brought back',
@@ -123,7 +117,7 @@ async function main(): Promise<void> {
           archives: {
             store: () => getDataStore().sandboxArchives,
             blobs: archiveBlobsOf(blobStore),
-            retentionMs,
+            retentionMs: archiveRetentionMs,
           },
         }
       : {}),

@@ -5,6 +5,13 @@
 
 import { isRecord } from '@renkei/guards';
 import {
+  createMemoryDataStore,
+  registerDataStore,
+  resetDataStore,
+  type MemoryDataStore,
+} from '@renkei/db';
+import {
+  exposeSandboxPort,
   forgetSandboxEndpoint,
   resetSandboxRoutingForTests,
   sandboxConfig,
@@ -163,22 +170,137 @@ describe('with an orchestrator', () => {
     expect(asked[0]?.url).toBe(`${ORCHESTRATOR}/v1/list`);
   });
 
-  it('a call in a code project’s scratch space is served by the project’s sandbox; an agent’s by the agent’s', () => {
-    expect(sandboxRouteKey({ subject: 'ann' })).toBe('ann');
-    expect(sandboxRouteKey({ subject: 'ann', scope: 'chat:c1' })).toBe('ann');
-    expect(sandboxRouteKey({ subject: 'ann', scope: 'project:p1' })).toBe('code-project:p1');
-    expect(sandboxRouteKey({ subject: 'code-project:p1', scope: 'project:p1' })).toBe(
+  it('a call in a code project’s scratch space is served by the project’s sandbox; an agent’s by the agent’s', async () => {
+    expect(await sandboxRouteKey({ subject: 'ann' })).toBe('ann');
+    expect(await sandboxRouteKey({ subject: 'ann', scope: 'project:p1' })).toBe('code-project:p1');
+    expect(await sandboxRouteKey({ subject: 'code-project:p1', scope: 'project:p1' })).toBe(
       'code-project:p1'
     );
-    expect(sandboxRouteKey({ subject: 'ann', scope: 'project:p1', route: 'agent:a1' })).toBe(
+    expect(await sandboxRouteKey({ subject: 'ann', scope: 'project:p1', route: 'agent:a1' })).toBe(
       'agent:a1'
     );
   });
 });
 
+describe('a chat, with an orchestrator', () => {
+  let store: MemoryDataStore;
+  let chatProject: string;
+  let codeProject: string;
+  const chatIn = async (owner: string, projectId: string | null) => {
+    return store.chats.create({
+      ownerSubject: owner,
+      projectId,
+      llmModelId: null,
+      toolConfig: null,
+      thinkingEnabled: false,
+      autoMode: false,
+    });
+  };
+
+  beforeEach(async () => {
+    store = createMemoryDataStore();
+    registerDataStore(store);
+    chatProject = await store.chatProjects.create({
+      ownerSubject: 'ann',
+      name: 'Shared research',
+      description: null,
+      toolConfig: {},
+    });
+    codeProject = await store.chatProjects.create({
+      ownerSubject: 'ann',
+      name: 'The app',
+      description: null,
+      toolConfig: {},
+      repo: { provider: 'github', fullName: 'acme/app', branch: null },
+    });
+  });
+  afterEach(() => resetDataStore());
+
+  it('of nobody’s project is served by its person’s own sandbox', async () => {
+    const chat = await chatIn('ann', null);
+    expect(await sandboxRouteKey({ subject: 'ann', scope: `chat:${chat}` })).toBe('ann');
+  });
+
+  it('in a chat project is served by the project’s sandbox, whoever in the project is chatting', async () => {
+    const hers = await chatIn('ann', chatProject);
+    const his = await chatIn('bob', chatProject);
+    expect(await sandboxRouteKey({ subject: 'ann', scope: `chat:${hers}` })).toBe(
+      `chat-project:${chatProject}`
+    );
+    expect(await sandboxRouteKey({ subject: 'bob', scope: `chat:${his}` })).toBe(
+      `chat-project:${chatProject}`
+    );
+  });
+
+  it('in a code project is served by that project’s sandbox, beside its checkout', async () => {
+    const chat = await chatIn('ann', codeProject);
+    expect(await sandboxRouteKey({ subject: 'ann', scope: `chat:${chat}` })).toBe(
+      `code-project:${codeProject}`
+    );
+  });
+
+  it('run by an agent is still served by the agent’s', async () => {
+    const chat = await chatIn('ann', chatProject);
+    expect(
+      await sandboxRouteKey({ subject: 'ann', scope: `chat:${chat}`, route: 'agent:a1' })
+    ).toBe('agent:a1');
+  });
+
+  it('moved into a project is served there within a minute', async () => {
+    const chat = await chatIn('ann', null);
+    const target = { subject: 'ann', scope: `chat:${chat}` };
+    expect(await sandboxRouteKey(target, T0)).toBe('ann');
+    await store.chats.move('ann', chat, chatProject);
+    expect(await sandboxRouteKey(target, T0 + 30_000)).toBe('ann');
+    expect(await sandboxRouteKey(target, T0 + 61_000)).toBe(`chat-project:${chatProject}`);
+  });
+
+  it('that cannot be found is served as its person’s own', async () => {
+    expect(
+      await sandboxRouteKey({
+        subject: 'ann',
+        scope: 'chat:00000000-0000-4000-8000-000000000000',
+      })
+    ).toBe('ann');
+  });
+});
+
+describe('a port opened to people’s own browsers', () => {
+  it('is asked of the orchestrator with the people the server names, and answers its address', async () => {
+    answer = () => json({ url: 'https://az-1-5173.example' });
+    expect(await exposeSandboxPort('code-project:p1', 5173, ['ada@contoso.com'])).toEqual({
+      ok: true,
+      url: 'https://az-1-5173.example',
+    });
+    expect(asked[0]).toEqual({
+      url: `${ORCHESTRATOR}/v1/expose`,
+      authorization: 'Bearer orchestrator-key',
+      body: { key: 'code-project:p1', port: 5173, emails: ['ada@contoso.com'] },
+    });
+  });
+
+  it('has no address where the provider has no such door, and says why when it is refused', async () => {
+    answer = () => json({ url: null });
+    expect(await exposeSandboxPort('code-project:p1', 5173, ['a@b.c'])).toEqual({
+      ok: true,
+      url: null,
+    });
+    answer = () => json({ error: { type: 'bad_request', message: 'name the people' } }, 400);
+    expect(await exposeSandboxPort('code-project:p1', 5173, [])).toEqual({
+      ok: false,
+      message: 'name the people',
+    });
+  });
+});
+
 describe('without an orchestrator', () => {
-  it('a code project’s scratch space stays with the caller, as it always was', () => {
+  it('a code project’s scratch space stays with the caller, as it always was, and no port is opened', async () => {
     delete process.env.SANDBOX_ORCHESTRATOR_URL;
-    expect(sandboxRouteKey({ subject: 'ann', scope: 'project:p1' })).toBe('ann');
+    expect(await sandboxRouteKey({ subject: 'ann', scope: 'project:p1' })).toBe('ann');
+    expect(await exposeSandboxPort('code-project:p1', 5173, ['a@b.c'])).toEqual({
+      ok: true,
+      url: null,
+    });
+    expect(asked).toEqual([]);
   });
 });
