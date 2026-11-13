@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'fixed',
+        title: "Switching a code chat's branch works",
+        detail:
+          "Switch branch always answered that the checkout had uncommitted changes, even on a clean one, and offering to discard them did not help. A clean checkout now switches, and one with real changes is still asked about first. Finished sub-agents' working copies are also cleaned up as intended.",
+      },
+      {
+        kind: 'fixed',
         title: 'Long notebook cells finish instead of losing the sandbox',
         detail:
           'A notebook cell that ran for several minutes could end with "Could not reach the sandbox service" while it was still running, and the next run could land on a different sandbox instance and start over. Long cells now run to their ten-minute limit, a notebook stays on its own sandbox instance while that instance is briefly unavailable, and when a kernel is lost the notice says whether the instance restarted or a different one answered.',

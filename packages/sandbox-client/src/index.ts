@@ -1355,13 +1355,30 @@ function stringList(value: unknown): string[] {
     : [];
 }
 
+/**
+ * What a checkout's `git status` says has changed: its lines without the
+ * branch header. The worker runs `git status --porcelain=v1 --branch`,
+ * whose first line is always `## <branch>...` — there on a clean tree
+ * too — so the status text itself is never empty and cannot be the test
+ * of whether anything is uncommitted. This is: '' for a clean tree.
+ */
+export function workingTreeChanges(status: string): string {
+  return status
+    .split('\n')
+    .filter((line) => line.trim() !== '' && !line.startsWith('## '))
+    .join('\n');
+}
+
 export async function sbWorkspaceGitStatus(
   target: SandboxTarget,
   input: { id: string; diff?: boolean; log?: number }
 ): Promise<
   ClientResult<{
     branch: string;
+    /** `git status --porcelain=v1 --branch` as git printed it: never empty, the branch line is always there. */
     status: string;
+    /** The changed files' lines alone (`workingTreeChanges`): '' when nothing is uncommitted. */
+    changes: string;
     diff?: string;
     diffStat?: string;
     log?: string;
@@ -1380,6 +1397,7 @@ export async function sbWorkspaceGitStatus(
     val: {
       branch: str(value.branch),
       status: str(value.status),
+      changes: workingTreeChanges(str(value.status)),
       inProgress: gitOperationOf(value.inProgress),
       conflicts: stringList(value.conflicts),
       ...(typeof value.diff === 'string' ? { diff: value.diff } : {}),

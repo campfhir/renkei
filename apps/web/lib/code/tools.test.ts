@@ -1047,7 +1047,14 @@ describe('a sub-agent’s own worktree', () => {
     client.sbWorkspaceWrite.mockResolvedValue({ ok: true, val: { path: 'notes.md', bytes: 5 } });
     client.sbWorkspaceGitStatus.mockResolvedValue({
       ok: true,
-      val: { branch: 'renkei/abc123-sub-abcdefgh', status: '', inProgress: null, conflicts: [] },
+      // A clean tree as git reports it: the branch line and nothing changed.
+      val: {
+        branch: 'renkei/abc123-sub-abcdefgh',
+        status: '## renkei/abc123-sub-abcdefgh',
+        changes: '',
+        inProgress: null,
+        conflicts: [],
+      },
     });
     client.sbWorkspaceGitCommit.mockResolvedValue({
       ok: true,
@@ -1067,6 +1074,8 @@ describe('a sub-agent’s own worktree', () => {
     });
     // The write landed in the sub-agent's worktree, not the chat's.
     expect(client.sbWorkspaceWrite.mock.calls[0][1]).toMatchObject({ id: SUB_ID });
+    // Nothing was left uncommitted — git's status still has its branch line,
+    // which is not a change — so there is no work-in-progress commit to make.
     expect(client.sbWorkspaceGitCommit).not.toHaveBeenCalled();
     expect(client.sbWorkspaceDelete).toHaveBeenCalledWith(TARGET, SUB_ID);
     const text = result.content.map((block) => block.text).join('\n');
@@ -1079,7 +1088,8 @@ describe('a sub-agent’s own worktree', () => {
       ok: true,
       val: {
         branch: 'renkei/abc123-sub-abcdefgh',
-        status: '?? notes.md',
+        status: '## renkei/abc123-sub-abcdefgh\n?? notes.md',
+        changes: '?? notes.md',
         inProgress: null,
         conflicts: [],
       },
@@ -1100,7 +1110,13 @@ describe('a sub-agent’s own worktree', () => {
   it('keeps the worktree when the leftovers cannot be committed', async () => {
     client.sbWorkspaceGitStatus.mockResolvedValue({
       ok: true,
-      val: { branch: 'x', status: '?? notes.md', inProgress: null, conflicts: [] },
+      val: {
+        branch: 'x',
+        status: '## x\n?? notes.md',
+        changes: '?? notes.md',
+        inProgress: null,
+        conflicts: [],
+      },
     });
     client.sbWorkspaceGitCommit.mockResolvedValue({
       ok: false,
