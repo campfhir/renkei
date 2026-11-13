@@ -1186,6 +1186,29 @@ describe('a notebook kernel that cannot be started', () => {
     });
   });
 
+  it('an exception while running a cell is told as a failure, never by its own text', async () => {
+    envStore.listSealedEnv.mockResolvedValue([]);
+    const thrown = jest
+      .spyOn(kernels, 'execute')
+      .mockRejectedValueOnce(new Error('ENOENT: /workspaces/secret-path/home/.renkei'));
+    const failed = await post(base, 'workspaces/kernel/execute', {
+      ...TARGET,
+      id: 'ws-1',
+      path: 'notebooks/revenue.ipynb',
+      code: '1',
+    });
+    thrown.mockRestore();
+    expect(failed.status).toBe(200);
+    expect(failed.json).toEqual({
+      error: {
+        type: 'internal',
+        status: 500,
+        message: 'The cell could not be run: the sandbox hit an internal error.',
+      },
+    });
+    expect(JSON.stringify(failed.json)).not.toContain('secret-path');
+  });
+
   it('what is wrong with the request itself is still refused outright', async () => {
     const refused = await post(base, 'workspaces/kernel/execute', {
       ...TARGET,

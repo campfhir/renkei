@@ -1913,11 +1913,23 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
             timeoutMs
           );
         } catch (error) {
+          // What went wrong is for the log, not for the caller: an exception's
+          // text can name paths and internals of this worker.
+          logger.error(
+            'the kernel of the notebook {path} of {actor} threw while running a cell; the caller was told only that it failed: {error}',
+            {
+              component: 'worker-sandbox/kernels',
+              ...(await actorAttrs(target.subject)),
+              path: path.path,
+              error: error instanceof Error ? error.message : String(error),
+              stack: error instanceof Error ? error.stack : undefined,
+            }
+          );
           return finish({
             error: {
               type: 'internal',
               status: 500,
-              message: error instanceof Error ? error.message : String(error),
+              message: 'The cell could not be run: the sandbox hit an internal error.',
             },
           });
         }
