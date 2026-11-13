@@ -366,14 +366,22 @@ allowed emails but not the tenant id that scripted (bearer) calls
 require. If the worker's port refuses the service identity, switch
 “Worker port” to **Sandbox key only** while that is sorted out.
 
-**The Azure provider has not been run against a live sandbox group.** It
-is written against the SDK's types and tested against a stand-in for the
-SDK; the service is in preview. Expect to adjust it on first contact —
-in particular the state words (`azureState`), whether a port's URL is
-present on a sandbox that has just resumed, how environment variables
-reach a process started from the image's entrypoint, whether Entra's
-port policy admits a service identity (Microsoft's documentation
-describes users) and whether Podman starts as it is in the microVM.
+**What has been run against a real sandbox group** (westus2, the
+public `ubuntu` image, the smallest size), through this provider:
+reaching the group, creating a sandbox, seeing it `Running` with its
+port's HTTPS address, listing it by label, stopping it (`Stopped`, disk
+kept), resuming it (`Running`, same address), and deleting it. The state
+words are the ones `azureState` expects. Variables given at creation do
+reach the processes inside (PID 1 and anything run there), though the
+API does not echo them back on a read; a sandbox runs as root on its own
+kernel.
+
+**What has not**: the sandbox image itself as a disk image (so the real
+worker, its sealed boot and Podman inside the microVM), Entra on the
+worker's port with a service identity (Microsoft's documentation
+describes users, and the preview SDK sets allowed emails but not the
+tenant id bearer calls need), opening a preview port to a named person,
+and memory-mode suspend. Expect to adjust those on first contact.
 
 ## What is not done yet
 

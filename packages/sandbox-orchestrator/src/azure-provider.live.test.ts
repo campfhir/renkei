@@ -10,6 +10,9 @@
  *        --query accessToken -o tsv); without it, DefaultAzureCredential.
  *   SANDBOX_LIVE_AZURE_IMAGE   optional, default the public `ubuntu`.
  *
+ * Needs Node 24, as the images run: on an older Node, jest cannot load
+ * one of the Azure SDK's ESM-only dependencies.
+ *
  * It costs what one XS sandbox costs for the minute it lives. What the
  * platform answered at each step is printed, since this is also how the
  * provider's assumptions about a preview service are checked.
@@ -50,7 +53,7 @@ live('a sandbox in a real Azure sandbox group', () => {
   const deployment = `live-test-${Date.now()}`;
   const sandboxId = `00000000-0000-4000-8000-${String(Date.now()).padStart(12, '0').slice(-12)}`;
   let client: AzureSandboxClient;
-  let provider: AzureSandboxProvider;
+  let made: AzureSandboxProvider | undefined;
   let providerId: string | null = null;
 
   beforeAll(async () => {
@@ -61,7 +64,7 @@ live('a sandbox in a real Azure sandbox group', () => {
       region: env.SANDBOX_LIVE_AZURE_REGION ?? '',
       ...(env.SANDBOX_LIVE_AZURE_TOKEN ? { staticToken: env.SANDBOX_LIVE_AZURE_TOKEN } : {}),
     });
-    provider = new AzureSandboxProvider({
+    made = new AzureSandboxProvider({
       diskImage: env.SANDBOX_LIVE_AZURE_IMAGE ?? 'ubuntu',
       diskImagePublic: !env.SANDBOX_LIVE_AZURE_IMAGE,
       // The smallest tier: 0.25 cores, 0.5 GiB, 5 GiB.
@@ -78,6 +81,9 @@ live('a sandbox in a real Azure sandbox group', () => {
 
   afterAll(async () => {
     // Whatever happened above, nothing this run made is left behind.
+    // Nothing to clean when the client itself could not be made.
+    const provider = made;
+    if (!provider) return;
     const left = await provider.list().catch(() => []);
     for (const machine of left) {
       say('cleanup', `removing ${machine.providerId}`);
@@ -89,6 +95,8 @@ live('a sandbox in a real Azure sandbox group', () => {
   }, 180_000);
 
   it('is reached, made, seen running, suspended, resumed, listed and removed', async () => {
+    const provider = made;
+    if (!provider) throw new Error('the provider was not set up');
     await provider.check();
     say('check', 'the sandbox group answered');
 
