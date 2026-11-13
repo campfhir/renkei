@@ -2,19 +2,23 @@
  * A notebook in the code pane, in a browser: `notebooks/revenue.ipynb`
  * (seeded by the stub with two cells' outputs committed) opens as a
  * notebook — its markdown rendered, its saved table drawn — rather than
- * as JSON; Run all sends the run to the (stubbed) sandbox worker, the
- * outputs it wrote into the checkout's file are drawn (the chart the
- * third cell had never drawn), and Source shows the file itself.
- * desktop-dark walks it at a phone's width, through the Code tab. Real
- * routes and the real (stubbed) sandbox worker throughout.
+ * as JSON; a code cell is added and typed in where it is and run with
+ * Shift+Enter in the notebook's kernel on the (stubbed) sandbox worker,
+ * its output drawn under it; Run all runs the rest (the chart the third
+ * cell had never drawn); Packages installs through the same kernel; and
+ * Source shows the file itself. desktop-dark walks it at a phone's
+ * width, through the Code tab. Real routes and the real (stubbed)
+ * sandbox worker throughout.
  *
- * The rules are elsewhere: when Run may be pressed, what a refused or
- * failed run leaves on screen and what a stop says are
+ * The rules are elsewhere: when cells may be run, edited, added or
+ * moved, the order they run in, and what a raised cell, a stop, a lost
+ * kernel or a refused install leaves on screen are
  * app/(app)/code/_components/notebook-view.model.test.ts; how a notebook
- * file is read (outputs, the richest form, a file that is not one) is
- * lib/code/notebook.test.ts; what the run command does with a real
- * Python is lib/code/notebook-runner.test.ts; who may run and what the
- * route answers is app/api/code/projects/[projectId]/notebook/run/route.test.ts.
+ * file is read and changed is lib/code/notebook.test.ts; who may run and
+ * what the route answers is
+ * app/api/code/projects/[projectId]/notebook/kernel/route.test.ts; what
+ * a real kernel does with a real Python is
+ * apps/worker-sandbox/src/kernel-sessions.test.ts.
  */
 
 import path from 'node:path';
@@ -64,7 +68,7 @@ test.describe('code pane notebooks', () => {
     await removeModel(page.request, ids.modelId);
   });
 
-  test('a notebook opens as a notebook, runs on the sandbox, and shows its source', async ({
+  test('a notebook opens as a notebook, is edited and run a cell at a time, and shows its source', async ({
     page,
   }, testInfo) => {
     const mobile = testInfo.project.name === 'desktop-dark';
@@ -92,18 +96,43 @@ test.describe('code pane notebooks', () => {
     });
     await expect(notebook.getByText('Loaded 4 months')).toBeVisible();
     await expect(notebook.getByRole('cell', { name: '42987.25' })).toBeVisible();
-    // The chart cell has never been run: no figure yet.
+    // The chart cell has never been run: no figure yet. Nothing has run: no kernel.
     await expect(notebook.getByTestId('cell-image')).toHaveCount(0);
+    await expect(notebook.getByTestId('notebook-kernel')).toContainText('No kernel yet');
     await shot(page, testInfo, 'code-notebook-opened.png');
 
-    // ── Run all: the sandbox runs it, the file's new outputs are drawn ──
+    // ── A text cell opens as text on a double click, and closes rendered ──
+    await notebook.getByRole('heading', { name: 'Monthly revenue' }).dblclick();
+    const prose = notebook.getByRole('textbox', { name: 'Text of text cell' });
+    await expect(prose).toBeFocused();
+    await prose.fill('# Monthly revenue, reviewed\n\nEdited where it is.');
+    await shot(page, testInfo, 'code-notebook-text-editing.png');
+    await prose.press('Shift+Enter');
+    await expect(
+      notebook.getByRole('heading', { name: 'Monthly revenue, reviewed' })
+    ).toBeVisible();
+
+    // ── A cell added and typed in where it is, run on its own with Shift+Enter ──
+    await notebook.getByRole('button', { name: 'Add a code cell here' }).last().click();
+    const added = notebook.getByRole('textbox', { name: 'Code of cell 4' });
+    await expect(added).toBeFocused();
+    await added.fill('print("Edited in place")');
     const ran = page.waitForResponse(
       (response) =>
-        response.url().endsWith('/notebook/run') && response.request().method() === 'POST'
+        response.url().endsWith('/notebook/kernel') && response.request().method() === 'POST'
     );
-    await notebook.getByRole('button', { name: 'Run all' }).click();
+    await added.press('Shift+Enter');
     expect((await ran).status()).toBe(200);
-    await expect(notebook.getByTestId('notebook-run-status')).toContainText('Ran 3 cells');
+    await expect(notebook.getByText('Edited in place', { exact: true })).toBeVisible();
+    // The kernel the run started stays: the toolbar names it.
+    await expect(notebook.getByTestId('notebook-kernel')).toContainText('Python 3.11.2');
+    // Only that cell ran: the chart cell above it is still undrawn.
+    await expect(notebook.getByTestId('cell-image')).toHaveCount(0);
+    await shot(page, testInfo, 'code-notebook-cell-run.png');
+
+    // ── Run all: every cell in turn, the chart drawn at last ──
+    await notebook.getByRole('button', { name: 'Run all' }).click();
+    await expect(notebook.getByTestId('notebook-run-status')).toContainText('Ran 4 cells');
     const chart = notebook.getByTestId('cell-image');
     await expect(chart).toBeVisible();
     await chart.scrollIntoViewIfNeeded();
@@ -112,6 +141,15 @@ test.describe('code pane notebooks', () => {
       .poll(() => chart.evaluate((image: HTMLImageElement) => image.naturalWidth))
       .toBeGreaterThan(0);
     await shot(page, testInfo, 'code-notebook-ran.png');
+
+    // ── Packages: an install through the same kernel ──
+    await notebook.getByRole('button', { name: 'Packages' }).click();
+    await notebook.getByRole('textbox', { name: 'Packages to install' }).fill('seaborn');
+    await notebook.getByRole('button', { name: 'Install', exact: true }).click();
+    await expect(notebook.getByTestId('notebook-install-log')).toContainText(
+      'Successfully installed seaborn'
+    );
+    await shot(page, testInfo, 'code-notebook-packages.png');
 
     // ── Source: the file as it is, in the pane's own editor ──
     await notebook.getByRole('button', { name: 'Source' }).click();

@@ -273,73 +273,92 @@ const REVENUE_NOTEBOOK = `${JSON.stringify(
 )}\n`;
 
 /**
- * A notebook run, stubbed: the pane's Run all sends one command through
- * exec (lib/code/notebook-runner.ts) naming the notebook in
- * RENKEI_NOTEBOOK_PATH. No Python here, so each code cell "runs" by what
- * its source says — a `print` prints, `.head()` shows the table, a `plt.`
- * cell draws the chart, a `raise` raises and stops the run — and the
- * outputs are written back into the checkout's file as the real runner
- * writes them. Returns the runner's result line.
+ * A notebook's kernel, stubbed (`workspaces/kernel/*`): no Python here,
+ * so a cell "runs" by what its code says — a `print("…")` prints its
+ * text, `.head()` shows the table, a `plt.` cell draws the chart, a
+ * `raise X("…")` raises, `%pip install …` says what it installed — with
+ * the execution count kept per kernel as a real one keeps it. One kernel
+ * per (scope, checkout, notebook), started by its first cell.
  */
-function runNotebookStub(workspace, path) {
-  const uploaded = workspace.files.get(path);
-  const text = uploaded ? uploaded.toString('utf8') : FILES[path];
-  let notebook;
-  try {
-    notebook = JSON.parse(text ?? '');
-  } catch {
-    return { error: 'unreadable', detail: 'not JSON' };
+function runCellStub(kernel, code) {
+  kernel.count += 1;
+  const outputs = [];
+  const raised = /raise (\w+)\((?:"|')(.*?)(?:"|')\)/.exec(code);
+  if (raised) {
+    outputs.push({
+      output_type: 'error',
+      ename: raised[1],
+      evalue: raised[2],
+      traceback: [
+        'Traceback (most recent call last):',
+        `  File "<cell ${kernel.count}>", line 1, in <module>`,
+        `${raised[1]}: ${raised[2]}`,
+      ],
+    });
+    return { outputs, executionCount: kernel.count, succeeded: false };
   }
-  if (!Array.isArray(notebook?.cells)) return { error: 'unreadable', detail: 'no cells' };
-  const code = notebook.cells
-    .map((cell, index) => ({ cell, index }))
-    .filter(({ cell }) => cell.cell_type === 'code');
-  for (const { cell } of code) {
-    cell.outputs = [];
-    cell.execution_count = null;
+  const installed = /^%pip install (.+)$/m.exec(code);
+  if (installed) {
+    outputs.push({
+      output_type: 'stream',
+      name: 'stdout',
+      text: `Collecting ${installed[1]}\nSuccessfully installed ${installed[1]}\n`,
+    });
   }
-  let ran = 0;
-  let failed = null;
-  for (const [n, { cell, index }] of code.entries()) {
-    const source = Array.isArray(cell.source) ? cell.source.join('') : String(cell.source ?? '');
-    ran += 1;
-    cell.execution_count = ran;
-    const raised = /raise (\w+)\((?:"|')(.*?)(?:"|')\)/.exec(source);
-    if (raised) {
-      cell.outputs.push({
-        output_type: 'error',
-        ename: raised[1],
-        evalue: raised[2],
-        traceback: [
-          'Traceback (most recent call last):',
-          `  File "<cell ${n + 1}>", line 1, in <module>`,
-          `${raised[1]}: ${raised[2]}`,
-        ],
-      });
-      failed = { index, number: n + 1, ename: raised[1], evalue: raised[2] };
-      break;
-    }
-    if (source.includes('print(')) {
-      cell.outputs.push({ output_type: 'stream', name: 'stdout', text: 'Loaded 4 months\n' });
-    }
-    if (source.includes('.head()')) {
-      cell.outputs.push({
-        output_type: 'execute_result',
-        execution_count: ran,
-        metadata: {},
-        data: { 'text/html': REVENUE_TABLE, 'text/plain': '     month  invoices   revenue' },
-      });
-    }
-    if (source.includes('plt.')) {
-      cell.outputs.push({
-        output_type: 'display_data',
-        metadata: {},
-        data: { 'image/svg+xml': REVENUE_CHART, 'text/plain': '<Figure size 640x480 with 1 Axes>' },
-      });
-    }
+  const printed = /print\(f?(?:"|')(.*?)(?:"|')\)/.exec(code);
+  if (printed) {
+    const text = printed[1].replace('{len(df)}', '4');
+    outputs.push({ output_type: 'stream', name: 'stdout', text: `${text}\n` });
   }
-  workspace.files.set(path, Buffer.from(`${JSON.stringify(notebook, null, 1)}\n`, 'utf8'));
-  return { engine: 'builtin', ran, total: code.length, failed, seconds: 1.4 };
+  if (code.includes('.head()')) {
+    outputs.push({
+      output_type: 'execute_result',
+      execution_count: kernel.count,
+      metadata: {},
+      data: { 'text/html': REVENUE_TABLE, 'text/plain': '     month  invoices   revenue' },
+    });
+  }
+  if (code.includes('plt.')) {
+    outputs.push({
+      output_type: 'display_data',
+      metadata: {},
+      data: { 'image/svg+xml': REVENUE_CHART, 'text/plain': '<Figure size 640x480 with 1 Axes>' },
+    });
+  }
+  return { outputs, executionCount: kernel.count, succeeded: true };
+}
+
+function handleKernel(op, body, response) {
+  const scope = scopeOf(body);
+  const workspace = scope.workspaces.get(body.id ?? '');
+  if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
+  if (!/\.ipynb$/.test(body.path ?? '')) return error(response, 400, 'bad_path');
+  workspace.kernels = workspace.kernels ?? new Map();
+  const kernel = workspace.kernels.get(body.path);
+  const view = { engine: 'builtin', python: '3.11.2' };
+  switch (op) {
+    case 'status':
+      return json(response, 200, { running: Boolean(kernel), kernel: kernel ? view : null });
+    case 'interrupt':
+      return json(response, 200, { interrupted: Boolean(kernel) });
+    case 'close':
+      workspace.kernels.delete(body.path);
+      return json(response, 200, { closed: Boolean(kernel) });
+    case 'execute': {
+      if (typeof body.code !== 'string') return error(response, 400, 'bad_request');
+      const live = kernel ?? { count: 0 };
+      workspace.kernels.set(body.path, live);
+      return json(response, 200, {
+        kernel: view,
+        started: !kernel,
+        ...runCellStub(live, body.code),
+        timedOut: false,
+        unreadableEnv: [],
+      });
+    }
+    default:
+      return error(response, 404, 'unknown_operation');
+  }
 }
 
 const FILES = {
@@ -891,6 +910,7 @@ function handleLsp(op, body, response) {
 
 function handleWorkspaces(op, body, response) {
   if (op.startsWith('lsp/')) return handleLsp(op.slice('lsp/'.length), body, response);
+  if (op.startsWith('kernel/')) return handleKernel(op.slice('kernel/'.length), body, response);
   const scope = scopeOf(body);
   switch (op) {
     case 'clone': {
@@ -1135,28 +1155,6 @@ function handleWorkspaces(op, body, response) {
         workspace.extraEntries.get(dir).push({ path, kind: 'file', sizeBytes: bytes.byteLength });
       }
       return json(response, 200, { path, created, sizeBytes: bytes.byteLength });
-    }
-    case 'exec': {
-      // The one command the stub answers: a notebook run. Anything else
-      // would need a shell, and nothing in the suite sends one.
-      const workspace = scope.workspaces.get(body.id ?? '');
-      if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
-      const named = /RENKEI_NOTEBOOK_PATH='([^']+)'/.exec(body.command ?? '');
-      if (!named) return error(response, 400, 'bad_request', 'The stub runs only notebooks.');
-      const result = runNotebookStub(workspace, named[1]);
-      return json(response, 200, {
-        exitCode: 0,
-        signal: null,
-        stdout: `\nRENKEI_NOTEBOOK_RESULT ${JSON.stringify(result)}\n`,
-        stderr: '',
-        timedOut: false,
-        interrupted: false,
-        truncated: false,
-        durationMs: 1400,
-        timeoutMs: body.timeoutMs ?? 120000,
-        sizeBytes: workspace.sizeBytes,
-        unreadableEnv: [],
-      });
     }
     case 'mkdir': {
       const workspace = scope.workspaces.get(body.id ?? '');

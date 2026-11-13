@@ -306,17 +306,9 @@ export default function CodePane({
       file={active}
       touch={touch}
       canEdit={canEdit}
-      dirty={activeDirty}
-      notebookRunUrl={`${base}/notebook/run`}
+      notebookKernelUrl={`${base}/notebook/kernel`}
       onChange={(text) => pane.setText(active.path, text)}
       onSave={() => void pane.save(active.path)}
-      onSaveFirst={() => pane.save(active.path)}
-      onNotebookRan={(changed) => {
-        pane.refresh();
-        // The run wrote the cells' outputs into the file: the chat should
-        // know the checkout moved by the person's hand, as for a save.
-        if (changed) onNote({ type: 'edit', paths: [active.path] });
-      }}
       onCompare={() => setCompareFor(active.path)}
       onReloadTheirs={() => pane.reloadTheirs(active.path)}
       onKeepMine={() => void pane.save(active.path, { force: true })}
@@ -663,12 +655,9 @@ function FileBody({
   file,
   touch,
   canEdit,
-  dirty,
-  notebookRunUrl,
+  notebookKernelUrl,
   onChange,
   onSave,
-  onSaveFirst,
-  onNotebookRan,
   onCompare,
   onReloadTheirs,
   onKeepMine,
@@ -677,17 +666,11 @@ function FileBody({
   file: CodePaneFile;
   touch: boolean;
   canEdit: boolean;
-  /** The file has unsaved edits. */
-  dirty: boolean;
-  /** Where a notebook's Run all posts. */
-  notebookRunUrl: string;
+  /** Where a notebook's cells are sent to run. */
+  notebookKernelUrl: string;
   lsp: LanguageServersHandle;
   onChange: (text: string) => void;
   onSave: () => void;
-  /** Save and say whether it took: a notebook is saved before it runs. */
-  onSaveFirst: () => Promise<boolean>;
-  /** A notebook run ended; `changed` when cells ran and the file holds their outputs. */
-  onNotebookRan: (changed: boolean) => void;
   onCompare: () => void;
   onReloadTheirs: () => void;
   onKeepMine: () => void;
@@ -770,18 +753,16 @@ function FileBody({
       ) : null}
       <div className="min-h-0 flex-1">
         {isNotebookPath(file.path) ? (
-          // A notebook is read as a notebook; its JSON is the Source view.
+          // A notebook is worked in as a notebook; its JSON is the Source view.
           <NotebookView
             key={file.path}
             file={file}
-            runUrl={notebookRunUrl}
+            kernelUrl={notebookKernelUrl}
             canEdit={canEdit}
-            dirty={dirty}
             touch={touch}
             source={editor}
             onChange={onChange}
-            onSave={onSaveFirst}
-            onRan={onNotebookRan}
+            onSave={onSave}
           />
         ) : (
           editor

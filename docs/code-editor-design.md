@@ -337,16 +337,33 @@ disk would silently leave them out.
    create, rename and delete from the pane; images.
 
 5. **Notebooks** — built. A `.ipynb` opens as its cells with their saved
-   outputs instead of JSON (Source is the JSON), and **Run all** executes
-   it on the sandbox and writes the outputs into the file. Decided along
-   the way: the run goes through the existing exec verb rather than a
-   kernel service of its own, so there is no state between runs (always
-   "restart and run all") and no per-cell run; outputs live in the file,
-   not in the answer, which keeps a run inside exec's limits and makes it
-   an ordinary uncommitted change; a checkout without Jupyter still runs
-   Python notebooks through a built-in runner. **Later:** editing a cell
-   in place (today: Source), running one cell against a kept kernel,
-   output streaming while a long run is under way, LaTeX and widgets.
+   outputs instead of JSON (Source is the JSON); cells are edited, added,
+   moved and removed in place; and the sandbox worker keeps **a kernel
+   per notebook** (`kernel-sessions.ts`, beside the language servers and
+   on their model: a process per checkout, started as the project's uid,
+   reaped when idle) so a cell runs on its own with earlier cells' state.
+   Decided along the way:
+   - A first cut ran the whole notebook through the exec verb and wrote
+     the outputs into the file. It could not run one cell, so it went:
+     outputs now come back to the pane and are unsaved edits until Save,
+     the same rule as every other change the pane makes.
+   - The page names a kernel by its notebook's path and keeps no id. A
+     run that finds no kernel starts one and says so, which is the one
+     signal the page needs to tell the person state was lost (a worker
+     restart, the idle reaper).
+   - A cell's run is one request and one answer, not a stream: simple,
+     and it survives a reload badly only in that the answer is lost, not
+     the kernel's state.
+   - Packages install into the Python the kernel runs on. A repository
+     without its own environment gets one under the project's sandbox
+     home rather than writes to the system Python (which the image
+     forbids), so installs persist and stay the project's own.
+   - A checkout without Jupyter still runs Python notebooks through a
+     built-in kernel; with `ipykernel` installed it is a real one.
+     **Later:** output streaming while a long cell is under way, a cell's
+     language intelligence (the notebook's cells are not open to a language
+     server), LaTeX and widgets, kernels for languages other than Python
+     without `ipykernel`'s like installed.
 
 Each cut ships on its own and leaves the chat as it was for anyone who
 does not open the pane.

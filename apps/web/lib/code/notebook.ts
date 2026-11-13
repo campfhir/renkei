@@ -2,9 +2,12 @@
  * A Jupyter notebook (`.ipynb`, nbformat 4) read for the code pane: the
  * file's JSON turned into the cells a person sees — markdown, code with
  * its execution count, and each code cell's outputs reduced to the one
- * thing to draw (text, a table's HTML, an image, a traceback). Pure, so
- * the pane's model and its tests read notebooks with it; drawing is
- * notebook-view.tsx, running is notebook-runner.ts.
+ * thing to draw (text, a table's HTML, an image, a traceback) — and
+ * changed for it: a cell's text, a run's outputs, a cell added, moved or
+ * taken out, each as the file's new text with everything else in it left
+ * as it was. Pure, so the pane's model and its tests work on notebooks
+ * with it; drawing is notebook-view.tsx, running is the sandbox's kernel
+ * (`…/notebook/kernel`).
  *
  * What a cell shows of a rich output is the richest form the pane can
  * draw, in `RICH_ORDER`; forms it cannot (widgets, JavaScript, Plotly's
@@ -146,7 +149,13 @@ function outputsOf(value: unknown): NotebookOutput[] {
 
 /** Read a notebook's text; a file that is not one says why in a sentence. */
 export function parseNotebook(text: string): NotebookParse {
-  if (!text.trim()) return { ok: false, message: 'This notebook is empty.' };
+  // A new, empty .ipynb: a notebook with no cells yet, to add the first to.
+  if (!text.trim()) {
+    return {
+      ok: true,
+      notebook: { cells: [], language: 'python', kernelName: null, codeCells: 0, withOutput: 0 },
+    };
+  }
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -213,24 +222,141 @@ export function parseNotebook(text: string): NotebookParse {
   };
 }
 
+/** Written as Jupyter writes a notebook: one-space indent, a final newline. */
+function serialize(value: unknown): string {
+  return `${JSON.stringify(value, null, 1)}\n`;
+}
+
+/** What a new, empty notebook file holds. */
+function emptyDocument(): Record<string, unknown> {
+  return {
+    cells: [],
+    metadata: {
+      kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' },
+      language_info: { name: 'python' },
+    },
+    nbformat: 4,
+    nbformat_minor: 5,
+  };
+}
+
+/** The file as a document whose cells can be changed; null when it is not a notebook. */
+function documentOf(text: string): { document: Record<string, unknown>; cells: unknown[] } | null {
+  let value: unknown;
+  if (!text.trim()) value = emptyDocument();
+  else {
+    try {
+      value = JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+  if (!isRecord(value) || !Array.isArray(value.cells)) return null;
+  return { document: value, cells: value.cells };
+}
+
+/** A cell's text as nbformat stores it: its lines, each keeping its newline. */
+function sourceLines(source: string): string[] {
+  return source ? source.split(/(?<=\n)/) : [];
+}
+
+/** The text of the cell at `index` (its place in the file's cells), or null. */
+export function cellSource(text: string, index: number): string | null {
+  const opened = documentOf(text);
+  const cell = opened?.cells[index];
+  return isRecord(cell) ? multiline(cell.source) : null;
+}
+
+/**
+ * The notebook with the cell at `index` given new text. Everything else
+ * in the file stays as it was — a code cell keeps its outputs, which are
+ * then of an earlier text until it is run again, as in Jupyter. Null
+ * when the file is not a notebook or has no such cell.
+ */
+export function setCellSource(text: string, index: number, source: string): string | null {
+  const opened = documentOf(text);
+  const cell = opened?.cells[index];
+  if (!opened || !isRecord(cell)) return null;
+  cell.source = sourceLines(source);
+  return serialize(opened.document);
+}
+
+/** The notebook with a code cell's outputs and execution count replaced by a run's. */
+export function setCellRun(
+  text: string,
+  index: number,
+  outputs: unknown[],
+  executionCount: number | null
+): string | null {
+  const opened = documentOf(text);
+  const cell = opened?.cells[index];
+  if (!opened || !isRecord(cell) || cell.cell_type !== 'code') return null;
+  cell.outputs = outputs;
+  cell.execution_count = executionCount;
+  return serialize(opened.document);
+}
+
+/**
+ * The notebook with a new, empty cell after the one at `after` (-1 puts
+ * it first). `id` names the cell where the notebook's format has cell
+ * ids (nbformat 4.5 on); the caller draws it, so this stays pure.
+ */
+export function insertCell(
+  text: string,
+  after: number,
+  type: 'code' | 'markdown',
+  id: string
+): string | null {
+  const opened = documentOf(text);
+  if (!opened) return null;
+  const { document, cells } = opened;
+  const withIds =
+    document.nbformat === 4 && typeof document.nbformat_minor === 'number'
+      ? document.nbformat_minor >= 5
+      : false;
+  const cell: Record<string, unknown> =
+    type === 'code'
+      ? { cell_type: 'code', execution_count: null, metadata: {}, outputs: [], source: [] }
+      : { cell_type: 'markdown', metadata: {}, source: [] };
+  if (withIds) cell.id = id;
+  const at = Math.min(Math.max(after + 1, 0), cells.length);
+  cells.splice(at, 0, cell);
+  return serialize(document);
+}
+
+/** The notebook without the cell at `index`. */
+export function deleteCell(text: string, index: number): string | null {
+  const opened = documentOf(text);
+  if (!opened || index < 0 || index >= opened.cells.length) return null;
+  opened.cells.splice(index, 1);
+  return serialize(opened.document);
+}
+
+/** The notebook with the cell at `index` moved one place up (-1) or down (1). */
+export function moveCell(text: string, index: number, by: -1 | 1): string | null {
+  const opened = documentOf(text);
+  if (!opened) return null;
+  const to = index + by;
+  const { cells } = opened;
+  if (index < 0 || index >= cells.length || to < 0 || to >= cells.length) return null;
+  [cells[index], cells[to]] = [cells[to], cells[index]];
+  return serialize(opened.document);
+}
+
 /**
  * The notebook's text with every code cell's outputs and execution count
  * taken out, written as Jupyter writes a notebook (one-space indent, a
  * final newline). Null when the text is not a notebook.
  */
 export function clearNotebookOutputs(text: string): string | null {
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return null;
-  }
-  if (!isRecord(value) || !Array.isArray(value.cells)) return null;
-  for (const cell of value.cells) {
+  if (!text.trim()) return null;
+  const opened = documentOf(text);
+  if (!opened) return null;
+  for (const cell of opened.cells) {
     if (isRecord(cell) && cell.cell_type === 'code') {
       cell.outputs = [];
       cell.execution_count = null;
     }
   }
-  return `${JSON.stringify(value, null, 1)}\n`;
+  return serialize(opened.document);
 }
