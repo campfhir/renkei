@@ -125,19 +125,12 @@ interface Kernel {
 export interface KernelSessionsDeps {
   /** Test-only: a different spawn (a scripted host). */
   spawnKernel?: (input: KernelInput) => ChildProcess;
-  /** A kernel that had started is gone (it exited, was closed or reaped): its key. */
-  onEnded?: (key: string) => void;
   /** Test-only: shorter waits. */
   startTimeoutMs?: number;
   interruptGraceMs?: number;
 }
 
-/** A kernel's name: its caller, its checkout, its notebook. */
-export function kernelKey(input: {
-  owner: KernelOwner;
-  workspaceId: string;
-  path: string;
-}): string {
+function keyOf(input: { owner: KernelOwner; workspaceId: string; path: string }): string {
   return `${input.owner.subject}\n${input.workspaceId}\n${input.path}`;
 }
 
@@ -160,15 +153,9 @@ export class KernelSessions {
     return this.kernels.size;
   }
 
-  /** Whether this process has the notebook's kernel, starting or started. */
-  has(input: { owner: KernelOwner; workspaceId: string; path: string }): boolean {
-    const kernel = this.kernels.get(kernelKey(input));
-    return kernel !== undefined && kernel.state !== 'exited';
-  }
-
   /** The notebook's kernel, when it has a live one. */
   status(input: { owner: KernelOwner; workspaceId: string; path: string }): KernelView | null {
-    const kernel = this.kernels.get(kernelKey(input));
+    const kernel = this.kernels.get(keyOf(input));
     return kernel && kernel.state === 'ready' ? kernel.view : null;
   }
 
@@ -179,7 +166,7 @@ export class KernelSessions {
     | { ok: true; kernel: Kernel; started: boolean; previous: 'idle' | 'ended' | null }
     | KernelFailure
   > {
-    const key = kernelKey(input);
+    const key = keyOf(input);
     const existing = this.kernels.get(key);
     if (existing && existing.state !== 'exited') {
       const failure = await existing.ready;
@@ -301,7 +288,6 @@ export class KernelSessions {
       if (this.kernels.get(key) === kernel) this.kernels.delete(key);
       // A kernel that had run is remembered as gone, unless the reaper said why already.
       if (!starting && !this.ended.has(key)) this.remember(key, 'ended');
-      this.deps.onEnded?.(key);
       if (starting) {
         settle({
           ok: false,
@@ -420,7 +406,7 @@ export class KernelSessions {
 
   /** Interrupt the running cell; the kernel and what it holds stay. False when there is no kernel. */
   interrupt(input: { owner: KernelOwner; workspaceId: string; path: string }): boolean {
-    const kernel = this.kernels.get(kernelKey(input));
+    const kernel = this.kernels.get(keyOf(input));
     if (!kernel || kernel.state !== 'ready') return false;
     if (kernel.busy > 0) this.signal(kernel, 'SIGINT');
     return true;
@@ -428,7 +414,7 @@ export class KernelSessions {
 
   /** End the notebook's kernel and everything it holds. False when there was none. */
   close(input: { owner: KernelOwner; workspaceId: string; path: string }): boolean {
-    const kernel = this.kernels.get(kernelKey(input));
+    const kernel = this.kernels.get(keyOf(input));
     if (!kernel) return false;
     this.end(kernel);
     return true;

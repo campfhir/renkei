@@ -110,11 +110,8 @@ import { LspSessions, probeLanguageServers } from './lsp-sessions';
 import {
   KERNEL_EXECUTE_DEFAULT_MS,
   KERNEL_EXECUTE_MAX_MS,
-  KERNEL_START_TIMEOUT_MS,
   KernelSessions,
-  kernelKey,
 } from './kernel-sessions';
-import type { KernelRouting } from './kernel-routing';
 import { createGitVerbs, operationState } from './git-verbs';
 import type { PreviewManager } from './previews';
 import { actorAttrs } from '@renkei/db';
@@ -139,11 +136,6 @@ export interface WorkspaceHandlerDeps {
   lsp?: LspSessions;
   /** The notebook kernels behind `kernel/*`; made here when not given (tests script one). */
   kernels?: KernelSessions;
-  /**
-   * Which replica holds which kernel, when the sandbox may run as several
-   * (kernel-routing.ts). Without it every kernel call is answered here.
-   */
-  kernelRouting?: KernelRouting;
   /** The previews (previews.ts): a checkout that goes takes its previews with it. */
   previews?: PreviewManager;
 }
@@ -152,14 +144,6 @@ const SSE_PING_MS = 15_000;
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type Body = Record<string, unknown>;
-
-/** What a verb may need of the request beyond its body: to pass a kernel call to another replica. */
-export interface RequestContext {
-  /** The caller's Authorization header, as sent. */
-  authorization: string;
-  /** Another replica passed this call on: it is answered here, never passed again. */
-  relayed: boolean;
-}
 
 /** Every string in a JSON value passed through `scrub`: a cell's outputs, whatever their shape. */
 export function scrubDeep(value: unknown, scrub: (text: string) => string): unknown {
@@ -264,13 +248,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
   }
 
   const lsp = deps.lsp ?? new LspSessions();
-  const routing = deps.kernelRouting ?? null;
-  const kernels =
-    deps.kernels ??
-    new KernelSessions({
-      // A kernel that ended here is no longer ours to be sent calls for.
-      onEnded: (key) => void routing?.release(key),
-    });
+  const kernels = deps.kernels ?? new KernelSessions();
 
   /** The checkout size limit for this caller: the org's, or their approved larger one. */
   async function limitFor(workspace: store.WorkspaceTarget): Promise<number> {
@@ -322,7 +300,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       const where = `worker ${workerInstance()}, up ${workerUptime()}`;
       const why = callerOnDisk
         ? `this worker has the project’s other files but not this checkout, so the checkout alone was removed (${where})`
-        : `this worker has no files for this project at all, so it is not the worker that cloned it — one started without the workspaces volume mounted, or a second worker instance behind the same address (${where})`;
+        : `this worker has no files for this project at all, so it is not the worker that cloned it — the project was moved to this instance from one that stopped answering, or this one was started without the workspaces volume mounted (${where})`;
       logger.warn(
         "the checkout of {repo} of {actor} is missing from this worker's disk although the workspace reads ready ({why}); it is marked failed and will be cloned again",
         {
@@ -1867,8 +1845,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     op: string,
     target: store.WorkspaceTarget,
     body: Body,
-    response: ServerResponse,
-    request: RequestContext
+    response: ServerResponse
   ): Promise<void> {
     const path = validateWorkspacePath(body.path);
     if (!path.ok || !path.path || !/\.ipynb$/i.test(path.path)) {
@@ -1882,58 +1859,6 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     const workspace = await loadReady(target, body, response);
     if (!workspace) return;
     const named = { owner: target, workspaceId: workspace.id, path: path.path };
-    const timeoutMs =
-      typeof body.timeoutMs === 'number' && Number.isFinite(body.timeoutMs)
-        ? Math.min(KERNEL_EXECUTE_MAX_MS, Math.max(1_000, Math.floor(body.timeoutMs)))
-        : KERNEL_EXECUTE_DEFAULT_MS;
-
-    // Several replicas, one address: the kernel may be another replica's.
-    // A call for a kernel that is not here goes to the replica that
-    // claimed it; a first cell claims it for this one before starting.
-    const key = kernelKey(named);
-    if (routing && kernels.has(named) && !request.relayed) {
-      // A kernel here that the claim says is another replica's: that one
-      // was started while this replica could not be reached, and has run
-      // the notebook's cells since. Two kernels answering by turns is
-      // worse than one lost, so this one goes and the call follows the claim.
-      const holder = await routing.holder(key);
-      if (holder && !routing.isSelf(holder)) kernels.close(named);
-      else if (!holder) await routing.take(key);
-    }
-    if (routing && !kernels.has(named)) {
-      if (request.relayed) {
-        // Sent here by a replica that believes the kernel is ours: it is
-        // now, whether it still runs or has to be started again.
-        if (op === 'execute') await routing.take(key);
-      } else {
-        let holder = await routing.holder(key);
-        if (holder && routing.isSelf(holder)) {
-          // Our own claim with no kernel behind it: it ended unnoticed.
-          await routing.drop(key);
-          holder = null;
-        }
-        if (!holder && op === 'execute') holder = await routing.claim(key);
-        if (holder) {
-          const relayed = await routing.relay(
-            holder,
-            op,
-            body,
-            request.authorization,
-            // The cell's own limit, its interrupt's grace and a first start on top.
-            op === 'execute' ? timeoutMs + KERNEL_START_TIMEOUT_MS + 20_000 : 15_000
-          );
-          if (relayed) {
-            response.writeHead(relayed.status, { 'content-type': 'application/json' });
-            response.end(JSON.stringify(relayed.body));
-            return;
-          }
-          // That replica is gone, and its kernels with it.
-          if (op === 'execute') await routing.take(key);
-          else await routing.drop(key);
-        }
-      }
-    }
-
     switch (op) {
       case 'status': {
         const kernel = kernels.status(named);
@@ -1947,6 +1872,10 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         if (typeof body.code !== 'string' || body.code.length > WRITE_MAX_CHARS) {
           return sendError(response, 400, 'bad_request', 'A cell of code is required.');
         }
+        const timeoutMs =
+          typeof body.timeoutMs === 'number' && Number.isFinite(body.timeoutMs)
+            ? Math.min(KERNEL_EXECUTE_MAX_MS, Math.max(1_000, Math.floor(body.timeoutMs)))
+            : KERNEL_EXECUTE_DEFAULT_MS;
         const env = envSecretsEnabled() ? await openCallerEnv(target) : EMPTY_ENV;
         const serviceEnv = deps.serviceEnv ? await deps.serviceEnv(workspace) : {};
         const previewEnv = deps.previews?.environmentFor(workspace) ?? {};
@@ -1963,11 +1892,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
           timeoutMs
         );
         await markEnvUsed(env);
-        if (!outcome.ok) {
-          // No kernel came of it: the claim made for it is not kept.
-          if (!kernels.has(named)) await routing?.release(key);
-          return sendError(response, outcome.status, outcome.type, outcome.message);
-        }
+        if (!outcome.ok) return sendError(response, outcome.status, outcome.type, outcome.message);
         await store.touchWorkspace(workspace.id);
         return sendJson(response, 200, {
           kernel: outcome.kernel,
@@ -1986,18 +1911,13 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     }
   }
 
-  async function handleWorkspaces(
-    op: string,
-    body: Body,
-    response: ServerResponse,
-    request: RequestContext = { authorization: '', relayed: false }
-  ): Promise<void> {
+  async function handleWorkspaces(op: string, body: Body, response: ServerResponse): Promise<void> {
     const target = targetOf(body);
     if (!target) return sendError(response, 400, 'bad_request');
     if (!(await enabled(response))) return;
     if (op.startsWith('lsp/')) return handleLsp(op.slice('lsp/'.length), target, body, response);
     if (op.startsWith('kernel/')) {
-      return handleKernel(op.slice('kernel/'.length), target, body, response, request);
+      return handleKernel(op.slice('kernel/'.length), target, body, response);
     }
     switch (op) {
       case 'clone':

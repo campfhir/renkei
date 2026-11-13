@@ -138,10 +138,10 @@ function ago(ms: number): string {
 
 /**
  * Why a run found no kernel where there had been one, as far as the
- * sandbox can say: it reaped it, it ended, the worker itself restarted
- * since — or the worker that answered never had it, which on every run
- * means the replicas are not routing kernel calls among themselves
- * (apps/worker-sandbox/src/kernel-routing.ts).
+ * sandbox can say: it reaped it, it ended, the instance itself restarted
+ * since — or the instance that answered never had it, which means the
+ * project's calls now go to another instance than before (its old one
+ * stopped answering and it was moved: packages/sandbox-client routing.ts).
  */
 export function lostKernelText(run: Pick<CellRun, 'previous' | 'workerUptimeMs'>): string {
   if (run.previous === 'idle') {
@@ -153,7 +153,7 @@ export function lostKernelText(run: Pick<CellRun, 'previous' | 'workerUptimeMs'>
   if (run.workerUptimeMs < 60 * 60_000) {
     return `The sandbox restarted ${ago(run.workerUptimeMs)} ago, which ended the kernel, and a new one was started. ${GONE}`;
   }
-  return `The kernel that ran the earlier cells is not on the sandbox worker that answered (up ${ago(run.workerUptimeMs)}), so a new one was started. ${GONE} If this happens on every run, the sandbox’s replicas are not passing kernel calls to each other: they need the shared data volume and to reach one another.`;
+  return `This project is now served by a different sandbox instance (up ${ago(run.workerUptimeMs)}) than the one that ran the earlier cells, so a new kernel was started. ${GONE}`;
 }
 
 /** The error a cell's outputs end in, as "NameError: name 'x' is not defined". */

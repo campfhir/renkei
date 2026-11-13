@@ -75,6 +75,7 @@ import { toolSurface } from './tool-surface';
 import { contentWatches } from './content-watches';
 import { sandboxFiles } from './sandbox-files';
 import { sandboxWorkspaces } from './sandbox-workspaces';
+import { sandboxInstances } from './sandbox-instances';
 import { sandboxSecrets } from './sandbox-secrets';
 import { sandboxServices } from './sandbox-services';
 import { codeServiceImageRules } from './code-service-image-rules';
@@ -160,6 +161,7 @@ export const DOMAINS = {
   contentWatches,
   sandboxFiles,
   sandboxWorkspaces,
+  sandboxInstances,
   sandboxSecrets,
   sandboxServices,
   codeServiceImageRules,

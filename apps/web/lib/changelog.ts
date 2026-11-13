@@ -52,7 +52,7 @@ export const CHANGELOG: ChangelogRelease[] = [
         kind: 'fixed',
         title: 'Notebook cells keep what earlier cells defined',
         detail:
-          "Running a notebook's cells one after another could fail with a name not defined, because each run could reach a different sandbox worker with its own kernel. Runs now always reach the notebook's own kernel. When a kernel really is gone (unused for half an hour, or the sandbox restarted), the notice says why and has one press that runs the cells above and then that cell.",
+          "Running a notebook's cells one after another could fail with a name not defined, because each run could reach a different sandbox instance with its own kernel. Everything a person or a code project does in the sandbox now goes to one instance, the same one every time, so kernels, previews and the editor's language help stay put. When a kernel really is gone (unused for half an hour, or the sandbox restarted), the notice says why and has one press that runs the cells above and then that cell.",
       },
       {
         kind: 'added',

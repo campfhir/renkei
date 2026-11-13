@@ -240,7 +240,7 @@ export async function previewRelay(
     return Response.json({ error: 'Not a preview path.', code: 'not-found' }, { status: 404 });
   }
   const rest = segments.map(encodeURIComponent).join('/') + request.nextUrl.search;
-  const target = sbPreviewProxyTarget(ref, rest);
+  const target = await sbPreviewProxyTarget(ref, rest);
   if (!target) {
     return Response.json(
       { error: 'The sandbox scratch space is not configured on this deployment.', code: 'sandbox' },
