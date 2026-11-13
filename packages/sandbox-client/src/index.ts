@@ -2801,6 +2801,8 @@ export interface WireKernel {
   engine: 'kernel' | 'builtin';
   /** The Python's version ("3.11.2"). */
   python: string;
+  /** The sandbox instance holding it, as that instance names itself; '' from a worker that does not say. */
+  instance: string;
 }
 
 export interface WireKernelRun {
@@ -2826,7 +2828,11 @@ export interface WireKernelRun {
 
 function kernelOf(value: unknown): WireKernel | null {
   if (!isRecord(value)) return null;
-  return { engine: value.engine === 'kernel' ? 'kernel' : 'builtin', python: str(value.python) };
+  return {
+    engine: value.engine === 'kernel' ? 'kernel' : 'builtin',
+    python: str(value.python),
+    instance: str(value.instance),
+  };
 }
 
 /**
@@ -2861,6 +2867,19 @@ export async function sbKernelExecute(
     value = await response.json();
   } catch {
     return unreachable('The sandbox service answered an unreadable response.');
+  }
+  // The worker begins its answer before the cell ends (to keep the call
+  // alive), so a refusal arrives as a body, not a status.
+  if (isRecord(value) && isRecord(value.error)) {
+    return {
+      ok: false,
+      err: {
+        kind: 'op',
+        type: str(value.error.type) || 'internal',
+        message: optStr(value.error.message),
+        status: typeof value.error.status === 'number' ? value.error.status : 500,
+      },
+    };
   }
   const kernel = isRecord(value) ? kernelOf(value.kernel) : null;
   if (!isRecord(value) || !kernel || !Array.isArray(value.outputs)) return malformed();

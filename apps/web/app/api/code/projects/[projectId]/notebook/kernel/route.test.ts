@@ -27,7 +27,7 @@ const { recordAuditEvent } = jest.requireMock<{ recordAuditEvent: jest.Mock }>(
 const PROJECT = 'project-1';
 const params = { params: Promise.resolve({ projectId: PROJECT, chatId: 'chat-1' }) };
 const URL_BASE = `http://test.local/api/code/projects/${PROJECT}/chats/chat-1/notebook/kernel`;
-const KERNEL = { engine: 'builtin', python: '3.11.2' };
+const KERNEL = { engine: 'builtin', python: '3.11.2', instance: 'sandbox-1' };
 
 function cloned(workspaceId: string | null = 'ws-1') {
   access.codeProjectContext.mockResolvedValue({
@@ -114,7 +114,7 @@ describe('running a cell', () => {
     );
   });
 
-  it('a kernel that died under the cell is 410 with the worker’s own sentence', async () => {
+  it('a kernel that died under the cell is told as 410 with the worker’s own sentence', async () => {
     sandbox.sbKernelExecute.mockResolvedValue({
       ok: false,
       err: {
@@ -125,8 +125,47 @@ describe('running a cell', () => {
       },
     });
     const response = await post({ path: NOTEBOOK, action: 'execute', code: 'x' });
-    expect(response.status).toBe(410);
-    expect((await response.json()).error).toBe('The notebook kernel ended while the cell ran.');
+    // The answer had begun before the cell ended: the status rides in the body.
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      error: 'The notebook kernel ended while the cell ran.',
+      code: 'kernel',
+      status: 410,
+    });
+  });
+
+  it('the answer begins at once and is kept alive with spaces while the cell runs', async () => {
+    jest.useFakeTimers();
+    try {
+      let finish: (value: unknown) => void = () => {};
+      sandbox.sbKernelExecute.mockReturnValue(
+        new Promise((resolve) => {
+          finish = resolve;
+        })
+      );
+      const response = await post({ path: NOTEBOOK, action: 'execute', code: 'slow()' });
+      // Answered before the cell has finished.
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toBe('application/json');
+      const reader = response.body!.getReader();
+      await jest.advanceTimersByTimeAsync(31_000);
+      finish({
+        ok: true,
+        val: { kernel: KERNEL, started: false, outputs: [], executionCount: 1, succeeded: true },
+      });
+      await jest.advanceTimersByTimeAsync(0);
+      let text = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        text += Buffer.from(value).toString('utf8');
+      }
+      // Two spaces, fifteen seconds apart, then the run: still one JSON value.
+      expect(text.startsWith('  {')).toBe(true);
+      expect(JSON.parse(text).run.executionCount).toBe(1);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it.each([

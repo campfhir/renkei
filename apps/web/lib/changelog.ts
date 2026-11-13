@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'fixed',
+        title: 'Long notebook cells finish instead of losing the sandbox',
+        detail:
+          'A notebook cell that ran for several minutes could end with "Could not reach the sandbox service" while it was still running, and the next run could land on a different sandbox instance and start over. Long cells now run to their ten-minute limit, a notebook stays on its own sandbox instance while that instance is briefly unavailable, and when a kernel is lost the notice says whether the instance restarted or a different one answered.',
+      },
+      {
+        kind: 'fixed',
         title: 'Notebook cells keep what earlier cells defined',
         detail:
           "Running a notebook's cells one after another could fail with a name not defined, because each run could reach a different sandbox instance with its own kernel. Everything a person or a code project does in the sandbox now goes to one instance, the same one every time, so kernels, previews and the editor's language help stay put. When a kernel really is gone (unused for half an hour, or the sandbox restarted), the notice says why and has one press that runs the cells above and then that cell.",

@@ -33,7 +33,7 @@ const then = (state: NotebookViewState, ...actions: NotebookViewAction[]) =>
   actions.reduce(notebookViewReducer, state);
 
 const mine: NotebookContext = { canEdit: true, fromCheckout: true, editable: true, valid: true };
-const KERNEL: KernelInfo = { engine: 'builtin', python: '3.11.2' };
+const KERNEL: KernelInfo = { engine: 'builtin', python: '3.11.2', instance: 'sandbox-1' };
 
 function ok(more: Partial<CellRun> = {}): CellRun {
   return {
@@ -67,7 +67,10 @@ describe('opening a notebook', () => {
   });
 
   it('a kernel left running from before is named', () => {
-    const state = after({ type: 'kernelKnown', kernel: { engine: 'kernel', python: '3.12.1' } });
+    const state = after({
+      type: 'kernelKnown',
+      kernel: { engine: 'kernel', python: '3.12.1', instance: 'sandbox-1' },
+    });
     expect(kernelLabel(state)).toBe('Python 3.12.1 · Jupyter kernel · idle');
   });
 
@@ -322,6 +325,36 @@ describe('a kernel that was lost', () => {
     // No memory of it, and up for days: it was never on this worker.
     expect(lostKernelText({ previous: null, workerUptimeMs: 72 * hour })).toBe(
       'This project is now served by a different sandbox instance (up 3 days) than the one that ran the earlier cells, so a new kernel was started. What earlier cells defined is gone.'
+    );
+  });
+
+  it('names the instances when the kernel that answered is on another than before', () => {
+    const state = after(
+      { type: 'kernelKnown', kernel: KERNEL },
+      { type: 'runAsked', cells: [4] },
+      // A young worker with no memory of the kernel would read as "restarted";
+      // the instance's own name says it was not the same one at all.
+      finished(4, {
+        started: true,
+        workerUptimeMs: 60_000,
+        kernel: { ...KERNEL, instance: 'sandbox-4' },
+      })
+    );
+    expect(state.notice?.text).toBe(
+      'This notebook’s cells are now answered by a different sandbox instance (sandbox-4; the earlier cells ran on sandbox-1), so a new kernel was started. What earlier cells defined is gone.'
+    );
+    // And the page now knows the kernel as the new instance's.
+    expect(state.kernel?.instance).toBe('sandbox-4');
+  });
+
+  it('the same instance answering with a young worker did restart', () => {
+    const state = after(
+      { type: 'kernelKnown', kernel: KERNEL },
+      { type: 'runAsked', cells: [4] },
+      finished(4, { started: true, workerUptimeMs: 60_000 })
+    );
+    expect(state.notice?.text).toBe(
+      'The sandbox restarted 1 minute ago, which ended the kernel, and a new one was started. What earlier cells defined is gone.'
     );
   });
 
@@ -625,7 +658,7 @@ describe('reading the kernel’s answers', () => {
     expect(
       readRunAnswer(200, {
         run: {
-          kernel: { engine: 'kernel', python: '3.12.1' },
+          kernel: { engine: 'kernel', python: '3.12.1', instance: 'sandbox-3' },
           started: true,
           previous: 'idle',
           workerUptimeMs: 7_200_000,
@@ -638,7 +671,7 @@ describe('reading the kernel’s answers', () => {
     ).toEqual({
       ok: true,
       run: {
-        kernel: { engine: 'kernel', python: '3.12.1' },
+        kernel: { engine: 'kernel', python: '3.12.1', instance: 'sandbox-3' },
         started: true,
         previous: 'idle',
         workerUptimeMs: 7_200_000,
@@ -659,6 +692,14 @@ describe('reading the kernel’s answers', () => {
     expect(readRunAnswer(410, { error: 'The notebook kernel ended.' })).toMatchObject({
       kernelGone: true,
     });
+    // A run's answer has begun before the cell ends, so its refusal is a 200
+    // with the status it would have had in the body.
+    expect(
+      readRunAnswer(200, { error: 'The notebook kernel ended.', code: 'kernel', status: 410 })
+    ).toEqual({ ok: false, error: 'The notebook kernel ended.', kernelGone: true });
+    expect(
+      readRunAnswer(200, { error: 'Could not reach the sandbox service.', status: 502 })
+    ).toEqual({ ok: false, error: 'Could not reach the sandbox service.', kernelGone: false });
   });
 
   it('an answer with nothing to read still says something', () => {
@@ -671,7 +712,14 @@ describe('reading the kernel’s answers', () => {
   });
 
   it('whether there is a kernel', () => {
-    expect(readKernelAnswer({ kernel: { engine: 'builtin', python: '3.11.2' } })).toEqual(KERNEL);
+    expect(
+      readKernelAnswer({ kernel: { engine: 'builtin', python: '3.11.2', instance: 'sandbox-1' } })
+    ).toEqual(KERNEL);
+    // A worker that does not name itself leaves the instance blank.
+    expect(readKernelAnswer({ kernel: { engine: 'builtin', python: '3.11.2' } })).toEqual({
+      ...KERNEL,
+      instance: '',
+    });
     expect(readKernelAnswer({ kernel: null })).toBeNull();
     expect(readKernelAnswer(null)).toBeNull();
   });

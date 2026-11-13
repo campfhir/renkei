@@ -1049,6 +1049,10 @@ describe('notebook kernels over the wire', () => {
       code: 'x = 1',
     });
     expect(first.status).toBe(200);
+    // The answer names the instance that holds the kernel, so the page can
+    // tell a kernel lost where it was from one started somewhere else.
+    expect(typeof first.json.kernel.instance).toBe('string');
+    expect(first.json.kernel.instance.length).toBeGreaterThan(0);
     expect(first.json).toMatchObject({
       kernel: { engine: 'builtin', python: '3.11.2' },
       started: true,
@@ -1093,5 +1097,69 @@ describe('notebook kernels over the wire', () => {
     });
     expect(notMine.status).toBe(404);
     expect(kernels.count()).toBe(0);
+  });
+});
+
+describe('a notebook kernel that cannot be started', () => {
+  const { spawn: spawnChild } =
+    jest.requireActual<typeof import('node:child_process')>('node:child_process');
+  const { KernelSessions } =
+    jest.requireActual<typeof import('./kernel-sessions')>('./kernel-sessions');
+  let server: Server;
+  let base: string;
+  let kernels: InstanceType<typeof KernelSessions>;
+
+  beforeAll(async () => {
+    kernels = new KernelSessions({
+      spawnKernel: () =>
+        spawnChild(
+          process.execPath,
+          ['-e', `console.log('{"ready": false, "error": "no-python"}')`],
+          {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            detached: true,
+          }
+        ),
+    });
+    server = createSandboxServer({
+      apiKeys: [API_KEY],
+      workspaces: true,
+      kernels,
+      orgFeatures: async () => ALL_ORG_FEATURES,
+    });
+    base = await listen(server);
+  });
+
+  afterAll(async () => {
+    kernels.closeAll();
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  it('says so in the body: the answer had already begun, to keep a long cell’s call alive', async () => {
+    envStore.listSealedEnv.mockResolvedValue([]);
+    const refused = await post(base, 'workspaces/kernel/execute', {
+      ...TARGET,
+      id: 'ws-1',
+      path: 'notebooks/revenue.ipynb',
+      code: '1',
+    });
+    expect(refused.status).toBe(200);
+    expect(refused.json).toEqual({
+      error: {
+        type: 'no_python',
+        status: 422,
+        message: 'There is no Python in the sandbox to run the notebook with.',
+      },
+    });
+  });
+
+  it('what is wrong with the request itself is still refused outright', async () => {
+    const refused = await post(base, 'workspaces/kernel/execute', {
+      ...TARGET,
+      id: 'ws-1',
+      path: 'run.py',
+      code: '1',
+    });
+    expect(refused.status).toBe(400);
   });
 });
