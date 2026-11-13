@@ -1891,6 +1891,15 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     // A call for a kernel that is not here goes to the replica that
     // claimed it; a first cell claims it for this one before starting.
     const key = kernelKey(named);
+    if (routing && kernels.has(named) && !request.relayed) {
+      // A kernel here that the claim says is another replica's: that one
+      // was started while this replica could not be reached, and has run
+      // the notebook's cells since. Two kernels answering by turns is
+      // worse than one lost, so this one goes and the call follows the claim.
+      const holder = await routing.holder(key);
+      if (holder && !routing.isSelf(holder)) kernels.close(named);
+      else if (!holder) await routing.take(key);
+    }
     if (routing && !kernels.has(named)) {
       if (request.relayed) {
         // Sent here by a replica that believes the kernel is ours: it is

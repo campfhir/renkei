@@ -1261,6 +1261,20 @@ describe('notebook kernels across replicas', () => {
     expect([a.kernels.count(), b.kernels.count()]).toEqual([0, 1]);
   });
 
+  it('a replica left holding a kernel another has since replaced gives it up, rather than answer by turns', async () => {
+    const a = await replica('a');
+    const b = await replica('b');
+    await cell(a, 'old');
+    // As if `a` had been unreachable for a moment: `b` took the kernel over.
+    await b.routing.take(kernelKey({ owner: TARGET, workspaceId: 'ws-1', path: NOTEBOOK.path }));
+    expect((await cell(b, 'new')).json).toMatchObject({ started: true, executionCount: 1 });
+    // A call that lands on `a` again goes to the kernel the others use, not `a`'s old one.
+    const back = await cell(a, 'again');
+    expect(back.json).toMatchObject({ started: false, executionCount: 2 });
+    expect(back.json.outputs[0].text).toBe('new,again');
+    expect([a.kernels.count(), b.kernels.count()]).toEqual([0, 1]);
+  });
+
   it('each notebook is routed on its own', async () => {
     const a = await replica('a');
     const b = await replica('b');
