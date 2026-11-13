@@ -21,7 +21,36 @@
 # and gets the unprivileged `worker` account the image always had; the
 # worker then serves workspace and script verbs unisolated by uid and says
 # so in its log.
+#
+# In a sandbox the orchestrator made for one scope (SANDBOX_ORCHESTRATED=1,
+# docs/sandbox-orchestrator-design.md) code project services — a Postgres
+# or a Redis beside a checkout — run INSIDE the sandbox, on a container
+# engine of its own: Podman, whose socket speaks the Docker API the worker
+# already uses (src/docker.ts). It is started here, as root, and the
+# worker is pointed at it; its socket is root's, so a caller's command
+# (dropped to its own uid) cannot open it, exactly as with the host's
+# socket before. Nothing outside the sandbox is involved: no host engine,
+# no socket proxy. If the engine does not come up (a local Docker
+# container without SANDBOX_DOCKER_NESTED_ENGINE on the orchestrator),
+# the worker starts all the same and reports services as a capability it
+# lacks.
 set -eu
+
+if [ "${SANDBOX_ORCHESTRATED:-}" = "1" ] && [ -z "${SANDBOX_DOCKER_HOST:-}" ] \
+  && command -v podman >/dev/null 2>&1; then
+  socket=/run/podman/podman.sock
+  mkdir -p /run/podman
+  rm -f "$socket"
+  podman system service --time=0 "unix://$socket" >/var/log/podman-service.log 2>&1 &
+  # Up to ten seconds for the socket: the worker asks the engine once, at boot.
+  waited=0
+  while [ ! -S "$socket" ] && [ "$waited" -lt 50 ]; do
+    sleep 0.2
+    waited=$((waited + 1))
+  done
+  chmod 600 "$socket" 2>/dev/null || true
+  export SANDBOX_DOCKER_HOST="unix://$socket"
+fi
 
 case "${SANDBOX_RUN_AS_WORKER:-}" in
   1|true|TRUE|True|yes|YES|on|ON) exec setpriv --reuid=worker --regid=nodejs --init-groups "$@" ;;

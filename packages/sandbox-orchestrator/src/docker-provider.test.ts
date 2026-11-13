@@ -80,6 +80,17 @@ describe('the Docker provider', () => {
     expect(JSON.stringify(calls[0]!.body)).not.toContain('docker.sock');
   });
 
+  it('runs a sandbox privileged only when told it must hold a container engine of its own', async () => {
+    const { transport, calls } = engine({
+      'POST /containers/create': () => ({ status: 201, body: { Id: 'c1' } }),
+      'POST /networks/': () => ({ status: 200 }),
+      'POST /containers/c1/start': () => ({ status: 204 }),
+    });
+    await new DockerSandboxProvider({ ...base, nestedEngine: true, transport }).create(spec);
+    expect(calls[0]!.body).toMatchObject({ HostConfig: { Privileged: true } });
+    expect(JSON.stringify(calls[0]!.body)).not.toContain('CapDrop');
+  });
+
   it('removes what it made when the container will not start', async () => {
     const { transport, calls } = engine({
       'POST /containers/create': () => ({ status: 201, body: { Id: 'c1' } }),

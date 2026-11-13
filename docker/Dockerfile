@@ -578,10 +578,21 @@ RUN apt-get update && \
       git ripgrep openssh-client \
       python3 python3-venv python3-pip \
       build-essential pkg-config \
-      jq curl unzip zip less procps && \
+      jq curl unzip zip less procps \
+      podman netavark aardvark-dns iptables && \
     rm -rf /var/lib/apt/lists/* && \
     npm install -g pnpm@${PNPM_VERSION} && \
-    setpriv --version >/dev/null
+    setpriv --version >/dev/null && podman --version >/dev/null
+
+# Podman: the container engine an ORCHESTRATED sandbox runs inside itself
+# for code project services (docker/sandbox-entrypoint.sh starts it;
+# docs/sandbox-orchestrator-design.md). No systemd in this image, so
+# cgroups are managed directly and events go to a file; netavark is the
+# network backend (the internal bridge a service sits on). Unused, and
+# never started, on a shared worker.
+RUN mkdir -p /etc/containers && \
+    printf '[engine]\ncgroup_manager = "cgroupfs"\nevents_logger = "file"\n\n[network]\nnetwork_backend = "netavark"\n' \
+      > /etc/containers/containers.conf
 
 # The interpreter behind sandbox_run_python (apps/worker-sandbox/src/
 # scripts.ts): a virtual environment of its own under /opt, apart from

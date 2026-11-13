@@ -68,6 +68,13 @@ export interface DockerProviderOptions {
   cpus: number;
   suspend: 'stop' | 'pause';
   /**
+   * Let a sandbox run a container engine inside itself, for code project
+   * services. An Azure sandbox is a microVM and simply can; a Docker
+   * container can only when it is PRIVILEGED, which gives up the
+   * capability limits above — a developer's machine, never a shared host.
+   */
+  nestedEngine?: boolean;
+  /**
    * Names this deployment among others sharing an engine, so one
    * orchestrator never lists (and never removes) another's sandboxes.
    */
@@ -153,9 +160,13 @@ export class DockerSandboxProvider implements SandboxProvider {
             ShmSize: options.shmBytes,
             PidsLimit: options.pidsLimit,
             ...(options.cpus > 0 ? { NanoCpus: Math.round(options.cpus * 1_000_000_000) } : {}),
-            SecurityOpt: ['no-new-privileges:true'],
-            CapDrop: ['ALL'],
-            CapAdd: CAPABILITIES,
+            ...(options.nestedEngine
+              ? { Privileged: true }
+              : {
+                  SecurityOpt: ['no-new-privileges:true'],
+                  CapDrop: ['ALL'],
+                  CapAdd: CAPABILITIES,
+                }),
             // The orchestrator decides when a sandbox runs; the engine never restarts one.
             RestartPolicy: { Name: 'no' },
             LogConfig: { Type: 'json-file', Config: { 'max-size': '10m', 'max-file': '2' } },

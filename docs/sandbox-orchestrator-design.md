@@ -162,8 +162,55 @@ Both intervals are configuration (`SANDBOX_IDLE_SUSPEND_MINUTES`,
   environment-secrets key. Never the organization's encryption keys
   (`scripts/check-compose-secrets.mjs` asserts this for the orchestrator
   as it does for the sandbox).
-- **No sandbox has a way to a container engine.** That is what retires the
-  Docker socket proxy: the socket is mounted in the orchestrator alone.
+- **No sandbox has a way to the host's container engine.** The socket is
+  mounted in the orchestrator alone, which is what retires the socket
+  proxy.
+
+## Services inside the sandbox
+
+A code project's services — a Postgres, a Redis beside the checkout —
+were containers the shared worker started on the host's engine. In an
+orchestrated sandbox they run **inside the sandbox itself**, on a
+container engine of its own: Podman, started by the image's entrypoint
+(`docker/sandbox-entrypoint.sh`) when the orchestrator made the machine.
+Podman's socket speaks the Docker API, so the worker's service code
+(`services.ts`, `docker.ts`), the organization's image allow-list and
+its registry credentials are unchanged; only the engine they talk to is
+now the sandbox's own. The socket is root's inside the sandbox, so a
+caller's command still cannot open it.
+
+- A service is reached from the project's commands at its address on an
+  internal network, as before; it shares the sandbox's memory and disk.
+- Services do not survive an eviction (their images and volumes are not
+  in the archive) or, on Docker's `stop` suspend, a suspension; the
+  worker notices and the project starts them again — as it already did
+  when a service's lifetime ran out.
+- On Azure a sandbox is a microVM and runs the engine as it is. A local
+  Docker container can only when privileged
+  (`SANDBOX_DOCKER_NESTED_ENGINE=1` on the orchestrator): for a
+  developer's machine, never a shared host. Without it the worker
+  reports services as a capability it lacks.
+
+## Who may call a sandbox (Azure)
+
+Microsoft Entra decides, enforced by the platform's ingress outside the
+sandbox (`SANDBOX_AZURE_PORT_AUTH=entra`, the default).
+
+- **The worker's port** takes a bearer token for the ingress
+  (`https://auth.adcproxy.io`) from the identities listed in
+  `SANDBOX_AZURE_ENTRA_ALLOWED` — the orchestrator's own. The
+  orchestrator gets that token as itself and answers it to callers with
+  the sandbox's address, so the web app and the queue worker need no
+  Azure identity. The ingress strips `authorization` before the request
+  reaches the sandbox, so the per-sandbox key — still checked, as a
+  second lock — rides `x-sandbox-key`.
+- **A preview port** can be opened to named people
+  (`POST /v1/expose { key, port, emails }`), who then sign in to it in
+  their own browsers as themselves.
+
+With `SANDBOX_AZURE_PORT_AUTH=anonymous` the worker's port is guarded by
+the per-sandbox key alone. On Docker there is no ingress: the key is the
+bearer, on a network only the callers share.
 
 ## Running it locally
 
@@ -199,29 +246,23 @@ variables is in `packages/sandbox-orchestrator/src/config.ts`.
    `AZURE_CLIENT_SECRET`).
 3. Connect the group to the VNet the database and the delegate are on,
    and name that connection in `SANDBOX_AZURE_VNET_CONNECTION`.
-4. Set `SANDBOX_PROVIDER=azure` and the `SANDBOX_AZURE_*` variables.
-
-Each sandbox's worker port is exposed through the platform's HTTPS
-ingress with anonymous access, authenticated by the sandbox's own bearer
-key; restrict who can reach it with `SANDBOX_AZURE_ALLOWED_CIDRS` or a
-private endpoint.
+4. Set `SANDBOX_PROVIDER=azure` and the `SANDBOX_AZURE_*` variables,
+   `SANDBOX_AZURE_ENTRA_ALLOWED` among them (the orchestrator's identity).
+5. In the portal, set the tenant id on the worker port's Entra policy if
+   the SDK has not: scripted (bearer) calls need it, and the preview SDK
+   sets allowed emails only.
 
 **The Azure provider has not been run against a live sandbox group.** It
 is written against the SDK's types and tested against a stand-in for the
 SDK; the service is in preview. Expect to adjust it on first contact —
 in particular the state words (`azureState`), whether a port's URL is
-present on a sandbox that has just resumed, and how environment
-variables reach a process started from the image's entrypoint.
+present on a sandbox that has just resumed, how environment variables
+reach a process started from the image's entrypoint, whether Entra's
+port policy admits a service identity (Microsoft's documentation
+describes users) and whether Podman starts as it is in the microVM.
 
 ## What is not done yet
 
-- **Code project services** (a Postgres or Redis beside a checkout).
-  These were containers the sandbox worker started through the Docker
-  socket. An orchestrated sandbox has no engine, so the worker reports
-  the capability missing and the tools do not register. The intended
-  shape: the orchestrator makes them, as sibling machines on the
-  project's own network. Until then, a deployment that needs services
-  stays on the shared worker.
 - **The sandbox worker is still a database client.** Every sandbox holds
   the sandbox role's URL. The blast radius is one scope's machine rather
   than everyone's, and the role is narrow, but the end state is a worker
@@ -243,9 +284,14 @@ variables reach a process started from the image's entrypoint.
   and nothing is capped; a project with a very large checkout takes that
   long to evict and to come back.
 - **The old path is still there.** Without `SANDBOX_ORCHESTRATOR_URL`
-  everything works as before (shared instances, `sandbox_instances`,
-  the worker's own Docker client). Removing it — and with it the socket
-  proxy — is the last step, once services have moved.
+  everything works as before (shared instances, `sandbox_instances`, the
+  host's engine behind a socket proxy for services). With services now
+  inside the sandbox nothing in the orchestrated path needs the proxy;
+  removing the old path, and the proxy with it, is the remaining step.
+- **Previews in the browser still go through the web app.** The
+  orchestrator can open a preview port straight to named people
+  (`/v1/expose`), but the Code section's preview links do not use it yet:
+  they are relayed through the worker's own proxy as before.
 - **Sandbox egress policy.** Azure's per-sandbox egress rules (and secret
   injection at the proxy) are not configured; a sandbox has the network
   its group and VNet give it.

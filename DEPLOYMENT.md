@@ -761,8 +761,10 @@ the machine) and unpacked into the scope's next sandbox. Set
 `SANDBOX_ORCHESTRATOR_URL` and `SANDBOX_ORCHESTRATOR_API_KEY` in `.env`
 and start with `--profile orchestrator --scale worker-sandbox=0`. The
 orchestrator is then the only container holding the engine's socket; no
-sandbox does, which is why code project services are not available in
-this mode yet. `docs/sandbox-orchestrator-design.md` has the variables,
+sandbox does. Code project services run inside each sandbox on an engine
+of its own (Podman) — on Azure as they are, on this host's Docker only
+with `SANDBOX_DOCKER_NESTED_ENGINE=1` (privileged sandboxes; a
+developer's machine). `docs/sandbox-orchestrator-design.md` has the variables,
 the Azure setup, and the list of what still runs the old way. Run
 `migrate` first (migrations 180 and 181).
 

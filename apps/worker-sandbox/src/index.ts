@@ -70,7 +70,10 @@
  *   SANDBOX_ORCHESTRATED — `1` when the sandbox orchestrator made this
  *     worker's machine for one scope (it sets this, with a bearer key of
  *     the sandbox's own): the worker does not register as a shared
- *     instance and offers no code project services.
+ *     instance, and its code project services run on a container engine
+ *     INSIDE the sandbox (Podman's Docker-compatible socket, started by
+ *     the image's entrypoint, which points SANDBOX_DOCKER_HOST at it) —
+ *     never the host's.
  *   SANDBOX_RUN_AS_WORKER — read by the image's entrypoint, not here:
  *     `true` starts this process as the unprivileged `worker` account
  *     (no uid isolation for anyone's commands) for a deployment where no
@@ -281,16 +284,6 @@ async function main(): Promise<void> {
   let services: ServiceManager | null = null;
   if (!commandsPossible) {
     problems.services = 'commands cannot be run for a caller here (see workspaces)';
-  } else if (orchestrated) {
-    // One scope's own sandbox holds no way to a container engine, on
-    // purpose (docs/sandbox-orchestrator-design.md): services beside a
-    // checkout become the orchestrator's to make, and are not yet.
-    problems.services =
-      'this sandbox is one scope’s own, made by the orchestrator, and holds no container engine; code project services are not available on orchestrated sandboxes yet';
-    logger.info('services are unavailable on this deployment: {problem}', {
-      component: 'worker-sandbox/services',
-      problem: problems.services,
-    });
   } else {
     let engine: DockerClient;
     try {
@@ -327,8 +320,13 @@ async function main(): Promise<void> {
       services = manager;
     } catch (error) {
       problems.services =
-        `the Docker engine could not be prepared: ${error instanceof Error ? error.message : String(error)}. ` +
-        'Mount the engine socket into this container through a socket proxy (docker-compose.yaml, worker-sandbox) or point SANDBOX_DOCKER_HOST at one.';
+        `the container engine could not be prepared: ${error instanceof Error ? error.message : String(error)}. ` +
+        (orchestrated
+          ? // One scope's own sandbox runs its services INSIDE itself: an
+            // engine of its own (Podman, started by the image's entrypoint),
+            // never the host's.
+            'This sandbox runs services on an engine of its own (Podman, started by the image’s entrypoint); on a microVM it starts as it is, in a local Docker container it needs SANDBOX_DOCKER_NESTED_ENGINE=1 on the orchestrator.'
+          : 'Mount the engine socket into this container through a socket proxy (docker-compose.yaml, worker-sandbox) or point SANDBOX_DOCKER_HOST at one.');
       logger.info('services are unavailable on this deployment: {problem}', {
         component: 'worker-sandbox/services',
         problem: problems.services,

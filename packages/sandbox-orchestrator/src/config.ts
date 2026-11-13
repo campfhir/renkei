@@ -25,6 +25,9 @@
  *                                 orchestrator and web app run on the host).
  *   SANDBOX_DOCKER_SUSPEND        `stop` (the default) or `pause`.
  *   SANDBOX_DOCKER_COMMAND        the container's command, as a JSON array.
+ *   SANDBOX_DOCKER_NESTED_ENGINE  `1` to run sandboxes privileged, so each can
+ *                                 run its own container engine for code project
+ *                                 services. A developer's machine only.
  *   SANDBOX_MEMORY_MB / SANDBOX_SHM_MB / SANDBOX_PIDS_LIMIT / SANDBOX_CPUS
  *                                 per-sandbox ceilings: 4096, 1024, 4096,
  *                                 and no CPU ceiling.
@@ -146,6 +149,7 @@ export async function providerFromEnv(env: Env): Promise<SandboxProvider> {
       pidsLimit: positive(env, 'SANDBOX_PIDS_LIMIT', 4096),
       cpus: text(env, 'SANDBOX_CPUS') ? positive(env, 'SANDBOX_CPUS', 1) : 0,
       suspend,
+      nestedEngine: text(env, 'SANDBOX_DOCKER_NESTED_ENGINE') === '1',
       deployment,
       host: text(env, 'SANDBOX_DOCKER_HOST') || undefined,
     });

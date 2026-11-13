@@ -679,9 +679,11 @@ services:
   # then `docker compose --profile orchestrator up -d --scale worker-sandbox=0`.
   #
   # This is the ONE container given the engine: it is trusted with it
-  # because it runs nobody's code. No sandbox gets the socket, so code
-  # project services (containers beside a checkout) are not available on
-  # orchestrated sandboxes yet. What it hands each sandbox is exactly what
+  # because it runs nobody's code. No sandbox gets the socket. Code
+  # project services (containers beside a checkout) run INSIDE each
+  # sandbox, on an engine of its own (Podman): as they are on an Azure
+  # microVM; on this host's Docker only with SANDBOX_DOCKER_NESTED_ENGINE=1,
+  # which runs sandboxes privileged and is for a developer's machine. What it hands each sandbox is exactly what
   # worker-sandbox is handed above (the SANDBOX_TEMPLATE_ENV_* variables),
   # except the bearer key: each sandbox gets one of its own, derived from
   # SANDBOX_WORKER_API_KEY, which no sandbox ever holds.
@@ -706,6 +708,7 @@ services:
       SANDBOX_DOCKER_NETWORKS: renkei-sandbox,renkei-sandbox-db
       SANDBOX_DOCKER_COMMAND: '["node","node_modules/tsx/dist/cli.mjs","src/index.ts"]'
       SANDBOX_DOCKER_SUSPEND:
+      SANDBOX_DOCKER_NESTED_ENGINE:
       SANDBOX_MEMORY_MB:
       SANDBOX_CPUS:
       # Azure Container Apps sandboxes.
