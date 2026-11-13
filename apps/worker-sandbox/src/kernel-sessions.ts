@@ -244,8 +244,13 @@ export class KernelSessions {
     child.stdin?.on('error', () => {
       // The process went away mid-write; its exit says the rest.
     });
+    // A pipe that errors with nobody listening is an uncaught exception,
+    // and an uncaught exception ends this worker and every kernel in it.
+    child.stdout?.on('error', () => undefined);
+    child.stderr?.on('error', () => undefined);
     if (child.stdout) {
       const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+      lines.on('error', () => undefined);
       lines.on('line', (line) => {
         let message: unknown;
         try {

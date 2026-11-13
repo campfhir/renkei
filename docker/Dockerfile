@@ -189,7 +189,7 @@ ENV NODE_ENV=production \
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
-  CMD node -e "require('http').get('http://127.0.0.1:3000/api/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
+  CMD node -e "fetch('http://127.0.0.1:3000/api/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 # Use dumb-init to handle signals properly
 ENTRYPOINT ["dumb-init", "--"]
@@ -302,7 +302,7 @@ EXPOSE 8090
 # The service's own unauthenticated liveness endpoint (everything else on
 # the port requires the bearer key).
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
-  CMD node -e "require('http').get('http://127.0.0.1:' + (process.env.FILESHARES_WORKER_PORT || 8090) + '/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.FILESHARES_WORKER_PORT || 8090) + '/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 ENTRYPOINT ["dumb-init", "--"]
 WORKDIR /app/apps/worker-fileshares
@@ -350,7 +350,7 @@ EXPOSE 8091
 # The service's own unauthenticated liveness endpoint (everything else on
 # the port requires the bearer key).
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
-  CMD node -e "require('http').get('http://127.0.0.1:' + (process.env.ONBASE_WORKER_PORT || 8091) + '/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.ONBASE_WORKER_PORT || 8091) + '/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 ENTRYPOINT ["dumb-init", "--"]
 WORKDIR /app/apps/worker-onbase
@@ -399,7 +399,7 @@ EXPOSE 8093
 # The service's own unauthenticated liveness endpoint (everything else on
 # the port requires the bearer key).
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
-  CMD node -e "require('http').get('http://127.0.0.1:' + (process.env.MIRTH_WORKER_PORT || 8093) + '/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.MIRTH_WORKER_PORT || 8093) + '/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 ENTRYPOINT ["dumb-init", "--"]
 WORKDIR /app/apps/worker-mirth
@@ -443,7 +443,7 @@ ENV NODE_ENV=production \
 EXPOSE 8096
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
-  CMD node -e "require('http').get('http://127.0.0.1:' + (process.env.DELEGATE_WORKER_PORT || 8096) + '/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.DELEGATE_WORKER_PORT || 8096) + '/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 ENTRYPOINT ["dumb-init", "--"]
 WORKDIR /app/apps/worker-delegate
@@ -492,7 +492,7 @@ EXPOSE 8095
 # The service's own unauthenticated liveness endpoint (everything else on
 # the port requires the bearer key).
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
-  CMD node -e "require('http').get('http://127.0.0.1:' + (process.env.ADMANAGER_WORKER_PORT || 8095) + '/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.ADMANAGER_WORKER_PORT || 8095) + '/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 ENTRYPOINT ["dumb-init", "--"]
 WORKDIR /app/apps/worker-admanager
@@ -817,9 +817,13 @@ ENV NODE_ENV=production \
 EXPOSE 8092
 
 # The service's own unauthenticated liveness endpoint (everything else on
-# the port requires the bearer key).
+# the port requires the bearer key). The check exits as soon as it has its
+# answer: one that merely returns keeps the process alive until the
+# server closes the idle keep-alive connection, five seconds on, which is
+# past the check's own timeout — every container then reads "unhealthy"
+# however well it is.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
-  CMD node -e "require('http').get('http://127.0.0.1:' + (process.env.SANDBOX_WORKER_PORT || 8092) + '/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.SANDBOX_WORKER_PORT || 8092) + '/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 ENTRYPOINT ["dumb-init", "--", "sandbox-entrypoint"]
 # From the app's own directory, as pnpm would have run it: charts.ts finds

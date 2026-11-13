@@ -1531,6 +1531,50 @@ describe('previews', () => {
       expect(again?.url.slice(0, A.length)).toBe(first?.url.slice(0, A.length));
     });
 
+    it('a call that names a route goes by that assignment, not its subject’s, and the worker is never told the route', async () => {
+      const calls: { url: string; body: string }[] = [];
+      global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith('/health')) return new Response('{"ok":true}', { status: 200 });
+        calls.push({ url, body: String(init?.body ?? '') });
+        return new Response(JSON.stringify({ files: [] }), { status: 200 });
+      }) as unknown as typeof fetch;
+      const store = getMemoryDataStore();
+      if (!store) throw new Error('the memory store is not registered');
+      // The owner is served by one instance, their agent by the other.
+      const now = new Date();
+      await store.sandboxInstances.assign({
+        subject: 'ann',
+        instanceId: 'sandbox-a',
+        replacing: null,
+        at: now,
+      });
+      await store.sandboxInstances.assign({
+        subject: 'agent:agent-7',
+        instanceId: 'sandbox-b',
+        replacing: null,
+        at: now,
+      });
+      await sbListFiles({ subject: 'ann' });
+      await sbListFiles({ subject: 'ann', route: 'agent:agent-7' });
+      expect(calls.map((call) => call.url)).toEqual([`${A}/v1/list`, `${B}/v1/list`]);
+      // Whose call it is does not change: the owner's, both times.
+      expect(JSON.parse(calls[1]?.body ?? '{}')).toEqual({ subject: 'ann' });
+      expect(calls[1]?.body).not.toContain('route');
+      // The agent has an assignment of its own; the owner's is untouched.
+      expect((await store.sandboxInstances.assignment('ann'))?.instanceId).toBe('sandbox-a');
+    });
+
+    it('an agent with no assignment yet is given one of its own on its first call', async () => {
+      global.fetch = jest.fn(
+        async () => new Response(JSON.stringify({ ok: true, files: [] }), { status: 200 })
+      ) as unknown as typeof fetch;
+      const store = getMemoryDataStore();
+      if (!store) throw new Error('the memory store is not registered');
+      await sbListFiles({ subject: 'ann', route: 'agent:agent-9' });
+      expect(await store.sandboxInstances.assignment('agent:agent-9')).not.toBeNull();
+      expect(await store.sandboxInstances.assignment('ann')).toBeNull();
+    });
+
     it('a share link, which names no caller, goes to the instance that says the token is its own', async () => {
       const asked: string[] = [];
       global.fetch = jest.fn(async (url: string) => {
@@ -1572,7 +1616,7 @@ describe('notebook kernels', () => {
       async () =>
         new Response(
           JSON.stringify({
-            kernel: { engine: 'kernel', python: '3.12.1' },
+            kernel: { engine: 'kernel', python: '3.12.1', instance: 'sandbox-2' },
             started: true,
             previous: 'idle',
             workerUptimeMs: 90_000,
@@ -1589,7 +1633,7 @@ describe('notebook kernels', () => {
     ).toEqual({
       ok: true,
       val: {
-        kernel: { engine: 'kernel', python: '3.12.1' },
+        kernel: { engine: 'kernel', python: '3.12.1', instance: 'sandbox-2' },
         started: true,
         previous: 'idle',
         workerUptimeMs: 90_000,
@@ -1623,6 +1667,45 @@ describe('notebook kernels', () => {
     });
   });
 
+  it('a refusal that arrives as a body — the answer had begun before the cell ended — is still a refusal, with its status', async () => {
+    global.fetch = jest.fn(
+      async () =>
+        // Kept alive with spaces while the cell ran, then what happened.
+        new Response(
+          '   ' +
+            JSON.stringify({
+              error: { type: 'kernel_died', status: 410, message: 'The notebook kernel ended.' },
+            }),
+          { status: 200 }
+        )
+    ) as unknown as typeof fetch;
+    expect(await sbKernelExecute(TARGET, { ...NOTEBOOK, code: 'x' })).toEqual({
+      ok: false,
+      err: { kind: 'op', type: 'kernel_died', message: 'The notebook kernel ended.', status: 410 },
+    });
+  });
+
+  it('a run kept alive with spaces before its answer reads as the run', async () => {
+    global.fetch = jest.fn(
+      async () =>
+        new Response(
+          '      ' +
+            JSON.stringify({
+              kernel: { engine: 'builtin', python: '3.11.2', instance: 'sandbox-1' },
+              started: false,
+              outputs: [],
+              executionCount: 2,
+              succeeded: true,
+            }),
+          { status: 200 }
+        )
+    ) as unknown as typeof fetch;
+    expect(await sbKernelExecute(TARGET, { ...NOTEBOOK, code: 'x' })).toMatchObject({
+      ok: true,
+      val: { executionCount: 2, kernel: { instance: 'sandbox-1' } },
+    });
+  });
+
   it('an answer without a kernel or outputs is not taken for a run', async () => {
     global.fetch = jest.fn(
       async () => new Response(JSON.stringify({ outputs: 'x' }), { status: 200 })
@@ -1640,7 +1723,8 @@ describe('notebook kernels', () => {
     ) as unknown as typeof fetch;
     expect(await sbKernelStatus(TARGET, NOTEBOOK)).toEqual({
       ok: true,
-      val: { engine: 'builtin', python: '3.11.2' },
+      // A worker that does not name itself leaves the instance blank.
+      val: { engine: 'builtin', python: '3.11.2', instance: '' },
     });
     global.fetch = jest.fn(
       async () => new Response(JSON.stringify({ running: false, kernel: null }), { status: 200 })

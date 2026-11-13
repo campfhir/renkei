@@ -16,7 +16,9 @@
  *    run with `succeeded: false`, not an error. `started` says the
  *    kernel is new, so nothing earlier cells defined is there. Nothing
  *    is written to the checkout: the outputs are the pane's unsaved
- *    edits until the person saves.
+ *    edits until the person saves. The answer is always a 200 begun at
+ *    once and kept alive with spaces while the cell runs; a run the
+ *    sandbox refused is `{error, code, status}` in that body.
  *  - `interrupt`: stop the running cell; the kernel and its state stay.
  *  - `restart`: end the kernel; the next `execute` starts a fresh one.
  *
@@ -29,6 +31,7 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { validateWorkspacePath, WRITE_MAX_CHARS } from '@renkei/connector-sandbox';
+import { isRecord } from '@renkei/guards';
 import {
   clientFailure,
   sbKernelClose,
@@ -116,14 +119,22 @@ export async function POST(request: NextRequest, { params }: Params): Promise<Re
         return jsonError(400, 'invalid', 'There is no code in the cell to run.');
       if (body.code.length > WRITE_MAX_CHARS)
         return jsonError(413, 'too-large', 'The cell is too long to run.');
-      const ran = await sbKernelExecute(target, {
-        ...named,
-        code: body.code,
-        timeoutMs: CELL_TIMEOUT_MS,
+      const code = body.code;
+      // A cell may run for minutes. The answer begins at once and is kept
+      // alive with a space every few seconds (whitespace before a JSON
+      // value is still that value), so no proxy or client between here and
+      // the page gives up on it; a refusal therefore rides in the body,
+      // with the status it would have had.
+      return keptAlive(async () => {
+        const ran = await sbKernelExecute(target, { ...named, code, timeoutMs: CELL_TIMEOUT_MS });
+        if (!ran.ok) {
+          const response = refused('run a cell of', ran.err);
+          const said: unknown = await response.json();
+          return { ...(isRecord(said) ? said : {}), status: response.status };
+        }
+        if (ran.val.started) started(session, project.name, projectId, path.path, ran.val.kernel);
+        return { run: ran.val };
       });
-      if (!ran.ok) return refused('run a cell of', ran.err);
-      if (ran.val.started) started(session, project.name, projectId, path.path, ran.val.kernel);
-      return NextResponse.json({ run: ran.val });
     }
     case 'interrupt': {
       const interrupted = await sbKernelInterrupt(target, named);
@@ -138,6 +149,48 @@ export async function POST(request: NextRequest, { params }: Params): Promise<Re
     default:
       return jsonError(400, 'invalid', 'Unknown action.');
   }
+}
+
+const KEEPALIVE_MS = 15_000;
+
+/** A 200 whose JSON body is whatever `work` answers, with spaces sent ahead of it while it is awaited. */
+function keptAlive(work: () => Promise<unknown>): Response {
+  const encoder = new TextEncoder();
+  let alive: ReturnType<typeof setInterval> | null = null;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      alive = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(' '));
+        } catch {
+          // The page went away; the cell runs on in its kernel.
+        }
+      }, KEEPALIVE_MS);
+      void work()
+        .catch(() => ({ error: 'The cell could not be run.', code: 'kernel', status: 500 }))
+        .then((value) => {
+          if (alive) clearInterval(alive);
+          try {
+            controller.enqueue(encoder.encode(JSON.stringify(value)));
+            controller.close();
+          } catch {
+            // Nobody is reading any more.
+          }
+        });
+    },
+    cancel() {
+      if (alive) clearInterval(alive);
+    },
+  });
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      'content-type': 'application/json',
+      'cache-control': 'no-store',
+      // Ask a buffering proxy to pass the keep-alive through as it comes.
+      'x-accel-buffering': 'no',
+    },
+  });
 }
 
 function started(

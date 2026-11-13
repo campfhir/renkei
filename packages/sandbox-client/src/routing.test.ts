@@ -199,6 +199,51 @@ describe('an instance on more networks than this process', () => {
     expect(await urlFor('bob', T0)).toBe(B);
   });
 
+  it('a caller whose instance stops answering for a moment is not sent to another: their calls fail there until it is back or taken for gone', async () => {
+    await up('sandbox-a', A, T0);
+    await up('sandbox-b', B, T0);
+    await store.sandboxInstances.assign({
+      subject: 'ann',
+      instanceId: 'sandbox-a',
+      replacing: null,
+      at: new Date(T0),
+    });
+    // It is restarting: up by its own last word, not answering.
+    unreachable = [A];
+    expect(await urlFor('ann', T0 + 5_000)).toBe(A);
+    expect((await store.sandboxInstances.assignment('ann'))?.instanceId).toBe('sandbox-a');
+    // Back a few seconds later: the same instance, found again at once.
+    unreachable = [];
+    resetSandboxRoutingForTests();
+    expect(await urlFor('ann', T0 + 12_000)).toBe(A);
+  });
+
+  it('the only instance there is gets its callers’ calls whether or not it answers the probe', async () => {
+    await up('sandbox-a', A, T0);
+    await store.sandboxInstances.assign({
+      subject: 'ann',
+      instanceId: 'sandbox-a',
+      replacing: null,
+      at: new Date(T0),
+    });
+    unreachable = [A];
+    expect(await urlFor('ann', T0)).toBe(A);
+  });
+
+  it('once it has been quiet too long the caller is moved, as ever', async () => {
+    await up('sandbox-a', A, T0);
+    await store.sandboxInstances.assign({
+      subject: 'ann',
+      instanceId: 'sandbox-a',
+      replacing: null,
+      at: new Date(T0),
+    });
+    unreachable = [A];
+    const later = T0 + SANDBOX_INSTANCE_LIVE_MS + 5_000;
+    await up('sandbox-b', B, later);
+    expect(await urlFor('ann', later)).toBe(B);
+  });
+
   it('with no instance reachable from here, calls go to the shared address as they did before', async () => {
     unreachable = [A, B];
     await up('sandbox-a', A, T0);

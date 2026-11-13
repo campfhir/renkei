@@ -67,7 +67,7 @@ export function forgetSandboxEndpoint(subject: string | null | undefined): void 
 
 /** How long an instance's reachable address is remembered, and how long "none answered" is. */
 const REACHABLE_MS = 5 * 60_000;
-const UNREACHABLE_MS = 30_000;
+const UNREACHABLE_MS = 5_000;
 const PROBE_TIMEOUT_MS = 2_000;
 const reachable = new Map<string, { url: string | null; until: number }>();
 
@@ -107,12 +107,31 @@ async function reachableUrl(
   return url;
 }
 
+/** The first address an instance lists, for a call that must go to it whether or not it answers. */
+function firstAddress(address: string): string {
+  return (address.split(',')[0] ?? address).trim().replace(/\/+$/, '');
+}
+
 async function assignedAddress(subject: string, now: number): Promise<string | null> {
   const store = getDataStore().sandboxInstances;
   const liveSince = new Date(now - SANDBOX_INSTANCE_LIVE_MS);
   const current = await store.assignment(subject);
   if (current?.instance && current.instance.lastSeenAt.getTime() >= liveSince.getTime()) {
-    return reachableUrl(current.instance, now);
+    const url = await reachableUrl(current.instance, now);
+    if (url) return url;
+    // Their instance says it is up but does not answer from here. If this
+    // process reaches other instances, it is theirs that is in trouble (it
+    // is restarting, say): the call goes to it all the same and fails,
+    // rather than to another instance that holds nothing of theirs and
+    // would quietly start everything again. Only a process that reaches no
+    // instance at all — one on another network — uses the shared address.
+    const others = (await store.listLive(liveSince)).filter(
+      (instance) => instance.id !== current.instanceId
+    );
+    for (const other of others) {
+      if (await reachableUrl(other, now)) return firstAddress(current.instance.address);
+    }
+    return others.length === 0 ? firstAddress(current.instance.address) : null;
   }
   const live = await store.listLive(liveSince);
   // Fewest callers first, among those this process can actually call.

@@ -1003,10 +1003,12 @@ describe('notebook kernels over the wire', () => {
     require('readline').createInterface({ input: process.stdin }).on('line', (line) => {
       const { id, code } = JSON.parse(line);
       count += 1;
-      console.log(JSON.stringify({ id, execution_count: count, ok: true, outputs: [
+      // A cell written "slow:<ms>" takes that long to answer.
+      const wait = /^slow:([0-9]+)$/.exec(code);
+      setTimeout(() => console.log(JSON.stringify({ id, execution_count: count, ok: true, outputs: [
         { output_type: 'stream', name: 'stdout', text: code + ' token=' + process.env.API_TOKEN },
         { output_type: 'execute_result', data: { 'text/plain': ['again ', process.env.API_TOKEN] } },
-      ] }));
+      ] })), wait ? Number(wait[1]) : 0);
     });`;
   let kernelServer: Server;
   let kernelBase: string;
@@ -1049,6 +1051,10 @@ describe('notebook kernels over the wire', () => {
       code: 'x = 1',
     });
     expect(first.status).toBe(200);
+    // The answer names the instance that holds the kernel, so the page can
+    // tell a kernel lost where it was from one started somewhere else.
+    expect(typeof first.json.kernel.instance).toBe('string');
+    expect(first.json.kernel.instance.length).toBeGreaterThan(0);
     expect(first.json).toMatchObject({
       kernel: { engine: 'builtin', python: '3.11.2' },
       started: true,
@@ -1076,6 +1082,37 @@ describe('notebook kernels over the wire', () => {
     });
   });
 
+  it('a cell whose caller gives up waiting runs on, and the worker is none the worse for it', async () => {
+    envStore.listSealedEnv.mockResolvedValue([]);
+    const escaped: unknown[] = [];
+    const caught = (error: unknown) => escaped.push(error);
+    process.on('uncaughtException', caught);
+    process.on('unhandledRejection', caught);
+    try {
+      const controller = new AbortController();
+      const gone = fetch(`${kernelBase}/v1/workspaces/kernel/execute`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${API_KEY}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ ...NOTEBOOK, code: 'slow:400' }),
+        signal: controller.signal,
+      }).catch(() => null);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      controller.abort();
+      await gone;
+      // The cell finishes with nobody to tell.
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      expect(escaped).toEqual([]);
+      // The kernel is still there, and so is what it ran.
+      const next = await post(kernelBase, 'workspaces/kernel/execute', { ...NOTEBOOK, code: 'x' });
+      expect(next.status).toBe(200);
+      expect(next.json).toMatchObject({ started: false, succeeded: true });
+    } finally {
+      process.off('uncaughtException', caught);
+      process.off('unhandledRejection', caught);
+      await post(kernelBase, 'workspaces/kernel/close', NOTEBOOK);
+    }
+  });
+
   it('refuses what is not a notebook of the caller’s checkout, or has no code', async () => {
     for (const path of [undefined, 'scripts/run.py', '../other/n.ipynb']) {
       const refused = await post(kernelBase, 'workspaces/kernel/execute', {
@@ -1093,5 +1130,92 @@ describe('notebook kernels over the wire', () => {
     });
     expect(notMine.status).toBe(404);
     expect(kernels.count()).toBe(0);
+  });
+});
+
+describe('a notebook kernel that cannot be started', () => {
+  const { spawn: spawnChild } =
+    jest.requireActual<typeof import('node:child_process')>('node:child_process');
+  const { KernelSessions } =
+    jest.requireActual<typeof import('./kernel-sessions')>('./kernel-sessions');
+  let server: Server;
+  let base: string;
+  let kernels: InstanceType<typeof KernelSessions>;
+
+  beforeAll(async () => {
+    kernels = new KernelSessions({
+      spawnKernel: () =>
+        spawnChild(
+          process.execPath,
+          ['-e', `console.log('{"ready": false, "error": "no-python"}')`],
+          {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            detached: true,
+          }
+        ),
+    });
+    server = createSandboxServer({
+      apiKeys: [API_KEY],
+      workspaces: true,
+      kernels,
+      orgFeatures: async () => ALL_ORG_FEATURES,
+    });
+    base = await listen(server);
+  });
+
+  afterAll(async () => {
+    kernels.closeAll();
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  it('says so in the body: the answer had already begun, to keep a long cell’s call alive', async () => {
+    envStore.listSealedEnv.mockResolvedValue([]);
+    const refused = await post(base, 'workspaces/kernel/execute', {
+      ...TARGET,
+      id: 'ws-1',
+      path: 'notebooks/revenue.ipynb',
+      code: '1',
+    });
+    expect(refused.status).toBe(200);
+    expect(refused.json).toEqual({
+      error: {
+        type: 'no_python',
+        status: 422,
+        message: 'There is no Python in the sandbox to run the notebook with.',
+      },
+    });
+  });
+
+  it('an exception while running a cell is told as a failure, never by its own text', async () => {
+    envStore.listSealedEnv.mockResolvedValue([]);
+    const thrown = jest
+      .spyOn(kernels, 'execute')
+      .mockRejectedValueOnce(new Error('ENOENT: /workspaces/secret-path/home/.renkei'));
+    const failed = await post(base, 'workspaces/kernel/execute', {
+      ...TARGET,
+      id: 'ws-1',
+      path: 'notebooks/revenue.ipynb',
+      code: '1',
+    });
+    thrown.mockRestore();
+    expect(failed.status).toBe(200);
+    expect(failed.json).toEqual({
+      error: {
+        type: 'internal',
+        status: 500,
+        message: 'The cell could not be run: the sandbox hit an internal error.',
+      },
+    });
+    expect(JSON.stringify(failed.json)).not.toContain('secret-path');
+  });
+
+  it('what is wrong with the request itself is still refused outright', async () => {
+    const refused = await post(base, 'workspaces/kernel/execute', {
+      ...TARGET,
+      id: 'ws-1',
+      path: 'run.py',
+      code: '1',
+    });
+    expect(refused.status).toBe(400);
   });
 });

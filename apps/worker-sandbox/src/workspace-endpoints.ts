@@ -145,6 +145,9 @@ const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 type Body = Record<string, unknown>;
 
+/** How often a running cell's answer is kept alive, well inside any client's patience. */
+const KERNEL_KEEPALIVE_MS = 15_000;
+
 /** Every string in a JSON value passed through `scrub`: a cell's outputs, whatever their shape. */
 export function scrubDeep(value: unknown, scrub: (text: string) => string): unknown {
   if (typeof value === 'string') return scrub(value);
@@ -1862,7 +1865,10 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     switch (op) {
       case 'status': {
         const kernel = kernels.status(named);
-        return sendJson(response, 200, { running: kernel !== null, kernel });
+        return sendJson(response, 200, {
+          running: kernel !== null,
+          kernel: kernel ? { ...kernel, instance: workerInstance() } : null,
+        });
       }
       case 'interrupt':
         return sendJson(response, 200, { interrupted: kernels.interrupt(named) });
@@ -1879,23 +1885,63 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         const env = envSecretsEnabled() ? await openCallerEnv(target) : EMPTY_ENV;
         const serviceEnv = deps.serviceEnv ? await deps.serviceEnv(workspace) : {};
         const previewEnv = deps.previews?.environmentFor(workspace) ?? {};
-        const outcome = await kernels.execute(
-          {
-            ...named,
-            rootDir: workspaceDir(workspace.storageKey),
-            home: homeDir(workspace.storageKey),
-            identity: identityFor(workspace),
-            env: { ...env.values, ...serviceEnv, ...previewEnv },
-            sandboxPython: process.env.SANDBOX_PYTHON ?? null,
-          },
-          body.code,
-          timeoutMs
-        );
+        // A cell may run for minutes, and a caller's HTTP client gives up on
+        // a response that has not begun (Node's fetch after five). So the
+        // answer begins now and is kept alive with a space every few
+        // seconds — whitespace before a JSON value is still that value —
+        // and what would have been an error status rides in the body.
+        response.writeHead(200, { 'content-type': 'application/json' });
+        const alive = setInterval(() => response.write(' '), KERNEL_KEEPALIVE_MS);
+        // A caller that went away is not written to; the cell runs on, as it would.
+        response.on('close', () => clearInterval(alive));
+        const finish = (value: unknown): void => {
+          clearInterval(alive);
+          response.end(JSON.stringify(value));
+        };
+        let outcome;
+        try {
+          outcome = await kernels.execute(
+            {
+              ...named,
+              rootDir: workspaceDir(workspace.storageKey),
+              home: homeDir(workspace.storageKey),
+              identity: identityFor(workspace),
+              env: { ...env.values, ...serviceEnv, ...previewEnv },
+              sandboxPython: process.env.SANDBOX_PYTHON ?? null,
+            },
+            body.code,
+            timeoutMs
+          );
+        } catch (error) {
+          // What went wrong is for the log, not for the caller: an exception's
+          // text can name paths and internals of this worker.
+          logger.error(
+            'the kernel of the notebook {path} of {actor} threw while running a cell; the caller was told only that it failed: {error}',
+            {
+              component: 'worker-sandbox/kernels',
+              ...(await actorAttrs(target.subject)),
+              path: path.path,
+              error: error instanceof Error ? error.message : String(error),
+              stack: error instanceof Error ? error.stack : undefined,
+            }
+          );
+          return finish({
+            error: {
+              type: 'internal',
+              status: 500,
+              message: 'The cell could not be run: the sandbox hit an internal error.',
+            },
+          });
+        }
         await markEnvUsed(env);
-        if (!outcome.ok) return sendError(response, outcome.status, outcome.type, outcome.message);
+        if (!outcome.ok) {
+          return finish({
+            error: { type: outcome.type, status: outcome.status, message: outcome.message },
+          });
+        }
         await store.touchWorkspace(workspace.id);
-        return sendJson(response, 200, {
-          kernel: outcome.kernel,
+        return finish({
+          kernel: { ...outcome.kernel, instance: workerInstance() },
           started: outcome.started,
           previous: outcome.previous,
           workerUptimeMs: outcome.workerUptimeMs,

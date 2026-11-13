@@ -25,6 +25,8 @@ export interface KernelInfo {
   /** A real Jupyter kernel in the checkout's environment, or the sandbox's built-in runner. */
   engine: 'kernel' | 'builtin';
   python: string;
+  /** The sandbox instance holding it, as that instance names itself; '' when it does not say. */
+  instance: string;
 }
 
 export interface Notice {
@@ -143,7 +145,17 @@ function ago(ms: number): string {
  * project's calls now go to another instance than before (its old one
  * stopped answering and it was moved: packages/sandbox-client routing.ts).
  */
-export function lostKernelText(run: Pick<CellRun, 'previous' | 'workerUptimeMs'>): string {
+export function lostKernelText(
+  run: Pick<CellRun, 'previous' | 'workerUptimeMs'> & { kernel?: KernelInfo },
+  before: KernelInfo | null = null
+): string {
+  // The surest sign of all: the kernel that answered is on another instance
+  // than the one the earlier cells ran on.
+  const was = before?.instance;
+  const now = run.kernel?.instance;
+  if (was && now && was !== now) {
+    return `This notebook’s cells are now answered by a different sandbox instance (${now}; the earlier cells ran on ${was}), so a new kernel was started. ${GONE}`;
+  }
   if (run.previous === 'idle') {
     return `The kernel was ended after half an hour unused, and a new one was started. ${GONE}`;
   }
@@ -228,7 +240,9 @@ export function notebookViewReducer(
       const lost = run.started && state.kernel !== null;
       // The first cell of this run to land in the new kernel is where state was lost.
       const lostAt = lost ? (state.lostAt ?? action.index) : state.lostAt;
-      const lostNotice: Notice | null = lost ? { tone: 'info', text: lostKernelText(run) } : null;
+      const lostNotice: Notice | null = lost
+        ? { tone: 'info', text: lostKernelText(run, state.kernel) }
+        : null;
       const ran = state.ran + 1;
       if (!run.succeeded) {
         const skipped = state.queue.length;
@@ -503,6 +517,7 @@ export function readRunAnswer(
         kernel: {
           engine: kernel.engine === 'kernel' ? 'kernel' : 'builtin',
           python: isString(kernel.python) ? kernel.python : '',
+          instance: isString(kernel.instance) ? kernel.instance : '',
         },
       },
     };
@@ -510,8 +525,9 @@ export function readRunAnswer(
   return {
     ok: false,
     error: isString(record.error) && record.error ? record.error : 'The cell could not be run.',
-    // 410: the kernel ended under the cell.
-    kernelGone: status === 410,
+    // 410: the kernel ended under the cell. A run's answer is begun before
+    // the cell ends, so its refusal carries the status in its body.
+    kernelGone: (typeof record.status === 'number' ? record.status : status) === 410,
   };
 }
 
@@ -522,5 +538,6 @@ export function readKernelAnswer(body: unknown): KernelInfo | null {
   return {
     engine: kernel.engine === 'kernel' ? 'kernel' : 'builtin',
     python: isString(kernel.python) ? kernel.python : '',
+    instance: isString(kernel.instance) ? kernel.instance : '',
   };
 }
