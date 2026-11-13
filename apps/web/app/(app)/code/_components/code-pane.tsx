@@ -32,9 +32,11 @@ import { unifiedDiff } from '@/lib/code/text-diff';
 import { highlighterLanguageFor } from '@/lib/code/language';
 import { languageLabel } from '@/lib/chat/code-languages';
 import { highlightedTokens } from '@/components/code-tokens';
+import { isNotebookPath } from '@/lib/code/notebook';
 import CodeEditor from './code-editor';
 import CommitDialog, { FileDiffInline } from './commit-dialog';
 import DiffView, { Counts } from './diff-view';
+import NotebookView from './notebook-view';
 import RepoTree, { type FileMark, type RepoTreeHandle } from './repo-tree';
 import type { CodePaneFile, CodePaneHandle } from './use-code-pane';
 import type { LanguageServersHandle, LanguageServerStatus } from './use-language-servers';
@@ -129,10 +131,7 @@ export default function CodePane({
   const marks = useMemo(() => {
     const map = new Map<string, FileMark>();
     for (const file of pane.changed) {
-      map.set(
-        file.path,
-        file.status === 'untracked' ? 'A' : file.status === 'deleted' ? 'D' : 'M'
-      );
+      map.set(file.path, file.status === 'untracked' ? 'A' : file.status === 'deleted' ? 'D' : 'M');
     }
     return map;
   }, [pane.changed]);
@@ -307,8 +306,17 @@ export default function CodePane({
       file={active}
       touch={touch}
       canEdit={canEdit}
+      dirty={activeDirty}
+      notebookRunUrl={`${base}/notebook/run`}
       onChange={(text) => pane.setText(active.path, text)}
       onSave={() => void pane.save(active.path)}
+      onSaveFirst={() => pane.save(active.path)}
+      onNotebookRan={(changed) => {
+        pane.refresh();
+        // The run wrote the cells' outputs into the file: the chat should
+        // know the checkout moved by the person's hand, as for a save.
+        if (changed) onNote({ type: 'edit', paths: [active.path] });
+      }}
       onCompare={() => setCompareFor(active.path)}
       onReloadTheirs={() => pane.reloadTheirs(active.path)}
       onKeepMine={() => void pane.save(active.path, { force: true })}
@@ -655,8 +663,12 @@ function FileBody({
   file,
   touch,
   canEdit,
+  dirty,
+  notebookRunUrl,
   onChange,
   onSave,
+  onSaveFirst,
+  onNotebookRan,
   onCompare,
   onReloadTheirs,
   onKeepMine,
@@ -665,9 +677,17 @@ function FileBody({
   file: CodePaneFile;
   touch: boolean;
   canEdit: boolean;
+  /** The file has unsaved edits. */
+  dirty: boolean;
+  /** Where a notebook's Run all posts. */
+  notebookRunUrl: string;
   lsp: LanguageServersHandle;
   onChange: (text: string) => void;
   onSave: () => void;
+  /** Save and say whether it took: a notebook is saved before it runs. */
+  onSaveFirst: () => Promise<boolean>;
+  /** A notebook run ended; `changed` when cells ran and the file holds their outputs. */
+  onNotebookRan: (changed: boolean) => void;
   onCompare: () => void;
   onReloadTheirs: () => void;
   onKeepMine: () => void;
@@ -698,6 +718,18 @@ function FileBody({
           ? 'Too long to edit here.'
           : null;
   const linkClass = 'font-medium hover:underline';
+  const editor = (
+    <CodeEditor
+      path={file.path}
+      language={file.language}
+      value={file.text}
+      readOnly={readOnly}
+      touch={touch}
+      lsp={touch ? null : lsp}
+      onChange={onChange}
+      onSave={onSave}
+    />
+  );
   return (
     <div className="flex h-full min-h-0 flex-col">
       {file.conflict ? (
@@ -737,16 +769,23 @@ function FileBody({
         </p>
       ) : null}
       <div className="min-h-0 flex-1">
-        <CodeEditor
-          path={file.path}
-          language={file.language}
-          value={file.text}
-          readOnly={readOnly}
-          touch={touch}
-          lsp={touch ? null : lsp}
-          onChange={onChange}
-          onSave={onSave}
-        />
+        {isNotebookPath(file.path) ? (
+          // A notebook is read as a notebook; its JSON is the Source view.
+          <NotebookView
+            key={file.path}
+            file={file}
+            runUrl={notebookRunUrl}
+            canEdit={canEdit}
+            dirty={dirty}
+            touch={touch}
+            source={editor}
+            onChange={onChange}
+            onSave={onSaveFirst}
+            onRan={onNotebookRan}
+          />
+        ) : (
+          editor
+        )}
       </div>
     </div>
   );

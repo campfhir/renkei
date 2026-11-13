@@ -46,6 +46,17 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-13',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Notebooks open and run in code projects',
+        detail:
+          "A Jupyter notebook (.ipynb) in a code project's code pane now opens as a notebook — text, code and each cell's saved tables, charts and errors — instead of raw JSON, with Source one press away. Run all executes it in the project's sandbox and writes the outputs into the file, ready to commit or discard.",
+      },
+    ],
+  },
+  {
     date: '2026-11-12',
     entries: [
       {

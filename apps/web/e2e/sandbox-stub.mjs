@@ -33,11 +33,13 @@ const RESERVED = new Set(['PATH', 'HOME', 'LD_PRELOAD', 'NODE_OPTIONS']);
  */
 const TREE = {
   '': [
+    { path: 'notebooks', kind: 'dir', sizeBytes: null },
     { path: 'src', kind: 'dir', sizeBytes: null },
     { path: 'node_modules', kind: 'dir', sizeBytes: null, ignored: true },
     { path: 'package.json', kind: 'file', sizeBytes: 812 },
     { path: 'README.md', kind: 'file', sizeBytes: 1204 },
   ],
+  notebooks: [{ path: 'notebooks/revenue.ipynb', kind: 'file', sizeBytes: 2310 }],
   src: [
     { path: 'src/billing.ts', kind: 'file', sizeBytes: 4410 },
     { path: 'src/index.ts', kind: 'file', sizeBytes: 302 },
@@ -178,7 +180,170 @@ index 1111111..2222222 100644
  * What the code pane reads: the files the tree names, as text. A file a
  * person uploads or saves lands in the workspace's own map and wins.
  */
+const REVENUE_TABLE = `<div>
+<style scoped>.dataframe tbody tr th { vertical-align: top; }</style>
+<table border="1" class="dataframe">
+  <thead><tr style="text-align: right;"><th></th><th>month</th><th>invoices</th><th>revenue</th></tr></thead>
+  <tbody>
+    <tr><th>0</th><td>2026-01</td><td>412</td><td>38210.50</td></tr>
+    <tr><th>1</th><td>2026-02</td><td>389</td><td>36104.00</td></tr>
+    <tr><th>2</th><td>2026-03</td><td>451</td><td>42987.25</td></tr>
+    <tr><th>3</th><td>2026-04</td><td>478</td><td>45120.75</td></tr>
+  </tbody>
+</table>
+</div>`;
+
+/** The figure a stubbed run "draws": what matplotlib's SVG backend would hand a kernel. */
+const REVENUE_CHART = `<svg xmlns="http://www.w3.org/2000/svg" width="460" height="240" viewBox="0 0 460 240">
+<rect width="460" height="240" fill="#ffffff"/>
+<text x="230" y="22" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#111827">Revenue by month</text>
+<line x1="50" y1="200" x2="440" y2="200" stroke="#9ca3af"/><line x1="50" y1="40" x2="50" y2="200" stroke="#9ca3af"/>
+<rect x="75" y="78" width="60" height="122" fill="#2563eb"/><rect x="170" y="85" width="60" height="115" fill="#2563eb"/>
+<rect x="265" y="63" width="60" height="137" fill="#2563eb"/><rect x="360" y="56" width="60" height="144" fill="#2563eb"/>
+<g font-family="sans-serif" font-size="11" fill="#374151" text-anchor="middle">
+<text x="105" y="216">2026-01</text><text x="200" y="216">2026-02</text><text x="295" y="216">2026-03</text><text x="390" y="216">2026-04</text>
+</g></svg>`;
+
+/**
+ * A notebook as a repository would hold it: the first two code cells
+ * committed with their outputs, the chart cell never run — so the pane
+ * has outputs to draw before anything runs, and a run has something to add.
+ */
+const REVENUE_NOTEBOOK = `${JSON.stringify(
+  {
+    cells: [
+      {
+        cell_type: 'markdown',
+        metadata: {},
+        source: [
+          '# Monthly revenue\n',
+          '\n',
+          'Invoices and revenue per month from the billing export, for the **quarterly review**.',
+        ],
+      },
+      {
+        cell_type: 'code',
+        execution_count: 1,
+        metadata: {},
+        outputs: [{ output_type: 'stream', name: 'stdout', text: ['Loaded 4 months\n'] }],
+        source: [
+          'import pandas as pd\n',
+          '\n',
+          'df = pd.read_csv("data/revenue.csv")\n',
+          'print(f"Loaded {len(df)} months")',
+        ],
+      },
+      {
+        cell_type: 'code',
+        execution_count: 2,
+        metadata: {},
+        outputs: [
+          {
+            output_type: 'execute_result',
+            execution_count: 2,
+            metadata: {},
+            data: { 'text/html': REVENUE_TABLE, 'text/plain': '     month  invoices   revenue' },
+          },
+        ],
+        source: ['df.head()'],
+      },
+      { cell_type: 'markdown', metadata: {}, source: ['## Trend'] },
+      {
+        cell_type: 'code',
+        execution_count: null,
+        metadata: {},
+        outputs: [],
+        source: [
+          'import matplotlib.pyplot as plt\n',
+          '\n',
+          'plt.bar(df["month"], df["revenue"])\n',
+          'plt.title("Revenue by month")',
+        ],
+      },
+    ],
+    metadata: {
+      kernelspec: { display_name: 'Python 3 (ipykernel)', language: 'python', name: 'python3' },
+      language_info: { name: 'python' },
+    },
+    nbformat: 4,
+    nbformat_minor: 5,
+  },
+  null,
+  1
+)}\n`;
+
+/**
+ * A notebook run, stubbed: the pane's Run all sends one command through
+ * exec (lib/code/notebook-runner.ts) naming the notebook in
+ * RENKEI_NOTEBOOK_PATH. No Python here, so each code cell "runs" by what
+ * its source says — a `print` prints, `.head()` shows the table, a `plt.`
+ * cell draws the chart, a `raise` raises and stops the run — and the
+ * outputs are written back into the checkout's file as the real runner
+ * writes them. Returns the runner's result line.
+ */
+function runNotebookStub(workspace, path) {
+  const uploaded = workspace.files.get(path);
+  const text = uploaded ? uploaded.toString('utf8') : FILES[path];
+  let notebook;
+  try {
+    notebook = JSON.parse(text ?? '');
+  } catch {
+    return { error: 'unreadable', detail: 'not JSON' };
+  }
+  if (!Array.isArray(notebook?.cells)) return { error: 'unreadable', detail: 'no cells' };
+  const code = notebook.cells
+    .map((cell, index) => ({ cell, index }))
+    .filter(({ cell }) => cell.cell_type === 'code');
+  for (const { cell } of code) {
+    cell.outputs = [];
+    cell.execution_count = null;
+  }
+  let ran = 0;
+  let failed = null;
+  for (const [n, { cell, index }] of code.entries()) {
+    const source = Array.isArray(cell.source) ? cell.source.join('') : String(cell.source ?? '');
+    ran += 1;
+    cell.execution_count = ran;
+    const raised = /raise (\w+)\((?:"|')(.*?)(?:"|')\)/.exec(source);
+    if (raised) {
+      cell.outputs.push({
+        output_type: 'error',
+        ename: raised[1],
+        evalue: raised[2],
+        traceback: [
+          'Traceback (most recent call last):',
+          `  File "<cell ${n + 1}>", line 1, in <module>`,
+          `${raised[1]}: ${raised[2]}`,
+        ],
+      });
+      failed = { index, number: n + 1, ename: raised[1], evalue: raised[2] };
+      break;
+    }
+    if (source.includes('print(')) {
+      cell.outputs.push({ output_type: 'stream', name: 'stdout', text: 'Loaded 4 months\n' });
+    }
+    if (source.includes('.head()')) {
+      cell.outputs.push({
+        output_type: 'execute_result',
+        execution_count: ran,
+        metadata: {},
+        data: { 'text/html': REVENUE_TABLE, 'text/plain': '     month  invoices   revenue' },
+      });
+    }
+    if (source.includes('plt.')) {
+      cell.outputs.push({
+        output_type: 'display_data',
+        metadata: {},
+        data: { 'image/svg+xml': REVENUE_CHART, 'text/plain': '<Figure size 640x480 with 1 Axes>' },
+      });
+    }
+  }
+  workspace.files.set(path, Buffer.from(`${JSON.stringify(notebook, null, 1)}\n`, 'utf8'));
+  return { engine: 'builtin', ran, total: code.length, failed, seconds: 1.4 };
+}
+
 const FILES = {
+  'notebooks/revenue.ipynb': REVENUE_NOTEBOOK,
   'package.json': `{
   "name": "billing-service",
   "version": "2.4.1",
@@ -970,6 +1135,28 @@ function handleWorkspaces(op, body, response) {
         workspace.extraEntries.get(dir).push({ path, kind: 'file', sizeBytes: bytes.byteLength });
       }
       return json(response, 200, { path, created, sizeBytes: bytes.byteLength });
+    }
+    case 'exec': {
+      // The one command the stub answers: a notebook run. Anything else
+      // would need a shell, and nothing in the suite sends one.
+      const workspace = scope.workspaces.get(body.id ?? '');
+      if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
+      const named = /RENKEI_NOTEBOOK_PATH='([^']+)'/.exec(body.command ?? '');
+      if (!named) return error(response, 400, 'bad_request', 'The stub runs only notebooks.');
+      const result = runNotebookStub(workspace, named[1]);
+      return json(response, 200, {
+        exitCode: 0,
+        signal: null,
+        stdout: `\nRENKEI_NOTEBOOK_RESULT ${JSON.stringify(result)}\n`,
+        stderr: '',
+        timedOut: false,
+        interrupted: false,
+        truncated: false,
+        durationMs: 1400,
+        timeoutMs: body.timeoutMs ?? 120000,
+        sizeBytes: workspace.sizeBytes,
+        unreadableEnv: [],
+      });
     }
     case 'mkdir': {
       const workspace = scope.workspaces.get(body.id ?? '');

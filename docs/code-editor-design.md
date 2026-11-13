@@ -336,6 +336,18 @@ disk would silently leave them out.
    the gutter; find across files (the worker's `grep` verb is there);
    create, rename and delete from the pane; images.
 
+5. **Notebooks** — built. A `.ipynb` opens as its cells with their saved
+   outputs instead of JSON (Source is the JSON), and **Run all** executes
+   it on the sandbox and writes the outputs into the file. Decided along
+   the way: the run goes through the existing exec verb rather than a
+   kernel service of its own, so there is no state between runs (always
+   "restart and run all") and no per-cell run; outputs live in the file,
+   not in the answer, which keeps a run inside exec's limits and makes it
+   an ordinary uncommitted change; a checkout without Jupyter still runs
+   Python notebooks through a built-in runner. **Later:** editing a cell
+   in place (today: Source), running one cell against a kept kernel,
+   output streaming while a long run is under way, LaTeX and widgets.
+
 Each cut ships on its own and leaves the chat as it was for anyone who
 does not open the pane.
 

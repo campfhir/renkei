@@ -23,6 +23,7 @@ const BY_EXTENSION: Record<string, string> = {
   jsonl: 'json',
   ndjson: 'json',
   webmanifest: 'json',
+  ipynb: 'json',
   md: 'markdown',
   mdx: 'mdx',
   markdown: 'markdown',
