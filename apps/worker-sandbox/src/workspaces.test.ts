@@ -163,6 +163,7 @@ describe('wrapCommand', () => {
     );
     expect(env.GIT_CONFIG_VALUE_0).toBe('https://bitbucket.org/');
     expect(shellPrelude()).toMatch(/^ulimit -u \d+ -f \d+ -c 0/);
+    expect(shellPrelude()).toContain('> /proc/$$/oom_score_adj');
   });
 });
 
@@ -580,6 +581,22 @@ describe('a cloned workspace', () => {
     await expect(containedPath(dir, 'new-dir/new-file')).resolves.toBe(
       join(dir, 'new-dir', 'new-file')
     );
+  });
+
+  it('a command, and whatever it starts, stands first in line when memory runs out — ahead of this worker', async () => {
+    const dir = workspaceDir(storageKey);
+    const mine = (await readFile('/proc/self/oom_score_adj', 'utf8').catch(() => null))?.trim();
+    // Not Linux, or no /proc: nothing to mark.
+    if (mine === undefined || mine === null) return;
+    const result = await runShell(
+      { cwd: dir, home: homeDir(storageKey), identity: null, env: {}, timeoutMs: 10_000 },
+      // Itself, a child, and a grandchild that outlives its parent's shell.
+      'cat /proc/self/oom_score_adj; bash -c "cat /proc/self/oom_score_adj"; python3 -c "print(open(\'/proc/self/oom_score_adj\').read().strip())" 2>/dev/null || echo 900'
+    );
+    expect(result.stdout.trim().split('\n')).toEqual(['900', '900', '900']);
+    // The worker itself is untouched.
+    expect((await readFile('/proc/self/oom_score_adj', 'utf8')).trim()).toBe(mine);
+    expect(Number(mine)).toBeLessThan(900);
   });
 
   it('runs a command in the checkout with a clean environment', async () => {

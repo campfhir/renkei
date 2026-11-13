@@ -524,13 +524,26 @@ export async function probeNetworkIsolation(
 /**
  * The shell prelude every command runs behind: process and file-size
  * limits (per uid, so a fork bomb stops at the caller's own ceiling), no
- * core dumps. Failures to lower a limit are ignored — a developer's
+ * core dumps, and first place in the queue when memory runs out. Failures to lower a limit are ignored — a developer's
  * checkout may already sit under one.
  */
 export function shellPrelude(): string {
   const fileKb = Math.floor(EXEC_MAX_FILE_BYTES / 1024);
-  return `ulimit -u ${EXEC_MAX_PROCESSES} -f ${fileKb} -c 0 2>/dev/null\n`;
+  return (
+    `ulimit -u ${EXEC_MAX_PROCESSES} -f ${fileKb} -c 0 2>/dev/null\n` +
+    // When the container runs out of memory the kernel kills ONE process
+    // in it, the one it scores highest. A caller's work is often many
+    // modest processes (a pool of workers, a build), none of them bigger
+    // than this worker — which is then the one killed, taking every
+    // caller's kernels, servers and previews with it, silently. So every
+    // caller's process marks itself, and all it starts, as what should go
+    // first. A process may always raise its own score; failing to is ignored.
+    `{ echo ${CALLER_OOM_SCORE_ADJ} > /proc/$$/oom_score_adj; } 2>/dev/null\n`
+  );
 }
+
+/** A caller's processes volunteer for the out-of-memory killer ahead of the worker (1000 is the most willing). */
+export const CALLER_OOM_SCORE_ADJ = 900;
 
 /**
  * What a spawn that never started should say. Node reports a working
