@@ -2721,6 +2721,14 @@ export interface WireKernelRun {
   kernel: WireKernel;
   /** This run started the kernel: nothing earlier cells defined is there. */
   started: boolean;
+  /**
+   * When this run started the kernel: what the answering worker knows became
+   * of the notebook's last one — 'idle' (reaped unused), 'ended' (exited,
+   * crashed or closed) — or null when that worker never had one.
+   */
+  previous: 'idle' | 'ended' | null;
+  /** How long the answering worker has been up, to tell a restart from another replica. */
+  workerUptimeMs: number;
   /** The cell's outputs in nbformat's own shapes, as a notebook stores them. */
   outputs: unknown[];
   executionCount: number | null;
@@ -2775,6 +2783,8 @@ export async function sbKernelExecute(
     val: {
       kernel,
       started: value.started === true,
+      previous: value.previous === 'idle' || value.previous === 'ended' ? value.previous : null,
+      workerUptimeMs: typeof value.workerUptimeMs === 'number' ? value.workerUptimeMs : 0,
       outputs: value.outputs,
       executionCount: typeof value.executionCount === 'number' ? value.executionCount : null,
       succeeded: value.succeeded === true,

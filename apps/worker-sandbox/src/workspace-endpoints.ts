@@ -1897,6 +1897,8 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         return sendJson(response, 200, {
           kernel: outcome.kernel,
           started: outcome.started,
+          previous: outcome.previous,
+          workerUptimeMs: outcome.workerUptimeMs,
           outputs: scrubDeep(outcome.outputs, (text) => scrubEnv(text, env)),
           executionCount: outcome.executionCount,
           succeeded: outcome.succeeded,

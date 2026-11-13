@@ -52,7 +52,7 @@ export const CHANGELOG: ChangelogRelease[] = [
         kind: 'changed',
         title: 'Notebooks offer the way back when the kernel was lost',
         detail:
-          "When a notebook cell runs and its kernel had to be started again, so earlier cells' results are gone, the notice now has one press that runs the cells above and then that cell.",
+          "When a notebook cell runs and its kernel had to be started again, so earlier cells' results are gone, the notice now says why (unused for half an hour, the sandbox restarted, or the run reached a different sandbox worker) and has one press that runs the cells above and then that cell.",
       },
       {
         kind: 'added',

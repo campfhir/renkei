@@ -75,6 +75,14 @@ export interface CellRun {
   succeeded: boolean;
   /** The kernel was started by this run: nothing earlier cells defined is there. */
   started: boolean;
+  /**
+   * When this run started the kernel: what the sandbox worker that answered
+   * knows became of the last one — reaped unused, or ended — or null when
+   * that worker never had one.
+   */
+  previous: 'idle' | 'ended' | null;
+  /** How long that worker has been up: a restart, or another replica. */
+  workerUptimeMs: number;
   timedOut: boolean;
   kernel: KernelInfo;
 }
@@ -119,8 +127,33 @@ export const initialNotebookView: NotebookViewState = {
   packages: { open: false, text: '', installing: false, log: null, succeeded: null },
 };
 
-const LOST_KERNEL =
-  'The kernel had stopped and was started again: what earlier cells defined is gone. Run them again if this cell needs them.';
+const GONE = 'What earlier cells defined is gone.';
+
+function ago(ms: number): string {
+  const minutes = Math.max(1, Math.round(ms / 60_000));
+  if (minutes < 90) return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} hours` : `${Math.round(hours / 24)} days`;
+}
+
+/**
+ * Why a run found no kernel where there had been one, as far as the
+ * sandbox can say: it reaped it, it ended, the worker itself restarted
+ * since — or the worker that answered never had it, which on every run
+ * means there is more than one worker and each keeps its own kernels.
+ */
+export function lostKernelText(run: Pick<CellRun, 'previous' | 'workerUptimeMs'>): string {
+  if (run.previous === 'idle') {
+    return `The kernel was ended after half an hour unused, and a new one was started. ${GONE}`;
+  }
+  if (run.previous === 'ended') {
+    return `The kernel had ended (it crashed, or was closed elsewhere), and a new one was started. ${GONE}`;
+  }
+  if (run.workerUptimeMs < 60 * 60_000) {
+    return `The sandbox restarted ${ago(run.workerUptimeMs)} ago, which ended the kernel, and a new one was started. ${GONE}`;
+  }
+  return `The kernel that ran the earlier cells is not on the sandbox worker that answered (up ${ago(run.workerUptimeMs)}), so a new one was started. ${GONE} If this happens on every run, the sandbox is running more than one replica, and each keeps its own kernels.`;
+}
 
 /** The error a cell's outputs end in, as "NameError: name 'x' is not defined". */
 export function raisedIn(outputs: unknown[]): string | null {
@@ -194,6 +227,7 @@ export function notebookViewReducer(
       const lost = run.started && state.kernel !== null;
       // The first cell of this run to land in the new kernel is where state was lost.
       const lostAt = lost ? (state.lostAt ?? action.index) : state.lostAt;
+      const lostNotice: Notice | null = lost ? { tone: 'info', text: lostKernelText(run) } : null;
       const ran = state.ran + 1;
       if (!run.succeeded) {
         const skipped = state.queue.length;
@@ -213,7 +247,7 @@ export function notebookViewReducer(
           lostAt,
           notice: {
             tone: state.stopping ? 'info' : 'bad',
-            text: `${why}${skipped > 0 ? ` ${plural(skipped, 'cell')} after it ${skipped === 1 ? 'was' : 'were'} not run.` : ''}${lost ? ` ${LOST_KERNEL}` : ''}`,
+            text: `${why}${skipped > 0 ? ` ${plural(skipped, 'cell')} after it ${skipped === 1 ? 'was' : 'were'} not run.` : ''}${lostNotice ? ` ${lostNotice.text}` : ''}`,
           },
         };
       }
@@ -226,7 +260,7 @@ export function notebookViewReducer(
           queue: state.queue.slice(1),
           ran,
           lostAt,
-          notice: lost ? { tone: 'info', text: LOST_KERNEL } : state.notice,
+          notice: lostNotice ?? state.notice,
         };
       }
       return {
@@ -237,14 +271,17 @@ export function notebookViewReducer(
         ran: 0,
         stopping: false,
         lostAt,
-        notice: lost
-          ? { tone: 'info', text: LOST_KERNEL }
-          : ran > 1
-            ? {
-                tone: 'good',
-                text: `Ran ${plural(ran, 'cell')}. The outputs are unsaved until you save the notebook.`,
-              }
-            : state.notice,
+        // A run that lost the kernel on the way keeps saying so: that matters more than a count.
+        notice:
+          lostNotice ??
+          (lostAt !== null
+            ? state.notice
+            : ran > 1
+              ? {
+                  tone: 'good',
+                  text: `Ran ${plural(ran, 'cell')}. The outputs are unsaved until you save the notebook.`,
+                }
+              : state.notice),
       };
     }
     case 'runRefused':
@@ -459,6 +496,8 @@ export function readRunAnswer(
         executionCount: typeof run.executionCount === 'number' ? run.executionCount : null,
         succeeded: run.succeeded === true,
         started: run.started === true,
+        previous: run.previous === 'idle' || run.previous === 'ended' ? run.previous : null,
+        workerUptimeMs: typeof run.workerUptimeMs === 'number' ? run.workerUptimeMs : 0,
         timedOut: run.timedOut === true,
         kernel: {
           engine: kernel.engine === 'kernel' ? 'kernel' : 'builtin',

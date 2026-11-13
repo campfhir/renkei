@@ -776,7 +776,7 @@ for the code pane — a notebook's kernel and an editor's language servers.
 A call that lands on another replica finds none and starts its own, so
 with more than one replica behind one address a notebook loses what its
 earlier cells defined from one run to the next (the pane says the kernel
-"had stopped and was started again" each time). Run the sandbox as a
+"is not on the sandbox worker that answered" each time). Run the sandbox as a
 single replica where notebooks are used, or route each caller to one
 replica consistently. A restart or redeploy of the worker ends its
 kernels in the same way, once.

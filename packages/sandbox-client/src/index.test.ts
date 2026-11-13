@@ -1496,6 +1496,8 @@ describe('notebook kernels', () => {
           JSON.stringify({
             kernel: { engine: 'kernel', python: '3.12.1' },
             started: true,
+            previous: 'idle',
+            workerUptimeMs: 90_000,
             outputs,
             executionCount: 4,
             succeeded: true,
@@ -1511,6 +1513,8 @@ describe('notebook kernels', () => {
       val: {
         kernel: { engine: 'kernel', python: '3.12.1' },
         started: true,
+        previous: 'idle',
+        workerUptimeMs: 90_000,
         outputs,
         executionCount: 4,
         succeeded: true,
