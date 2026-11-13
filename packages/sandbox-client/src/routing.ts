@@ -491,3 +491,74 @@ export async function unexposeSandboxPort(routeKey: string, port: number): Promi
     // Left open; it closes with the sandbox.
   }
 }
+
+/** What the orchestrator says of itself: which provider is in force, or why none is. */
+export interface SandboxOrchestratorStatus {
+  /** Whether callers are configured to use an orchestrator at all. */
+  wired: boolean;
+  /** Whether it answered. */
+  reachable: boolean;
+  provider: string | null;
+  problem: string | null;
+}
+
+export async function sandboxOrchestratorStatus(): Promise<SandboxOrchestratorStatus> {
+  const orchestrator = sandboxOrchestratorConfig();
+  if (!orchestrator) return { wired: false, reachable: false, provider: null, problem: null };
+  try {
+    const response = await fetch(`${orchestrator.url}/health`, {
+      signal: AbortSignal.timeout(5_000),
+    });
+    const body: unknown = response.ok ? await response.json() : null;
+    if (!isRecord(body)) return { wired: true, reachable: false, provider: null, problem: null };
+    return {
+      wired: true,
+      reachable: true,
+      provider: typeof body.provider === 'string' ? body.provider : null,
+      problem: typeof body.problem === 'string' ? body.problem : null,
+    };
+  } catch {
+    return { wired: true, reachable: false, provider: null, problem: null };
+  }
+}
+
+/**
+ * Have the orchestrator try a sandbox configuration — the one given
+ * (settings and opened secrets, as they would be stored) or, with none,
+ * the one stored — by asking its provider whether it answers. The
+ * orchestrator is the process that holds the means to ask; no sandbox is
+ * made. A failed try is an answer.
+ */
+export async function checkSandboxOrchestrator(
+  candidate: { settings: unknown; secrets: Record<string, string> } | null
+): Promise<{ ok: boolean; detail: string }> {
+  const orchestrator = sandboxOrchestratorConfig();
+  if (!orchestrator) {
+    return {
+      ok: false,
+      detail:
+        'This deployment runs no sandbox orchestrator (SANDBOX_ORCHESTRATOR_URL is not set on the app), so there is nothing to try the configuration with.',
+    };
+  }
+  try {
+    const response = await fetch(`${orchestrator.url}/v1/check`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${orchestrator.key}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(candidate ?? {}),
+      signal: AbortSignal.timeout(60_000),
+    });
+    const body: unknown = await response.json().catch(() => null);
+    if (response.ok && isRecord(body) && typeof body.detail === 'string') {
+      return { ok: body.ok === true, detail: body.detail };
+    }
+    return { ok: false, detail: `The orchestrator answered ${response.status}.` };
+  } catch (error) {
+    return {
+      ok: false,
+      detail: `The orchestrator could not be reached: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}

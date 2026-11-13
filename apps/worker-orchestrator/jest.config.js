@@ -9,6 +9,8 @@ export default {
     '^\\./logger$': '<rootDir>/src/test-support/logger-mock.ts',
     '^@renkei/guards$': '<rootDir>/../../packages/guards/src/index.ts',
     '^@renkei/blob-store$': '<rootDir>/../../packages/blob-store/src/index.ts',
+    '^@renkei/sandbox-client$': '<rootDir>/../../packages/sandbox-client/src/index.ts',
+    '^@renkei/settings$': '<rootDir>/../../packages/settings/src/index.ts',
     '^@renkei/db$': '<rootDir>/../../packages/db/src/index.ts',
     '^@renkei/worker-kit$': '<rootDir>/../../packages/worker-kit/src/index.ts',
     '^@renkei/sandbox-orchestrator$': '<rootDir>/../../packages/sandbox-orchestrator/src/index.ts',

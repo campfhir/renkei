@@ -61,6 +61,12 @@ export function adminSections(): AdminSection[] {
           label: 'Storage',
           detail: 'Where chat uploads and the files the assistant produces are kept.',
         },
+        {
+          href: `${admin}/sandboxes`,
+          label: 'Sandboxes',
+          detail:
+            'Where each person’s, agent’s and project’s sandbox is made, and what it starts with.',
+        },
       ],
     },
     {

@@ -1,67 +1,61 @@
 /**
- * Where evicted sandboxes' archives are kept: the deployment's blob
- * store (`BLOB_STORE_PROVIDER` and its variables — @renkei/blob-store),
- * in a container of their own on Azure so their lifetime and access can
- * be set apart from chat attachments'.
+ * Where evicted sandboxes' archives are kept: the organization's file
+ * storage — the store an operator sets up on Organization → Storage, or
+ * the deployment's own (`BLOB_STORE_PROVIDER`) where the organization has
+ * none (@renkei/blob-store's tenant.ts) — under `sandbox-archives/`,
+ * beside the chat's files and apart from them by that prefix.
  *
- *   SANDBOX_ARCHIVE_CONTAINER       the Azure container, default
- *                                   `renkei-sandbox-archives`.
+ * The store is looked up for each archive, so storage configured after
+ * this process started is used from the next eviction. With none
+ * configured an archive cannot be written, and a sandbox whose archive
+ * cannot be written is not removed: it stays suspended, with its work,
+ * and the eviction is tried again later.
  *
- * How long an archive is kept is not a variable here: it is the
- * organization's setting (`sandboxArchiveRetentionDays`, 90 days unless
- * changed).
- *
- * With no blob store configured there are no archives: an evicted
- * sandbox's work goes with its machine, and boot says so.
+ * How long an archive is kept is the organization's setting
+ * (`sandboxArchiveRetentionDays`, 90 days unless changed).
  */
 
-import {
-  blobStoreConfig,
-  createAzureBlobStore,
-  createLocalBlobStore,
-  type BlobStore,
-} from '@renkei/blob-store';
+import { resolveTenantBlobStore, type BlobStore } from '@renkei/blob-store';
 import { ARCHIVE_CONTENT_TYPE, type ArchiveBlobs } from '@renkei/sandbox-orchestrator';
 import { getOrgSettings } from '@renkei/settings';
 
-type Env = Record<string, string | undefined>;
-
-const DEFAULT_CONTAINER = 'renkei-sandbox-archives';
-
-/** The blob store archives go to; null when the deployment has none. */
-export function archiveBlobStore(env: Env): BlobStore | null {
-  const config = blobStoreConfig({
-    ...env,
-    AZURE_BLOB_CONTAINER: env.SANDBOX_ARCHIVE_CONTAINER?.trim() || DEFAULT_CONTAINER,
-  });
-  if (!config.ok) return null;
-  return config.val.provider === 'local'
-    ? createLocalBlobStore(config.val)
-    : createAzureBlobStore(config.val);
+/** The organization's store now; null when it has none. */
+export async function organizationBlobStore(): Promise<BlobStore | null> {
+  const store = await resolveTenantBlobStore();
+  return store.ok ? store.val : null;
 }
 
 /** The store as the orchestrator uses it: a failure is thrown, with the store's own words. */
-export function archiveBlobsOf(store: BlobStore): ArchiveBlobs {
+export function archiveBlobsOf(resolve: () => Promise<BlobStore | null>): ArchiveBlobs {
   const refused = (what: string, failure: { type: string; message?: unknown }): Error =>
     new Error(
       `the blob store could not ${what} the archive: ${
         typeof failure.message === 'string' && failure.message ? failure.message : failure.type
       }`
     );
+  const store = async (): Promise<BlobStore> => {
+    const found = await resolve();
+    if (!found) {
+      throw new Error(
+        'no file storage is configured for the organization (Organization → Storage), so there is nowhere to keep the archive'
+      );
+    }
+    return found;
+  };
   return {
     async put(key, body) {
-      const put = await store.putObjectStream(key, body, ARCHIVE_CONTENT_TYPE);
+      const put = await (await store()).putObjectStream(key, body, ARCHIVE_CONTENT_TYPE);
       if (!put.ok) throw refused('keep', put.err);
       return put.val;
     },
     async get(key) {
-      const got = await store.getObjectStream(key);
+      const got = await (await store()).getObjectStream(key);
       if (got.ok) return got.val.body;
       if (got.err.type === 'NOT_FOUND') return null;
       throw refused('read', got.err);
     },
     async delete(key) {
-      const deleted = await store.deleteObject(key);
+      const deleted = await (await store()).deleteObject(key);
       if (!deleted.ok && deleted.err.type !== 'NOT_FOUND') throw refused('delete', deleted.err);
     },
   };

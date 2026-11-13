@@ -22,6 +22,11 @@
  *                       people's own browsers, signed in as themselves
  *                       (a code project's preview). `/v1/unexpose`
  *                       `{ key, port }` closes it.
+ *   POST /v1/check      `{ settings?, secrets? }` → `{ ok, detail }`: try a
+ *                       configuration — the one given (the Sandboxes
+ *                       page, before it saves) or the one stored — by
+ *                       asking its provider whether it answers. Makes no
+ *                       sandbox.
  *   ANY  /unavailable/<why>/…   answers every request with a refusal in
  *                       the sandbox worker's error shape. Where the
  *                       client sends a call whose sandbox could not be
@@ -47,7 +52,7 @@ import { matchApiKey, readBody, sendJson } from '@renkei/worker-kit';
 import { logger } from './logger';
 
 const COMPONENT = 'worker-orchestrator/server';
-const MAX_BODY_BYTES = 16_384;
+const MAX_BODY_BYTES = 262_144;
 const LIST_LIMIT = 1_000;
 const LISTED: SandboxState[] = [
   'provisioning',
@@ -84,22 +89,31 @@ function sendError(response: ServerResponse, type: ErrorType, message?: string):
 
 export interface OrchestratorServerDeps {
   apiKeys: readonly string[];
-  orchestrator: Orchestrator;
+  /** The orchestrator in force; throws an OrchestratorError saying why when there is none. */
+  orchestrator: () => Orchestrator;
+  /** Which provider is in force, or why none is. */
+  status: () => { provider: string | null; problem: string | null };
   store: () => SandboxStore;
-  providerName: string;
+  /** Try a configuration: the one given, else the one stored. */
+  check: (
+    candidate: {
+      settings: Record<string, unknown>;
+      secrets: Record<string, string>;
+    } | null
+  ) => Promise<{ ok: boolean; detail: string }>;
 }
 
 export function createOrchestratorServer(deps: OrchestratorServerDeps): Server {
-  const { orchestrator } = deps;
-
   async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const url = new URL(request.url ?? '/', 'http://orchestrator.internal');
     if (request.method === 'GET' && url.pathname === '/health') {
-      const health = orchestrator.health();
+      const status = deps.status();
+      const health = status.problem ? null : deps.orchestrator().health();
       return sendJson(response, 200, {
         ok: true,
         orchestrator: true,
-        provider: deps.providerName,
+        provider: status.provider,
+        ...(status.problem ? { problem: status.problem } : {}),
         ...(isRecord(health) && isRecord(health.capabilities)
           ? { capabilities: health.capabilities }
           : {}),
@@ -132,6 +146,21 @@ export function createOrchestratorServer(deps: OrchestratorServerDeps): Server {
     }
     if (!isRecord(body)) return sendError(response, 'bad_request');
 
+    if (url.pathname === '/v1/check') {
+      const secrets: Record<string, string> = {};
+      if (isRecord(body.secrets)) {
+        for (const [name, value] of Object.entries(body.secrets)) {
+          if (typeof value === 'string') secrets[name] = value;
+        }
+      }
+      return sendJson(
+        response,
+        200,
+        await deps.check(isRecord(body.settings) ? { settings: body.settings, secrets } : null)
+      );
+    }
+    // Everything below needs an orchestrator; without one this throws the reason.
+    const orchestrator = deps.orchestrator();
     if (url.pathname === '/v1/ensure') {
       if (typeof body.key !== 'string')
         return sendError(response, 'bad_request', 'key is required');

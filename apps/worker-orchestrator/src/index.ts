@@ -2,40 +2,45 @@
  * The sandbox orchestrator — the process that makes, suspends, resumes
  * and removes sandboxes (docs/sandbox-orchestrator-design.md), and the
  * only one that holds the means to: the Docker engine's socket locally,
- * the sandbox group's data-plane role on Azure. It runs nobody's code.
+ * the sandbox group's identity on Azure. It runs nobody's code.
+ *
+ * WHERE sandboxes are made, how large they are, when they are suspended
+ * and evicted, and what each is started with are the organization's own
+ * configuration: one sealed row an operator edits under Organization →
+ * Sandboxes, read here and picked up again when it changes (host.ts,
+ * stored.ts). Nothing of that is in this process's environment.
  *
  * Callers (the web app, the queue worker) ask it where a scope's sandbox
  * is before each call (server.ts); a timer applies the idle rules and
  * the housekeeping (the orchestrator's `sweep`). Any number of these may
  * run: every decision is a compare-and-set on the `sandboxes` table.
  *
- * Env contract (the provider's own variables are in
- * packages/sandbox-orchestrator/src/config.ts):
+ * Env contract — only what this process needs before it can read the
+ * database, and the two keys it shares with its callers:
+ *   DATABASE_URL                 — the shared Postgres.
+ *   TOKEN_ENCRYPTION_KEY         — opens the stored configuration's
+ *     secrets, as it does every connector's.
  *   SANDBOX_ORCHESTRATOR_API_KEY — required; comma-separated bearer keys
  *     callers present.
- *   SANDBOX_ORCHESTRATOR_PORT    — listen port, default 8097.
  *   SANDBOX_WORKER_API_KEY       — required; the deployment's sandbox
  *     key. Each sandbox's own key is derived from it, so it is never
  *     handed to a sandbox.
- *   DATABASE_URL                 — the shared Postgres (`sandboxes`).
+ *   SANDBOX_ORCHESTRATOR_PORT    — listen port, default 8097.
  *   SANDBOX_SWEEP_SECONDS        — how often the idle rules run, default 30.
- *   BLOB_STORE_PROVIDER and its variables — where an evicted sandbox's
- *     archive is kept (archive-blobs.ts). Without a blob store an
- *     eviction removes the sandbox's work with its machine.
+ *   SANDBOX_DEPLOYMENT           — names this deployment among others
+ *     sharing an engine or a sandbox group, default `renkei`.
  */
 
+import { getConnectorConfig } from '@renkei/connector-config';
+import { loadKeyring } from '@renkei/crypto';
 import { checkDataStore, closeDataStore, getDataStore } from '@renkei/db';
-import {
-  Orchestrator,
-  idleRules,
-  providerFromEnv,
-  templateEnv,
-  type SandboxProvider,
-} from '@renkei/sandbox-orchestrator';
+import { SANDBOX_ORCHESTRATOR_CONNECTOR } from '@renkei/sandbox-client';
 import { watchLogLevel } from '@renkei/settings';
 import { schedulePeriodicSweep } from '@renkei/worker-loop';
-import { archiveBlobStore, archiveBlobsOf, archiveRetentionMs } from './archive-blobs';
+import { archiveBlobsOf, archiveRetentionMs, organizationBlobStore } from './archive-blobs';
+import { OrchestratorHost } from './host';
 import { createOrchestratorServer } from './server';
+import { checkStored, type StoredRow } from './stored';
 import { attachPersistentLogging, logger } from './logger';
 
 const COMPONENT = 'worker-orchestrator';
@@ -65,6 +70,13 @@ async function main(): Promise<void> {
   const masterKey = keys('SANDBOX_WORKER_API_KEY')[0];
   if (!masterKey) fatal('SANDBOX_WORKER_API_KEY is required (the deployment’s sandbox key)');
 
+  const encryptionKey = loadKeyring('TOKEN_ENCRYPTION_KEY');
+  if (!encryptionKey.ok) {
+    fatal(
+      'TOKEN_ENCRYPTION_KEY must be 32 bytes base64: it opens the stored sandbox configuration'
+    );
+  }
+
   const ready = checkDataStore();
   if (!ready.ok) fatal(`database unavailable: ${String(ready.err)}`);
 
@@ -78,54 +90,27 @@ async function main(): Promise<void> {
     fatal(`SANDBOX_SWEEP_SECONDS is not a usable interval: ${process.env.SANDBOX_SWEEP_SECONDS}`);
   }
 
-  let provider: SandboxProvider;
-  let rules: ReturnType<typeof idleRules>;
-  try {
-    provider = await providerFromEnv(process.env);
-    rules = idleRules(process.env);
-  } catch (error) {
-    fatal(error instanceof Error ? error.message : String(error));
-  }
-  try {
-    await provider.check();
-  } catch (error) {
-    // Not fatal: an engine that is restarting comes back, and a call made
-    // meanwhile says why it could not be served.
-    logger.error(
-      'the {provider} sandbox provider did not answer at boot: {error}; no sandbox can be made until it does',
-      {
-        component: COMPONENT,
-        provider: provider.name,
-        error: error instanceof Error ? error.message : String(error),
-      }
-    );
-  }
+  /** The organization's stored configuration, secrets opened. */
+  const read = async (): Promise<StoredRow | null> => {
+    const row = await getConnectorConfig(SANDBOX_ORCHESTRATOR_CONNECTOR, encryptionKey.val);
+    if (!row.ok) throw new Error(`the stored configuration could not be read (${row.err.type})`);
+    return row.val
+      ? { enabled: row.val.enabled, settings: row.val.settings, secrets: row.val.secrets }
+      : null;
+  };
 
-  const store = () => getDataStore().sandboxes;
-  const blobStore = archiveBlobStore(process.env);
-  if (!blobStore) {
-    logger.warn(
-      'no blob store is configured (BLOB_STORE_PROVIDER): a sandbox evicted after {deleteHours} idle hours is removed with everything it holds, and nothing is brought back',
-      { component: COMPONENT, deleteHours: rules.idleDeleteMs / 3_600_000 }
-    );
-  }
-  const orchestrator = new Orchestrator({
-    provider,
-    store,
-    ...(blobStore
-      ? {
-          archives: {
-            store: () => getDataStore().sandboxArchives,
-            blobs: archiveBlobsOf(blobStore),
-            retentionMs: archiveRetentionMs,
-          },
-        }
-      : {}),
+  const host = new OrchestratorHost({
+    read,
     masterKey,
-    env: templateEnv(process.env),
     logger,
-    ...rules,
+    archives: {
+      store: () => getDataStore().sandboxArchives,
+      blobs: archiveBlobsOf(organizationBlobStore),
+      retentionMs: archiveRetentionMs,
+    },
   });
+  await host.reload();
+  host.start();
 
   const stopSweep = schedulePeriodicSweep(
     logger,
@@ -133,6 +118,8 @@ async function main(): Promise<void> {
     `${COMPONENT}/sweep`,
     sweepSeconds * 1000,
     async () => {
+      const orchestrator = host.maybe();
+      if (!orchestrator) return;
       const report = await orchestrator.sweep();
       const acted =
         report.suspended +
@@ -152,22 +139,26 @@ async function main(): Promise<void> {
 
   const server = createOrchestratorServer({
     apiKeys,
-    orchestrator,
-    store,
-    providerName: provider.name,
+    orchestrator: () => host.current(),
+    status: () => host.status(),
+    store: () => getDataStore().sandboxes,
+    check: async (candidate) => {
+      const row = candidate ? { enabled: true, ...candidate } : await read();
+      if (!row) {
+        return { ok: false, detail: 'Nothing is configured yet: save the sandbox setup first.' };
+      }
+      return checkStored(row);
+    },
   });
   server.listen(port, '0.0.0.0', () => {
-    logger.info(
-      'started {application} {version}, listening on port {port}; sandboxes are made by {provider}, suspended after {suspendMinutes} idle minutes and evicted after {deleteHours} idle hours, archived to {archives}',
-      {
-        archives: blobStore ? `the ${blobStore.provider} blob store` : 'nowhere (no blob store)',
-        component: `${COMPONENT}/server`,
-        port,
-        provider: provider.name,
-        suspendMinutes: rules.idleSuspendMs / 60_000,
-        deleteHours: rules.idleDeleteMs / 3_600_000,
-      }
-    );
+    const status = host.status();
+    logger.info('started {application} {version}, listening on port {port}; {state}', {
+      component: `${COMPONENT}/server`,
+      port,
+      state: status.problem
+        ? `no sandbox can be made yet: ${status.problem}`
+        : `sandboxes are made by ${status.provider}`,
+    });
   });
 
   const shutdown = (signal: string): void => {
@@ -176,6 +167,7 @@ async function main(): Promise<void> {
       signal,
     });
     stopSweep();
+    host.stop();
     // Sandboxes are left as they are: the next orchestrator carries on from the table.
     server.close(() => {
       void (async () => {

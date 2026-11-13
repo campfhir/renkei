@@ -20,12 +20,13 @@ export {
 export { DockerSandboxProvider, type DockerProviderOptions } from './docker-provider';
 export {
   AzureSandboxProvider,
+  azureIngressToken,
   createAzureSandboxClient,
+  type AzureIdentity,
   type AzureProviderOptions,
   type AzureSandboxClient,
 } from './azure-provider';
 export { FakeSandboxProvider } from './fake-provider';
-export { idleRules, providerFromEnv, templateEnv, type IdleRules } from './config';
 export {
   ARCHIVE_CONTENT_TYPE,
   DEFAULT_ARCHIVE_RETENTION_MS,

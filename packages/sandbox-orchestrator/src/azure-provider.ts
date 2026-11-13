@@ -427,21 +427,58 @@ export interface AzureClientConfig {
  * The real client: the SDK and the identity library, loaded only here so
  * a Docker deployment never loads either.
  */
-/** A token for the platform's ingress as this process's identity (`DefaultAzureCredential`). */
-export async function azureIngressToken(): Promise<{ token: string; expiresOnTimestamp: number }> {
-  const { DefaultAzureCredential } = await import('@azure/identity');
-  const token = await new DefaultAzureCredential().getToken(AZURE_INGRESS_SCOPE);
-  return { token: token.token, expiresOnTimestamp: token.expiresOnTimestamp };
+/**
+ * Who the orchestrator signs in to Azure as: a service principal when
+ * one is given (the organization's stored configuration), else this
+ * process's own identity — a managed identity where it runs in Azure.
+ */
+export interface AzureIdentity {
+  tenantId: string;
+  clientId: string;
+  clientSecret: string;
 }
 
+async function credentialFor(identity: AzureIdentity | null | undefined) {
+  const { ClientSecretCredential, DefaultAzureCredential } = await import('@azure/identity');
+  return identity
+    ? new ClientSecretCredential(identity.tenantId, identity.clientId, identity.clientSecret)
+    : new DefaultAzureCredential();
+}
+
+/** A way to get tokens for the platform's ingress as that identity. */
+export function azureIngressToken(
+  identity?: AzureIdentity | null
+): () => Promise<{ token: string; expiresOnTimestamp: number }> {
+  return async () => {
+    const token = await (await credentialFor(identity)).getToken(AZURE_INGRESS_SCOPE);
+    return { token: token.token, expiresOnTimestamp: token.expiresOnTimestamp };
+  };
+}
+
+export interface AzureClientConfig {
+  subscriptionId: string;
+  resourceGroup: string;
+  sandboxGroup: string;
+  /** The group's region, e.g. `eastus2`; names the data-plane endpoint. */
+  region: string;
+  /** The data-plane endpoint itself, when it is not the region's default. */
+  endpoint?: string | null;
+  identity?: AzureIdentity | null;
+}
+
+/**
+ * The real client: the SDK and the identity library, loaded only here so
+ * a Docker deployment never loads either.
+ */
 export async function createAzureSandboxClient(
   config: AzureClientConfig
 ): Promise<AzureSandboxClient> {
-  const [{ SandboxGroupClient, endpointForRegion }, { DefaultAzureCredential }] = await Promise.all(
-    [import('@azure/containerapps-sandbox'), import('@azure/identity')]
-  );
+  const [{ SandboxGroupClient, endpointForRegion }, credential] = await Promise.all([
+    import('@azure/containerapps-sandbox'),
+    credentialFor(config.identity),
+  ]);
   const group = new SandboxGroupClient(
-    new DefaultAzureCredential(),
+    credential,
     config.endpoint || endpointForRegion(config.region),
     config.subscriptionId,
     config.resourceGroup,

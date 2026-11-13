@@ -149,17 +149,17 @@ Compression is Zstandard because source trees and dependency
 directories shrink to a fraction at a speed that does not hold an
 eviction up (in the end-to-end run, 11 MB of text became 1.2 KB).
 
-Archives go to the deployment's blob store (`BLOB_STORE_PROVIDER`), in
-their own container on Azure (`SANDBOX_ARCHIVE_CONTAINER`, default
-`renkei-sandbox-archives`). An archive is kept until the scope's next
-eviction replaces it, or the organization's archive retention (admin →
-Settings → Sandbox, 90 days unless changed) passes with nobody coming back. Removing a scope's sandbox on request
-(`/v1/remove`) removes its archive too. **Without a blob store
-configured, an eviction removes the work with the machine**; the
-orchestrator says so at boot.
+Archives go to the organization's file storage — the store set up on
+Organization → Storage, or the deployment's own where the organization
+has none — under `sandbox-archives/`. An archive is kept until the
+scope's next eviction replaces it, or the organization's archive
+retention (admin → Settings → Sandbox, 90 days unless changed) passes
+with nobody coming back. Removing a scope's sandbox on request
+(`/v1/remove`) removes its archive too. **With no storage configured an
+archive cannot be written, so the sandbox is not removed**: it stays
+suspended, with its work, until there is somewhere to keep it.
 
-Both intervals are configuration (`SANDBOX_IDLE_SUSPEND_MINUTES`,
-`SANDBOX_IDLE_DELETE_HOURS`).
+Both intervals are part of the organization's sandbox setup (below).
 
 ## Keys and what a sandbox holds
 
@@ -167,12 +167,11 @@ Both intervals are configuration (`SANDBOX_IDLE_SUSPEND_MINUTES`,
   `HMAC(SANDBOX_WORKER_API_KEY, sandbox id)`. The orchestrator hands it to
   the caller with the address. The deployment's key is never inside a
   sandbox, so what one sandbox holds opens no other.
-- A sandbox is started with the `SANDBOX_TEMPLATE_ENV_*` variables the
-  orchestrator was given — in practice what the shared worker had: the
+- A sandbox is started with the variables the organization's sandbox
+  setup names (below) — in practice what the shared worker had: the
   database URL of the narrowed **sandbox role**, its delegate key, the
-  environment-secrets key. Never the organization's encryption keys
-  (`scripts/check-compose-secrets.mjs` asserts this for the orchestrator
-  as it does for the sandbox).
+  environment-secrets key. Never the organization's encryption keys: the
+  setup refuses those names when it is saved, and again when it is read.
 - **No sandbox has a way to the host's container engine.** The socket is
   mounted in the orchestrator alone, which is what retires the socket
   proxy.
@@ -198,18 +197,18 @@ caller's command still cannot open it.
   when a service's lifetime ran out.
 - On Azure a sandbox is a microVM and runs the engine as it is. A local
   Docker container can only when privileged
-  (`SANDBOX_DOCKER_NESTED_ENGINE=1` on the orchestrator): for a
+  (“Run sandboxes privileged” in the sandbox setup): for a
   developer's machine, never a shared host. Without it the worker
   reports services as a capability it lacks.
 
 ## Who may call a sandbox (Azure)
 
 Microsoft Entra decides, enforced by the platform's ingress outside the
-sandbox (`SANDBOX_AZURE_PORT_AUTH=entra`, the default).
+sandbox (the setup's “Worker port: Microsoft Entra”, the default).
 
 - **The worker's port** takes a bearer token for the ingress
   (`https://auth.adcproxy.io`) from the identities listed in
-  `SANDBOX_AZURE_ENTRA_ALLOWED` — the orchestrator's own. The
+  the setup's “Allowed identities” — the orchestrator's own. The
   orchestrator gets that token as itself and answers it to callers with
   the sandbox's address, so the web app and the queue worker need no
   Azure identity. The ingress strips `authorization` before the request
@@ -231,9 +230,57 @@ sandbox (`SANDBOX_AZURE_PORT_AUTH=entra`, the default).
   already opened until that preview is stopped; and the project's own
   server must listen on all interfaces to be reached this way.
 
-With `SANDBOX_AZURE_PORT_AUTH=anonymous` the worker's port is guarded by
+With “Worker port: Sandbox key only” the worker's port is guarded by
 the per-sandbox key alone. On Docker there is no ingress: the key is the
 bearer, on a network only the callers share.
+
+## Where sandboxes are set up
+
+Not in the environment. Where sandboxes are made, how large they are,
+the idle rules and what each is started with are **the organization's
+own configuration**: one row in `connector_configs`
+(`sandbox-orchestrator`), its secrets sealed with the deployment key
+like every connector's. An operator edits it on **Organization →
+Sandboxes** (`apps/web/app/(app)/admin/sandboxes`):
+
+- **Provider** — Azure Container Apps sandboxes (subscription, resource
+  group, sandbox group, region, disk image, size, VNet connection) or a
+  Docker engine (image, networks, size).
+- **Identity** (Azure) — a service principal's tenant id, client id and
+  client secret, or nothing, for the orchestrator's own managed identity.
+- **Who may call a sandbox** (Azure) — Entra or the sandbox key alone,
+  the allowed identities, allowed source ranges.
+- **When a sandbox is idle** — suspend after, evict after.
+- **What a sandbox is started with** — variables by name; their values
+  are secrets.
+
+Secrets are write-only: the page shows which are stored, never what they
+are, and a blank field keeps the stored one. **Test connection** hands
+the setup about to be saved to the orchestrator, which asks the provider
+whether it answers (the identity, its role and the sandbox group on
+Azure; the engine and the image on Docker) without making a sandbox.
+
+One module says what a valid setup is
+(`packages/sandbox-client/src/orchestrator-config.ts`): the admin routes
+check a submitted form with it and the orchestrator reads the stored row
+with it. The orchestrator re-reads the row every quarter of a minute and
+rebuilds itself when it has changed (`apps/worker-orchestrator`
+`host.ts`, `stored.ts`), so a save takes effect with no restart. Until a
+usable setup is stored it makes nothing, and every call — and the page —
+says why.
+
+Sandboxes are made for you: the first call for a scope makes its
+sandbox. Nothing is created by hand.
+
+What stays in the environment is only what a process needs before it can
+read the database, and the keys two processes share:
+
+| Where                 | Variable                                                   | For                                       |
+| --------------------- | ---------------------------------------------------------- | ----------------------------------------- |
+| orchestrator          | `DATABASE_URL`, `TOKEN_ENCRYPTION_KEY`                     | reading the stored setup                  |
+| orchestrator          | `SANDBOX_ORCHESTRATOR_API_KEY`                             | the key its callers present               |
+| orchestrator          | `SANDBOX_WORKER_API_KEY`                                   | each sandbox's own key is derived from it |
+| web app, queue worker | `SANDBOX_ORCHESTRATOR_URL`, `SANDBOX_ORCHESTRATOR_API_KEY` | reaching the orchestrator                 |
 
 ## Running it locally
 
@@ -243,12 +290,10 @@ lifecycle.
 ```sh
 docker build -f docker/Dockerfile --target sandbox -t renkei-sandbox:latest .
 
-# orchestrator on the host, sandboxes published on loopback (plus the
+# the orchestrator, on the host (with the TOKEN_ENCRYPTION_KEY and
 # LOG_ENCRYPTION_KEY the other workers run with)
 SANDBOX_ORCHESTRATOR_API_KEY=dev-orchestrator-key \
 SANDBOX_WORKER_API_KEY=dev-sandbox-key \
-SANDBOX_DOCKER_PUBLISH_HOST=127.0.0.1 \
-SANDBOX_TEMPLATE_ENV_DATABASE_URL=postgres://renkei:renkei@host.docker.internal:5432/renkei \
 DATABASE_URL=postgres://renkei:renkei@localhost:5432/renkei \
 pnpm --filter @renkei/worker-orchestrator dev
 
@@ -256,24 +301,35 @@ pnpm --filter @renkei/worker-orchestrator dev
 SANDBOX_ORCHESTRATOR_URL=http://127.0.0.1:8097 SANDBOX_ORCHESTRATOR_API_KEY=dev-orchestrator-key pnpm dev
 ```
 
+Then, as an operator, on Organization → Sandboxes: provider **Docker
+engine**, image `renkei-sandbox:latest`, “Publish on” `127.0.0.1`, and
+the variables a worker needs (`DATABASE_URL` as the sandbox reaches it,
+e.g. `postgres://renkei:renkei@host.docker.internal:5432/renkei`). Save,
+then Test connection.
+
 In the deploy stack it is the `orchestrator` compose profile
-(`docker-compose.yaml`, `worker-orchestrator`). The full list of
-variables is in `packages/sandbox-orchestrator/src/config.ts`.
+(`docker-compose.yaml`, `worker-orchestrator`).
 
 ## Running it on Azure
 
+In Azure, once:
+
 1. Create a sandbox group and import the sandbox image as a disk image.
-2. Give the orchestrator's identity the **Container Apps SandboxGroup
-   Data Owner** role on the group (`DefaultAzureCredential`: a managed
-   identity, or `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` /
-   `AZURE_CLIENT_SECRET`).
-3. Connect the group to the VNet the database and the delegate are on,
-   and name that connection in `SANDBOX_AZURE_VNET_CONNECTION`.
-4. Set `SANDBOX_PROVIDER=azure` and the `SANDBOX_AZURE_*` variables,
-   `SANDBOX_AZURE_ENTRA_ALLOWED` among them (the orchestrator's identity).
-5. In the portal, set the tenant id on the worker port's Entra policy if
-   the SDK has not: scripted (bearer) calls need it, and the preview SDK
-   sets allowed emails only.
+2. Give the orchestrator's identity — its managed identity, or a service
+   principal — the **Container Apps SandboxGroup Data Owner** role on the
+   group.
+3. Connect the group to the VNet the database and the delegate are on.
+
+Then on Organization → Sandboxes: the subscription, resource group,
+sandbox group and region; the disk image and the VNet connection by
+name; the service principal's ids and secret (or neither, for a managed
+identity); the identity allowed to call a worker; and the variables a
+worker is started with. Test connection, then Save.
+
+One step may still need the portal: the preview SDK sets a port's
+allowed emails but not the tenant id that scripted (bearer) calls
+require. If the worker's port refuses the service identity, switch
+“Worker port” to **Sandbox key only** while that is sorted out.
 
 **The Azure provider has not been run against a live sandbox group.** It
 is written against the SDK's types and tested against a stand-in for the

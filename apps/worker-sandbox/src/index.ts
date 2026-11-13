@@ -325,7 +325,7 @@ async function main(): Promise<void> {
           ? // One scope's own sandbox runs its services INSIDE itself: an
             // engine of its own (Podman, started by the image's entrypoint),
             // never the host's.
-            'This sandbox runs services on an engine of its own (Podman, started by the image’s entrypoint); on a microVM it starts as it is, in a local Docker container it needs SANDBOX_DOCKER_NESTED_ENGINE=1 on the orchestrator.'
+            'This sandbox runs services on an engine of its own (Podman, started by the image’s entrypoint); on a microVM it starts as it is, in a local Docker container it needs “Run sandboxes privileged” in the organization’s sandbox setup.'
           : 'Mount the engine socket into this container through a socket proxy (docker-compose.yaml, worker-sandbox) or point SANDBOX_DOCKER_HOST at one.');
       logger.info('services are unavailable on this deployment: {problem}', {
         component: 'worker-sandbox/services',

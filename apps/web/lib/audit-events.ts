@@ -58,6 +58,7 @@ export type AuditAction =
   | 'llm_model.deleted'
   /** An operator pointed chat attachment storage somewhere (details: account, container, endpoint — never the key). */
   | 'storage.configured'
+  | 'sandboxes.configured'
   /** An operator replaced the identity provider (details: issuer). */
   | 'oidc.provider_replaced'
   /** An operator changed the token limits: the weekly or monthly limit, the weekly reset, a model's limit (details: changed). */

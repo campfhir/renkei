@@ -1,7 +1,12 @@
 import type { Server } from 'node:http';
 import { createMemoryDataStore } from '@renkei/db';
 import { isRecord } from '@renkei/guards';
-import { FakeSandboxProvider, Orchestrator, sandboxApiKey } from '@renkei/sandbox-orchestrator';
+import {
+  FakeSandboxProvider,
+  Orchestrator,
+  OrchestratorError,
+  sandboxApiKey,
+} from '@renkei/sandbox-orchestrator';
 import { createOrchestratorServer } from './server';
 
 /** A response's JSON body as a record ({} when it is not one). */
@@ -23,11 +28,20 @@ async function start() {
     logger: silent,
     probe: async () => ({ ok: true, capabilities: { browser: true, scripts: 'isolated' } }),
   });
+  const state: { problem: string | null } = { problem: null };
+  const checked: unknown[] = [];
   const server: Server = createOrchestratorServer({
     apiKeys: ['caller-key'],
-    orchestrator,
+    orchestrator: () => {
+      if (state.problem) throw new OrchestratorError('provider', state.problem);
+      return orchestrator;
+    },
+    status: () => ({ provider: state.problem ? null : provider.name, problem: state.problem }),
     store: () => data.sandboxes,
-    providerName: provider.name,
+    check: async (candidate) => {
+      checked.push(candidate);
+      return { ok: true, detail: 'Reached it.' };
+    },
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
@@ -38,7 +52,7 @@ async function start() {
       headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
-  return { base, post, provider, server };
+  return { base, post, provider, server, state, checked };
 }
 
 describe('the orchestrator’s HTTP surface', () => {
@@ -145,6 +159,36 @@ describe('the orchestrator’s HTTP surface', () => {
       400
     );
     expect((await running.post('/v1/expose', { key: 'ann' })).status).toBe(400);
+  });
+
+  it('says why no sandbox can be made when the organization has not set sandboxes up, on every call and on /health', async () => {
+    running.state.problem = 'sandboxes are not set up yet';
+    const response = await running.post('/v1/ensure', { key: 'ann' });
+    expect(response.status).toBe(502);
+    expect(await record(response)).toEqual({
+      error: { type: 'provider', message: 'sandboxes are not set up yet' },
+    });
+    expect(await record(await fetch(`${running.base}/health`))).toEqual({
+      ok: true,
+      orchestrator: true,
+      provider: null,
+      problem: 'sandboxes are not set up yet',
+    });
+  });
+
+  it('tries a configuration it is handed, or the stored one, without needing an orchestrator in force', async () => {
+    running.state.problem = 'sandboxes are not set up yet';
+    const tried = await running.post('/v1/check', {
+      settings: { provider: 'docker' },
+      secrets: { 'env.DATABASE_URL': 'postgres://x', odd: 7 },
+    });
+    expect(await record(tried)).toEqual({ ok: true, detail: 'Reached it.' });
+    await running.post('/v1/check', {});
+    expect(running.checked).toEqual([
+      { settings: { provider: 'docker' }, secrets: { 'env.DATABASE_URL': 'postgres://x' } },
+      null,
+    ]);
+    expect((await running.post('/v1/check', {}, 'wrong')).status).toBe(401);
   });
 
   it('removes a scope’s sandbox on request', async () => {

@@ -747,6 +747,9 @@ importers:
       '@renkei/blob-store':
         specifier: workspace:*
         version: link:../../packages/blob-store
+      '@renkei/connector-config':
+        specifier: workspace:*
+        version: link:../../packages/connector-config
       '@renkei/crypto':
         specifier: workspace:*
         version: link:../../packages/crypto
@@ -756,6 +759,9 @@ importers:
       '@renkei/guards':
         specifier: workspace:*
         version: link:../../packages/guards
+      '@renkei/sandbox-client':
+        specifier: workspace:*
+        version: link:../../packages/sandbox-client
       '@renkei/sandbox-orchestrator':
         specifier: workspace:*
         version: link:../../packages/sandbox-orchestrator

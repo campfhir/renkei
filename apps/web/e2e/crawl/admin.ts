@@ -17,6 +17,7 @@ export const adminPages: CrawlPage[] = [
   // subjects whose agents cannot run): the section's heading is on either.
   { path: '/admin/agents', expectText: 'Paused people' },
   { path: '/admin/storage', expectText: 'Storage' },
+  { path: '/admin/sandboxes', expectText: 'Where sandboxes are made' },
   { path: '/admin/grants', expectText: 'Access' },
   { path: '/admin/redaction', expectText: 'Sensitive data' },
   {

@@ -31,7 +31,7 @@
 # (dropped to its own uid) cannot open it, exactly as with the host's
 # socket before. Nothing outside the sandbox is involved: no host engine,
 # no socket proxy. If the engine does not come up (a local Docker
-# container without SANDBOX_DOCKER_NESTED_ENGINE on the orchestrator),
+# container the organization's sandbox setup does not run privileged),
 # the worker starts all the same and reports services as a capability it
 # lacks.
 set -eu

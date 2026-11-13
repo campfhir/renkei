@@ -38,12 +38,33 @@ export {
   resetSandboxRoutingForTests,
   sandboxConfig,
   sandboxEndpointFor,
+  checkSandboxOrchestrator,
   exposeSandboxPort,
   sandboxOrchestratorConfig,
+  sandboxOrchestratorStatus,
   sandboxRouteKey,
   unexposeSandboxPort,
   type SandboxEndpoint,
+  type SandboxOrchestratorStatus,
 } from './routing';
+
+export {
+  AZURE_CLIENT_SECRET_KEY,
+  DEFAULT_ORCHESTRATOR_SETTINGS,
+  SANDBOX_ORCHESTRATOR_CONNECTOR,
+  envSecretKey,
+  mergeOrchestratorSecrets,
+  orchestratorSettingsOfRow,
+  orchestratorTemplateEnv,
+  orchestratorViewOfRow,
+  parseOrchestratorInput,
+  type AzureSandboxSettings,
+  type DockerSandboxSettings,
+  type OrchestratorInput,
+  type OrchestratorView,
+  type SandboxOrchestratorSettings,
+  type SandboxProviderKind,
+} from './orchestrator-config';
 
 export interface WireSandboxFile {
   id: string;

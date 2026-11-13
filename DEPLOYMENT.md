@@ -756,17 +756,20 @@ sandbox worker, the sandbox orchestrator (`worker-orchestrator`, the
 first use — a container on this host's Docker engine, or a microVM in an
 Azure Container Apps sandbox group — suspends it after 15 idle minutes
 and evicts it after 24 idle hours: what it holds is archived, compressed,
-to the blob store (`BLOB_STORE_PROVIDER`; without one the work goes with
-the machine) and unpacked into the scope's next sandbox. Set
-`SANDBOX_ORCHESTRATOR_URL` and `SANDBOX_ORCHESTRATOR_API_KEY` in `.env`
-and start with `--profile orchestrator --scale worker-sandbox=0`. The
-orchestrator is then the only container holding the engine's socket; no
+to the organization's storage and unpacked into the scope's next sandbox.
+Set `SANDBOX_ORCHESTRATOR_URL` and `SANDBOX_ORCHESTRATOR_API_KEY` in
+`.env`, start with `--profile orchestrator --scale worker-sandbox=0`,
+and then set sandboxes up as an operator under **Organization →
+Sandboxes**: where they are made, the identity, the idle rules and what
+each is started with are stored sealed in the database, not in `.env`,
+and the orchestrator picks a change up without a restart. The
+orchestrator is the only container holding the engine's socket; no
 sandbox does. Code project services run inside each sandbox on an engine
 of its own (Podman) — on Azure as they are, on this host's Docker only
-with `SANDBOX_DOCKER_NESTED_ENGINE=1` (privileged sandboxes; a
-developer's machine). `docs/sandbox-orchestrator-design.md` has the variables,
-the Azure setup, and the list of what still runs the old way. Run
-`migrate` first (migrations 180 and 181).
+with “Run sandboxes privileged” (a developer's machine).
+`docs/sandbox-orchestrator-design.md` has the page's fields, the Azure
+setup, and the list of what still runs the old way. Run `migrate` first
+(migrations 180 and 181).
 
 **More than one sandbox replica:** fine on one host, because Compose
 replicas of a service share its named volumes — and the sandbox worker
