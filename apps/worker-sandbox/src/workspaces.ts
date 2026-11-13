@@ -881,18 +881,33 @@ export async function measureWorkspace(dir: string): Promise<number> {
 
 /**
  * A storage key names exactly one checkout: `<caller hash>/<checkout
- * id>`, the two segments `newWorkspaceStorageKey` joins. Anything else
+ * id>`, the two segments `newWorkspaceStorageKey` joins (or the older
+ * three-segment form below). Anything else
  * (an empty key, a bare caller hash, one that climbs) would make the
  * recursive removal below reach for a caller's whole directory or the
  * volume itself, so it is refused rather than trusted.
  */
 export function isCheckoutStorageKey(storageKey: string): boolean {
   const segments = storageKey.split('/');
+  if (!segments.every((segment) => segment.length > 0 && segment !== '.' && segment !== '..')) {
+    return false;
+  }
+  if (segments.length === 2) return true;
+  // A checkout from before the single organization (migration 153) is
+  // stored a level deeper, under its tenant: `<tenant id>/<caller hash>/
+  // <checkout id>`. It still names exactly one checkout, and it has to be
+  // removable, or the sweep refuses it on every pass for ever and its
+  // bytes are never freed. Only that exact shape: a tenant's uuid, then
+  // the caller's 64-hex hash — never three segments of anything.
   return (
-    segments.length === 2 &&
-    segments.every((segment) => segment.length > 0 && segment !== '.' && segment !== '..')
+    segments.length === 3 &&
+    LEGACY_TENANT_SEGMENT.test(segments[0] ?? '') &&
+    CALLER_HASH_SEGMENT.test(segments[1] ?? '')
   );
 }
+
+const LEGACY_TENANT_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const CALLER_HASH_SEGMENT = /^[0-9a-f]{64}$/;
 
 /**
  * How long past its expiry a row whose bytes are on no instance's disk
