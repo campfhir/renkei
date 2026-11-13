@@ -6,6 +6,7 @@
 
 import {
   cellStatus,
+  cellsToRecover,
   cellsToRun,
   editBlocker,
   initialNotebookView,
@@ -263,6 +264,76 @@ describe('a kernel that was lost', () => {
       tone: 'info',
       text: 'The kernel had stopped and was started again: what earlier cells defined is gone. Run them again if this cell needs them.',
     });
+  });
+
+  const CELLS = [
+    { type: 'markdown', index: 0, source: '# T' },
+    { type: 'code', index: 1, source: 'import sys' },
+    { type: 'code', index: 2, source: '' },
+    { type: 'code', index: 3, source: 'REPO = "."' },
+    { type: 'code', index: 4, source: 'sys.executable' },
+    { type: 'code', index: 5, source: 'later()' },
+  ];
+  const lostAtFour = () =>
+    after(
+      { type: 'kernelKnown', kernel: KERNEL },
+      { type: 'runAsked', cells: [4] },
+      finished(4, { started: true, ...raised('NameError', "name 'sys' is not defined") })
+    );
+
+  it('offers the way back: the cells above the one that found it gone, then that one', () => {
+    const state = lostAtFour();
+    expect(state.notice?.text).toBe(
+      "The cell raised NameError: name 'sys' is not defined. The kernel had stopped and was started again: what earlier cells defined is gone. Run them again if this cell needs them."
+    );
+    // Not the empty cell, not the cells below.
+    expect(cellsToRecover(state, CELLS)).toEqual([1, 3, 4]);
+  });
+
+  it('taking the way back runs them in order and the offer goes', () => {
+    const state = then(lostAtFour(), { type: 'runAsked', cells: [1, 3, 4] });
+    expect([state.running, state.queue]).toEqual([1, [3, 4]]);
+    expect(cellsToRecover(state, CELLS)).toEqual([]);
+    const done = then(state, finished(1), finished(3), finished(4));
+    expect(cellsToRecover(done, CELLS)).toEqual([]);
+    expect(done.notice?.text).toBe(
+      'Ran 3 cells. The outputs are unsaved until you save the notebook.'
+    );
+  });
+
+  it('there is nothing to offer when the cell that found it gone is the first', () => {
+    const state = after(
+      { type: 'kernelKnown', kernel: KERNEL },
+      { type: 'runAsked', cells: [1] },
+      finished(1, { started: true })
+    );
+    expect(cellsToRecover(state, CELLS)).toEqual([]);
+  });
+
+  it('in a run of several, it is the first cell to land in the new kernel that marks the place', () => {
+    const state = after(
+      { type: 'kernelKnown', kernel: KERNEL },
+      { type: 'runAsked', cells: [3, 4, 5] },
+      finished(3, { started: true }),
+      finished(4),
+      finished(5)
+    );
+    expect(cellsToRecover(state, CELLS)).toEqual([1, 3]);
+  });
+
+  it('the offer goes with the notice, a restart, or the cells being rearranged', () => {
+    expect(cellsToRecover(then(lostAtFour(), { type: 'noticeDismissed' }), CELLS)).toEqual([]);
+    expect(
+      cellsToRecover(then(lostAtFour(), { type: 'restartAsked' }, { type: 'restarted' }), CELLS)
+    ).toEqual([]);
+    expect(cellsToRecover(then(lostAtFour(), { type: 'cellRemoved', index: 0 }), CELLS)).toEqual(
+      []
+    );
+  });
+
+  it('a run that lost nothing offers nothing', () => {
+    const state = after({ type: 'runAsked', cells: [4] }, finished(4, raised('NameError', 'x')));
+    expect(cellsToRecover(state, CELLS)).toEqual([]);
   });
 
   it('the very first run starting a kernel is nothing to remark on', () => {

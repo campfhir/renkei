@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-13',
     entries: [
       {
+        kind: 'changed',
+        title: 'Notebooks offer the way back when the kernel was lost',
+        detail:
+          "When a notebook cell runs and its kernel had to be started again, so earlier cells' results are gone, the notice now has one press that runs the cells above and then that cell.",
+      },
+      {
         kind: 'added',
         title: 'Notebooks open, edit and run in code projects',
         detail:

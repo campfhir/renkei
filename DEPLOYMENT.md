@@ -771,6 +771,16 @@ and the worker says so at boot. Each replica's sweep removes
 only bytes it can see and leaves the rest a day past expiry, so replicas
 on separate disks (several hosts) never delete each other's rows early.
 
+One thing does live in a replica's memory: the processes it keeps running
+for the code pane — a notebook's kernel and an editor's language servers.
+A call that lands on another replica finds none and starts its own, so
+with more than one replica behind one address a notebook loses what its
+earlier cells defined from one run to the next (the pane says the kernel
+"had stopped and was started again" each time). Run the sandbox as a
+single replica where notebooks are used, or route each caller to one
+replica consistently. A restart or redeploy of the worker ends its
+kernels in the same way, once.
+
 **Horizontal scale:** either process may run as N instances. Claims take
 row locks (`FOR UPDATE SKIP LOCKED`), and messages sharing an ordering key
 (one To Do list's index writes, one subscription's delta rounds, one room's

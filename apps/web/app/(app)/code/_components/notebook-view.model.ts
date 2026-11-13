@@ -57,6 +57,11 @@ export interface NotebookViewState {
   /** The cell that raised and stopped the last run. */
   failed: number | null;
   notice: Notice | null;
+  /**
+   * The cell whose run found no kernel and had to start one, when there had
+   * been one: the cells above it are no longer defined in the new kernel.
+   */
+  lostAt: number | null;
   /** The markdown cell open as text. */
   editing: number | null;
   restarting: boolean;
@@ -108,6 +113,7 @@ export const initialNotebookView: NotebookViewState = {
   stopping: false,
   failed: null,
   notice: null,
+  lostAt: null,
   editing: null,
   restarting: false,
   packages: { open: false, text: '', installing: false, log: null, succeeded: null },
@@ -179,12 +185,15 @@ export function notebookViewReducer(
         stopping: false,
         failed: null,
         notice: null,
+        lostAt: null,
       };
     }
     case 'cellFinished': {
       if (action.index !== state.running) return state;
       const { run } = action;
       const lost = run.started && state.kernel !== null;
+      // The first cell of this run to land in the new kernel is where state was lost.
+      const lostAt = lost ? (state.lostAt ?? action.index) : state.lostAt;
       const ran = state.ran + 1;
       if (!run.succeeded) {
         const skipped = state.queue.length;
@@ -201,6 +210,7 @@ export function notebookViewReducer(
           ran: 0,
           stopping: false,
           failed: state.stopping ? null : action.index,
+          lostAt,
           notice: {
             tone: state.stopping ? 'info' : 'bad',
             text: `${why}${skipped > 0 ? ` ${plural(skipped, 'cell')} after it ${skipped === 1 ? 'was' : 'were'} not run.` : ''}${lost ? ` ${LOST_KERNEL}` : ''}`,
@@ -215,6 +225,7 @@ export function notebookViewReducer(
           running: next,
           queue: state.queue.slice(1),
           ran,
+          lostAt,
           notice: lost ? { tone: 'info', text: LOST_KERNEL } : state.notice,
         };
       }
@@ -225,6 +236,7 @@ export function notebookViewReducer(
         queue: [],
         ran: 0,
         stopping: false,
+        lostAt,
         notice: lost
           ? { tone: 'info', text: LOST_KERNEL }
           : ran > 1
@@ -258,6 +270,7 @@ export function notebookViewReducer(
         restarting: false,
         kernel: null,
         failed: null,
+        lostAt: null,
         notice: {
           tone: 'info',
           text: 'The kernel was restarted: nothing is defined until cells are run again. Installed packages are kept.',
@@ -266,18 +279,21 @@ export function notebookViewReducer(
     case 'restartRefused':
       return { ...state, restarting: false, notice: { tone: 'bad', text: action.error } };
     case 'noticeDismissed':
-      return { ...state, notice: null };
+      return { ...state, notice: null, lostAt: null };
     case 'cellInserted':
       if (structureLocked(state)) return state;
       return {
         ...state,
         failed: null,
+        lostAt: null,
         // New text opens ready to type; a code cell is always ready.
         editing: action.cell === 'markdown' ? action.index : null,
       };
     case 'cellRemoved':
     case 'cellMoved':
-      return structureLocked(state) ? state : { ...state, failed: null, editing: null };
+      return structureLocked(state)
+        ? state
+        : { ...state, failed: null, lostAt: null, editing: null };
     case 'editStarted':
       return { ...state, editing: action.index };
     case 'editEnded':
@@ -372,6 +388,22 @@ export function cellsToRun(
   return cells
     .filter((cell) => cell.type === 'code' && cell.source.trim() !== '')
     .map((cell) => cell.index);
+}
+
+/**
+ * After a run that had to start a new kernel: the cells to run to get back
+ * what was lost — every code cell from the top down to and including the
+ * one that found the kernel gone. Empty when nothing was lost, or when
+ * that cell is the first there is (nothing above it to bring back).
+ */
+export function cellsToRecover(
+  state: NotebookViewState,
+  cells: readonly { type: string; index: number; source: string }[]
+): number[] {
+  const lostAt = state.lostAt;
+  if (lostAt === null) return [];
+  const upTo = cellsToRun(cells).filter((index) => index <= lostAt);
+  return upTo.length > 1 ? upTo : [];
 }
 
 /** The kernel, in the toolbar's words. */
