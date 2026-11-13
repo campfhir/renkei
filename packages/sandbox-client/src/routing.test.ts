@@ -37,7 +37,16 @@ async function up(id: string, address: string, at: number): Promise<void> {
 const urlFor = async (subject: string | null, now: number) =>
   (await sandboxEndpointFor(subject, now))?.url;
 
+/** Addresses that do not answer from here, as an instance's address on a network this process is not on. */
+let unreachable: string[] = [];
+
 beforeEach(() => {
+  unreachable = [];
+  jest.spyOn(global, 'fetch').mockImplementation(async (input) => {
+    const url = String(input);
+    if (unreachable.some((address) => url.startsWith(address))) throw new Error('ECONNREFUSED');
+    return new Response('{"ok":true}', { status: 200 });
+  });
   process.env.SANDBOX_WORKER_URL = `${SHARED}/`;
   process.env.SANDBOX_WORKER_API_KEY = 'k';
   store = createMemoryDataStore();
@@ -46,6 +55,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  jest.restoreAllMocks();
   resetDataStore();
   delete process.env.SANDBOX_WORKER_URL;
   delete process.env.SANDBOX_WORKER_API_KEY;
@@ -157,6 +167,45 @@ describe('an instance that stops saying it is up', () => {
   it('a caller whose instance has no row left, and nobody up, falls back to the shared address', async () => {
     await store.sandboxInstances.removeUnseenSince(new Date(later));
     expect(await urlFor('ann', later)).toBe(SHARED);
+  });
+});
+
+describe('an instance on more networks than this process', () => {
+  const DB_NET = 'http://172.30.0.4:8092';
+
+  it('is called at the address that answers from here, whichever it listed first', async () => {
+    unreachable = [DB_NET];
+    await up('sandbox-a', `${DB_NET},${A}`, T0);
+    expect(await urlFor('ann', T0)).toBe(A);
+    resetSandboxRoutingForTests();
+    await up('sandbox-a', `${A},${DB_NET}`, T0);
+    expect(await urlFor('ann', T0)).toBe(A);
+  });
+
+  it('is asked which address answers once, not on every call', async () => {
+    unreachable = [DB_NET];
+    await up('sandbox-a', `${DB_NET},${A}`, T0);
+    await urlFor('ann', T0);
+    await urlFor('bob', T0);
+    await urlFor('ann', T0 + 60_000);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('that cannot be reached from here at all is not given callers: one that can be is', async () => {
+    unreachable = [A];
+    await up('sandbox-a', A, T0);
+    await up('sandbox-b', B, T0);
+    expect(await urlFor('ann', T0)).toBe(B);
+    expect(await urlFor('bob', T0)).toBe(B);
+  });
+
+  it('with no instance reachable from here, calls go to the shared address as they did before', async () => {
+    unreachable = [A, B];
+    await up('sandbox-a', A, T0);
+    await up('sandbox-b', B, T0);
+    expect(await urlFor('ann', T0)).toBe(SHARED);
+    expect(await store.sandboxInstances.assignment('ann')).toBeNull();
+    expect(await sandboxEndpoints(T0)).toEqual([{ url: SHARED, key: 'k' }]);
   });
 });
 

@@ -1519,6 +1519,10 @@ describe('previews', () => {
     });
 
     it('a member’s preview is reached on the instance the caller is assigned to', async () => {
+      // Both instances answer their health check from here.
+      global.fetch = jest.fn(
+        async () => new Response('{"ok":true}', { status: 200 })
+      ) as unknown as typeof fetch;
       const first = await sbPreviewProxyTarget({ subject: 'code-project:p1', name: 'web' }, 'x');
       const again = await sbPreviewProxyTarget({ subject: 'code-project:p1', name: 'web' }, 'y');
       expect([`${A}/v1/previews/proxy/web/x`, `${B}/v1/previews/proxy/web/x`]).toContain(
@@ -1530,6 +1534,7 @@ describe('previews', () => {
     it('a share link, which names no caller, goes to the instance that says the token is its own', async () => {
       const asked: string[] = [];
       global.fetch = jest.fn(async (url: string) => {
+        if (url.endsWith('/health')) return new Response('{"ok":true}', { status: 200 });
         asked.push(url);
         return new Response(JSON.stringify({ held: url.startsWith(B) }), { status: 200 });
       }) as unknown as typeof fetch;

@@ -10,7 +10,8 @@
  * stable for a restarted container and for a StatefulSet's pod, new for
  * a container made afresh. `address` is where the app reaches this
  * instance and no other: SANDBOX_WORKER_ADVERTISE_URL when set, else
- * its first non-loopback IPv4 on the listening port.
+ * each of its non-loopback IPv4 addresses on the listening port, for
+ * the caller to try.
  *
  * Stopping does not take the row away. An instance that is restarting
  * is back within its callers' patience and still holds their checkouts;
@@ -34,18 +35,26 @@ export function instanceId(): string {
   return process.env.SANDBOX_INSTANCE_ID?.trim() || hostname();
 }
 
-/** This instance's own address, as the app reaches it. */
+/**
+ * This instance's own address, as the app reaches it: the one configured,
+ * or every non-loopback IPv4 it has on the listening port, comma-
+ * separated. An instance is often on more than one network (the app's,
+ * and one of its own for its database) and cannot know which the app
+ * shares with it, so it names them all and each caller uses the one that
+ * answers (packages/sandbox-client routing.ts).
+ */
 export function advertisedAddress(port: number): string {
   const configured = process.env.SANDBOX_WORKER_ADVERTISE_URL?.trim();
   if (configured) return configured.replace(/\/+$/, '');
+  const found: string[] = [];
   for (const addresses of Object.values(networkInterfaces())) {
     for (const address of addresses ?? []) {
       if (address.family === 'IPv4' && !address.internal) {
-        return `http://${address.address}:${port}`;
+        found.push(`http://${address.address}:${port}`);
       }
     }
   }
-  return `http://127.0.0.1:${port}`;
+  return found.length > 0 ? found.join(',') : `http://127.0.0.1:${port}`;
 }
 
 /** Say this instance is up now and keep saying so; `stop` ends the saying. */

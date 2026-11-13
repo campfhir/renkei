@@ -107,9 +107,12 @@ describe('its name and address', () => {
     expect(instanceId()).toBe('sandbox-0');
   });
 
-  it('the address is the one configured, else this machine’s own on the listening port', () => {
+  it('the address is the one configured, else each of this machine’s own on the listening port', () => {
     delete process.env.SANDBOX_WORKER_ADVERTISE_URL;
-    expect(advertisedAddress(8092)).toMatch(/^http:\/\/\d+\.\d+\.\d+\.\d+:8092$/);
+    // Every address it has, for the caller to find the one on a network they share.
+    expect(advertisedAddress(8092)).toMatch(
+      /^http:\/\/\d+\.\d+\.\d+\.\d+:8092(,http:\/\/\d+\.\d+\.\d+\.\d+:8092)*$/
+    );
     process.env.SANDBOX_WORKER_ADVERTISE_URL = 'http://sandbox-0.sandbox:8092/';
     expect(advertisedAddress(8092)).toBe('http://sandbox-0.sandbox:8092');
   });

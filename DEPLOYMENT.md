@@ -797,10 +797,13 @@ alike, and for everything until an instance has registered.
   image under `scale: N`) is a new instance, and callers are spread over
   the new ones. With the shared volumes above their checkouts are still
   there; without, give instances stable names and their own disks.
-- Instances must be reachable from the app at their own addresses: each
-  advertises its first non-loopback IPv4 on the worker's port, or
-  `SANDBOX_WORKER_ADVERTISE_URL` when that is not where the app should
-  call it (a pod's stable DNS name, say).
+- Nothing has to be set for the app to find an instance. Each
+  advertises every address it has on the worker's port (it is usually on
+  more than one network: the app's, and its own for its database) and the
+  app uses the one that answers from where it is. Set
+  `SANDBOX_WORKER_ADVERTISE_URL` only where none of those is the way in
+  (a pod's stable DNS name behind a NAT, say). A process that can reach
+  no instance directly keeps using the shared address, as before.
 - Sharing `/workspaces` and `/data` between instances is no longer what
   makes several of them work. It is what lets a caller moved off a lost
   instance find their checkout and staged files where they land; without
