@@ -175,6 +175,23 @@ export default function SandboxesForm({ initial }: { initial: SandboxesView | nu
             </select>
           </Field>
 
+          <Field
+            id="sandboxes-callbackUrl"
+            label="Orchestrator address, as sandboxes reach it"
+            hint="A sandbox has no database access and is created with no secret but its own key: its worker asks the orchestrator, at this address, for its sealed secrets and for every data store call."
+          >
+            <input
+              id="sandboxes-callbackUrl"
+              className={inputClass}
+              value={draft.callbackUrl}
+              onChange={(event) =>
+                dispatch({ type: 'set', patch: { callbackUrl: event.target.value } })
+              }
+              placeholder="https://orchestrator.internal:8097"
+              autoComplete="off"
+            />
+          </Field>
+
           {draft.provider === 'azure' ? (
             <>
               <div className="grid gap-4 sm:grid-cols-2">
@@ -439,10 +456,11 @@ export default function SandboxesForm({ initial }: { initial: SandboxesView | nu
       <section className={sectionClass}>
         <h2 className="mb-1 font-semibold">What a sandbox is started with</h2>
         <p className={`mb-3 ${hintClass}`}>
-          The environment of every sandbox’s worker: its database URL (the narrowed sandbox role),
-          the delegate’s address and the sandbox’s key for it, and its own sealing keys. Values are
-          sealed at rest and never shown again; a blank value keeps the stored one. The
-          organization’s own encryption keys cannot be handed to a sandbox.
+          The secrets every sandbox’s worker needs: the delegate’s address and the sandbox’s key for
+          it, and its own sealing keys. They are never put in a sandbox’s environment: the
+          orchestrator hands them to each sandbox sealed under that sandbox’s own key. Values are
+          sealed at rest and never shown again; a blank value keeps the stored one. A database URL
+          and the organization’s own encryption keys cannot be handed to a sandbox.
         </p>
         <ul className="space-y-2">
           {draft.env.map((row, index) => (

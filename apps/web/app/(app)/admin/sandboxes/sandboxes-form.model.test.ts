@@ -24,6 +24,7 @@ const STORED: SandboxesView = {
   enabled: true,
   settings: {
     provider: 'azure',
+    callbackUrl: 'https://orchestrator.internal:8097',
     idleSuspendMinutes: 15,
     idleEvictHours: 24,
     azure: {
@@ -55,10 +56,10 @@ const STORED: SandboxesView = {
       cpus: 0,
       command: null,
     },
-    envNames: ['DATABASE_URL', 'DELEGATE_WORKER_API_KEY'],
+    envNames: ['SANDBOX_ENV_SECRETS_KEY', 'DELEGATE_WORKER_API_KEY'],
   },
   hasAzureClientSecret: false,
-  envStored: ['DATABASE_URL', 'DELEGATE_WORKER_API_KEY'],
+  envStored: ['SANDBOX_ENV_SECRETS_KEY', 'DELEGATE_WORKER_API_KEY'],
   orchestrator: WIRED,
 };
 
@@ -71,7 +72,7 @@ describe('the Sandboxes form', () => {
     expect(state.draft.azure.sandboxGroup).toBe('renkei-sandbox-group');
     expect(state.draft.azure.entraAllowed).toBe('orchestrator@contoso.com');
     expect(state.draft.env).toEqual([
-      { name: 'DATABASE_URL', value: '' },
+      { name: 'SANDBOX_ENV_SECRETS_KEY', value: '' },
       { name: 'DELEGATE_WORKER_API_KEY', value: '' },
     ]);
     expect(state.draft.azureClientSecret).toBe('');
@@ -85,6 +86,8 @@ describe('the Sandboxes form', () => {
     expect(state.draft.idleSuspendMinutes).toBe('15');
     expect(state.draft.idleEvictHours).toBe('24');
     expect(state.draft.env.map((row) => row.name)).toEqual(SUGGESTED_ENV);
+    // A sandbox has no database access: no database URL is ever asked for.
+    expect(SUGGESTED_ENV).not.toContain('DATABASE_URL');
     expect(badge(state)).toBe('Not configured');
   });
 
@@ -110,7 +113,7 @@ describe('the Sandboxes form', () => {
 
   it('shows a stored secret as stored, to be left blank; one not stored yet as a value to enter', () => {
     const state = init({ ...STORED, hasAzureClientSecret: true });
-    expect(envPlaceholder(state, 'DATABASE_URL')).toMatch(/stored; leave blank to keep/);
+    expect(envPlaceholder(state, 'SANDBOX_ENV_SECRETS_KEY')).toMatch(/stored; leave blank to keep/);
     expect(envPlaceholder(state, 'NEW_ONE')).toBe('value');
     expect(clientSecretPlaceholder(state)).toMatch(/stored/);
     expect(clientSecretPlaceholder(init(STORED))).toBe('client secret');
@@ -143,9 +146,10 @@ describe('what Save and Test send', () => {
     expect(body).toMatchObject({
       enabled: true,
       provider: 'azure',
+      callbackUrl: 'https://orchestrator.internal:8097',
       idleSuspendMinutes: '15',
       idleEvictHours: '24',
-      envNames: ['DATABASE_URL', 'DELEGATE_WORKER_API_KEY'],
+      envNames: ['SANDBOX_ENV_SECRETS_KEY', 'DELEGATE_WORKER_API_KEY'],
       envValues: { DELEGATE_WORKER_API_KEY: 'new-delegate-key' },
       azureClientSecret: null,
     });
@@ -158,7 +162,7 @@ describe('what Save and Test send', () => {
 
   it('leaves out a variable row with no name', () => {
     const body = requestBody(run(init(STORED), { type: 'envAdded' }));
-    expect(body.envNames).toEqual(['DATABASE_URL', 'DELEGATE_WORKER_API_KEY']);
+    expect(body.envNames).toEqual(['SANDBOX_ENV_SECRETS_KEY', 'DELEGATE_WORKER_API_KEY']);
   });
 
   it('sends Docker’s networks as a list', () => {
@@ -187,13 +191,13 @@ describe('saving and testing', () => {
     const state = run(
       init(STORED),
       { type: 'set', patch: { azureClientSecret: 's3cret' } },
-      { type: 'envValued', index: 0, value: 'postgres://typed' },
+      { type: 'envValued', index: 0, value: 'typed-sealing-key' },
       { type: 'sent', what: 'save' },
       { type: 'saved', view: answer }
     );
     expect(state.view).toBe(answer);
     expect(state.draft.azureClientSecret).toBe('');
-    expect(state.draft.env[0]).toEqual({ name: 'DATABASE_URL', value: '' });
+    expect(state.draft.env[0]).toEqual({ name: 'SANDBOX_ENV_SECRETS_KEY', value: '' });
     expect(state.notice).toBe('Saved.');
     expect(canSubmit(state)).toBe(true);
   });
@@ -201,12 +205,12 @@ describe('saving and testing', () => {
   it('a refused save keeps what was typed and shows the server’s sentence', () => {
     const state = run(
       init(STORED),
-      { type: 'envValued', index: 0, value: 'postgres://typed' },
+      { type: 'envValued', index: 0, value: 'typed-sealing-key' },
       { type: 'sent', what: 'save' },
       { type: 'failed', message: 'The subscription id is a GUID.' }
     );
     expect(state.error).toBe('The subscription id is a GUID.');
-    expect(state.draft.env[0]?.value).toBe('postgres://typed');
+    expect(state.draft.env[0]?.value).toBe('typed-sealing-key');
     expect(canSubmit(state)).toBe(true);
   });
 

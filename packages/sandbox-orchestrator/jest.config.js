@@ -4,6 +4,7 @@ export default {
   roots: ['<rootDir>'],
   testMatch: ['**/*.test.ts'],
   moduleNameMapper: {
+    '^@renkei/connector-sandbox$': '<rootDir>/../connector-sandbox/src/index.ts',
     '^@renkei/db$': '<rootDir>/../db/src/index.ts',
   },
   // @renkei/db is loaded from source (the tests run the orchestrator on

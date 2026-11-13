@@ -45,6 +45,9 @@ test('an operator sets up where sandboxes are made', async ({
   await shot(page, testInfo, '01-empty');
 
   try {
+    await main
+      .getByLabel('Orchestrator address, as sandboxes reach it')
+      .fill('https://orchestrator.internal:8097');
     await main.getByLabel('Subscription id').fill('bcc23553-20c2-4009-a5e2-ef2740dd125f');
     await main.getByLabel('Resource group').fill('PRD_INFRA');
     await main.getByLabel('Sandbox group').fill('renkei-sandbox-group');
@@ -54,16 +57,15 @@ test('an operator sets up where sandboxes are made', async ({
 
     // A setup that is not complete is refused in a sentence, and nothing typed is lost.
     await main.getByRole('button', { name: 'Save', exact: true }).click();
-    await expect(main.getByRole('alert')).toContainText('Enter a value for DATABASE_URL.');
+    await expect(main.getByRole('alert')).toContainText('Enter a value for DELEGATE_WORKER_URL.');
     await expect(main.getByLabel('Sandbox group')).toHaveValue('renkei-sandbox-group');
 
     // Keep one variable, with a value; the rest go.
-    await main.getByLabel('Variable 1 value').fill('postgres://sandbox:pw@db/renkei');
+    await main.getByLabel('Variable 1 value').fill('http://renkei-worker-delegate:8096');
     for (const name of [
       'LOG_ENCRYPTION_KEY',
       'SANDBOX_ENV_SECRETS_KEY',
       'DELEGATE_WORKER_API_KEY',
-      'DELEGATE_WORKER_URL',
     ]) {
       await main.getByRole('button', { name: `Remove variable ${name}` }).click();
     }
@@ -74,7 +76,7 @@ test('an operator sets up where sandboxes are made', async ({
     await main.getByRole('button', { name: 'Save', exact: true }).click();
     const answer = await (await saved).text();
     // The server never answers a secret back.
-    expect(answer).not.toContain('postgres://sandbox');
+    expect(answer).not.toContain('renkei-worker-delegate');
     await expect(main.getByText('Saved.')).toBeVisible();
     await expect(main.getByText('Enabled', { exact: true }).first()).toBeVisible();
     await shot(page, testInfo, '02-saved');
@@ -82,7 +84,7 @@ test('an operator sets up where sandboxes are made', async ({
     // Found again on a fresh load: the settings shown, the secret stored but not shown.
     await page.goto('/admin/sandboxes');
     await expect(main.getByLabel('Sandbox group')).toHaveValue('renkei-sandbox-group');
-    await expect(main.getByLabel('Variable 1 name')).toHaveValue('DATABASE_URL');
+    await expect(main.getByLabel('Variable 1 name')).toHaveValue('DELEGATE_WORKER_URL');
     const value = main.getByLabel('Variable 1 value');
     await expect(value).toHaveValue('');
     await expect(value).toHaveAttribute('placeholder', /stored; leave blank to keep/);

@@ -34,7 +34,8 @@
 import type { DOMAINS } from './domains';
 
 /** Which implementation answered. */
-export type DataStoreKind = 'postgres' | 'memory';
+/** `remote`: no database here; every call is sent to a process that has one (store/remote.ts). */
+export type DataStoreKind = 'postgres' | 'memory' | 'remote';
 
 type Repositories = {
   readonly [K in keyof typeof DOMAINS]: ReturnType<(typeof DOMAINS)[K]['memory']>;

@@ -43,9 +43,10 @@ const AZURE = {
 const FORM = {
   enabled: true,
   provider: 'azure',
+  callbackUrl: 'https://orchestrator.internal:8097',
   azure: AZURE,
-  envNames: ['DATABASE_URL'],
-  envValues: { DATABASE_URL: 'postgres://sandbox:pw@db/renkei' },
+  envNames: ['DELEGATE_WORKER_API_KEY'],
+  envValues: { DELEGATE_WORKER_API_KEY: 'delegate-s3cret-value' },
   azureClientSecret: 'client-s3cret',
 };
 
@@ -109,28 +110,28 @@ describe('PUT /api/admin/sandboxes', () => {
     expect(response.status).toBe(200);
     const text = await response.text();
     expect(text).not.toContain('client-s3cret');
-    expect(text).not.toContain('postgres://sandbox');
+    expect(text).not.toContain('delegate-s3cret-value');
     expect(JSON.parse(text)).toMatchObject({
       configured: true,
       enabled: true,
       hasAzureClientSecret: true,
-      envStored: ['DATABASE_URL'],
+      envStored: ['DELEGATE_WORKER_API_KEY'],
       settings: { provider: 'azure', azure: { sandboxGroup: 'renkei-sandbox-group' } },
     });
 
     // What the orchestrator reads back.
     expect(await storedRow()).toMatchObject({
       enabled: true,
-      settings: { provider: 'azure', envNames: ['DATABASE_URL'] },
+      settings: { provider: 'azure', envNames: ['DELEGATE_WORKER_API_KEY'] },
       secrets: {
         azureClientSecret: 'client-s3cret',
-        'env.DATABASE_URL': 'postgres://sandbox:pw@db/renkei',
+        'env.DELEGATE_WORKER_API_KEY': 'delegate-s3cret-value',
       },
     });
     // And GET, afterwards, says no more than the save did.
     const read = await (await GET(request('GET'))).text();
     expect(read).not.toContain('client-s3cret');
-    expect(read).not.toContain('postgres://sandbox');
+    expect(read).not.toContain('delegate-s3cret-value');
   });
 
   it('records who configured sandboxes and where, without a value', async () => {
@@ -142,43 +143,45 @@ describe('PUT /api/admin/sandboxes', () => {
         details: expect.objectContaining({
           provider: 'azure',
           sandboxGroup: 'renkei-sandbox-group',
-          envNames: ['DATABASE_URL'],
+          envNames: ['DELEGATE_WORKER_API_KEY'],
         }),
       })
     );
     expect(JSON.stringify(recordAuditEvent.mock.calls)).not.toContain('s3cret');
-    expect(JSON.stringify(recordAuditEvent.mock.calls)).not.toContain('postgres://');
+    expect(JSON.stringify(recordAuditEvent.mock.calls)).not.toContain('delegate-s3cret-value');
   });
 
   it('keeps a stored secret when its field is left blank, replaces one that is typed, and drops a variable no longer named', async () => {
     await PUT(
       request('PUT', {
         ...FORM,
-        envNames: ['DATABASE_URL', 'OLD'],
-        envValues: { DATABASE_URL: 'a', OLD: 'b' },
+        envNames: ['SANDBOX_ENV_SECRETS_KEY', 'OLD'],
+        envValues: { SANDBOX_ENV_SECRETS_KEY: 'a', OLD: 'b' },
       })
     );
     const response = await PUT(
       request('PUT', {
         ...FORM,
         azureClientSecret: null,
-        envNames: ['DATABASE_URL', 'DELEGATE_WORKER_API_KEY'],
+        envNames: ['SANDBOX_ENV_SECRETS_KEY', 'DELEGATE_WORKER_API_KEY'],
         envValues: { DELEGATE_WORKER_API_KEY: 'delegate-key' },
       })
     );
     expect(response.status).toBe(200);
     expect((await storedRow())?.secrets).toEqual({
       azureClientSecret: 'client-s3cret',
-      'env.DATABASE_URL': 'a',
+      'env.SANDBOX_ENV_SECRETS_KEY': 'a',
       'env.DELEGATE_WORKER_API_KEY': 'delegate-key',
     });
   });
 
   it.each([
     [{ ...FORM, azure: { ...AZURE, subscriptionId: 'prod' } }, /subscription id is a GUID/],
-    [{ ...FORM, envValues: {} }, /Enter a value for DATABASE_URL/],
+    [{ ...FORM, envValues: {} }, /Enter a value for DELEGATE_WORKER_API_KEY/],
     [{ ...FORM, azureClientSecret: null }, /client secret/],
     [{ ...FORM, envNames: ['TOKEN_ENCRYPTION_KEY'] }, /cannot be handed to a sandbox/],
+    [{ ...FORM, envNames: ['DATABASE_URL'] }, /a sandbox has no database access/],
+    [{ ...FORM, callbackUrl: '' }, /address sandboxes reach the orchestrator/],
   ])(
     'refuses a setup that is not complete with a 400 and a sentence, storing nothing',
     async (body, message) => {
@@ -213,7 +216,7 @@ describe('POST /api/admin/sandboxes/test-connection', () => {
       }),
       secrets: {
         azureClientSecret: 'client-s3cret',
-        'env.DATABASE_URL': 'postgres://sandbox:pw@db/renkei',
+        'env.DELEGATE_WORKER_API_KEY': 'delegate-s3cret-value',
       },
     });
     // The stored setup is as it was.
@@ -222,7 +225,10 @@ describe('POST /api/admin/sandboxes/test-connection', () => {
 
   it('says what is missing rather than trying a setup that could not be saved', async () => {
     const response = await TEST(request('POST', { ...FORM, envValues: {} }, '/test-connection'));
-    expect(await response.json()).toEqual({ ok: false, detail: 'Enter a value for DATABASE_URL.' });
+    expect(await response.json()).toEqual({
+      ok: false,
+      detail: 'Enter a value for DELEGATE_WORKER_API_KEY.',
+    });
     expect(client.checkSandboxOrchestrator).not.toHaveBeenCalled();
   });
 });

@@ -27,6 +27,11 @@ export function registerDataStore(store: DataStore): void {
   state.store = store;
 }
 
+/** Which kind of store something registered, when something has; null before any is in use. */
+export function registeredDataStoreKind(): DataStore['kind'] | null {
+  return state.store?.kind ?? null;
+}
+
 export function getDataStore(): DataStore {
   if (state.store) return state.store;
   state.store = memoryDataStoreRequested()

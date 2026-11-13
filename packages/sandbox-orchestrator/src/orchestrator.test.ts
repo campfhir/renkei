@@ -1,3 +1,4 @@
+import { openSandboxEnv } from '@renkei/connector-sandbox';
 import { createMemoryDataStore } from '@renkei/db';
 import { FakeSandboxProvider } from './fake-provider';
 import { sandboxApiKey } from './keys';
@@ -64,6 +65,7 @@ function setup(
     probe?: (address: string) => Promise<unknown | null>;
     archives?: boolean;
     retentionMs?: () => Promise<number | null>;
+    callbackUrl?: string;
   } = {}
 ) {
   const clock = { now: Date.UTC(2026, 0, 1) };
@@ -87,6 +89,7 @@ function setup(
     provider,
     store: () => data.sandboxes,
     masterKey: 'master',
+    ...(overrides.callbackUrl ? { callbackUrl: overrides.callbackUrl } : {}),
     env: { DATABASE_URL: 'postgres://sandbox', SANDBOX_WORKER_API_KEY: 'from-template' },
     logger: { info: log('info'), warn: log('warn'), error: log('error') },
     now: () => clock.now,
@@ -115,16 +118,46 @@ describe('a call for a scope', () => {
     });
   });
 
-  it('starts the worker with the template environment, its own key and its id — which the template cannot override', async () => {
-    const { orchestrator, provider } = setup();
+  it('creates the sandbox with its own key and its id and nothing else of value: no secret, no database', async () => {
+    const { orchestrator, provider } = setup({ callbackUrl: 'http://orchestrator:8097/' });
     const endpoint = await orchestrator.ensure('ann');
     expect(provider.machines.get('m1')?.env).toEqual({
-      DATABASE_URL: 'postgres://sandbox',
       SANDBOX_WORKER_API_KEY: endpoint.key,
       SANDBOX_WORKER_PORT: '8092',
       SANDBOX_ORCHESTRATED: '1',
       SANDBOX_INSTANCE_ID: endpoint.sandboxId,
+      SANDBOX_ORCHESTRATOR_CALLBACK_URL: 'http://orchestrator:8097',
     });
+    // What it is started with otherwise is never in its environment.
+    expect(JSON.stringify(provider.machines.get('m1')?.env)).not.toContain('postgres://');
+  });
+
+  it('answers the sandbox what it is started with sealed under that sandbox’s own key: no other sandbox can open it', async () => {
+    const { orchestrator } = setup();
+    const ann = await orchestrator.ensure('ann');
+    const bob = await orchestrator.ensure('bob');
+    const sealed = orchestrator.sealedEnvironment(ann.sandboxId);
+    expect(sealed).not.toContain('postgres://');
+    expect(openSandboxEnv(ann.key, ann.sandboxId, sealed)).toEqual({
+      DATABASE_URL: 'postgres://sandbox',
+      SANDBOX_WORKER_API_KEY: 'from-template',
+    });
+    expect(openSandboxEnv(bob.key, bob.sandboxId, sealed)).toBeNull();
+    expect(openSandboxEnv(bob.key, ann.sandboxId, sealed)).toBeNull();
+  });
+
+  it('knows a sandbox that calls it by its id AND its own key, and nobody else', async () => {
+    const { orchestrator } = setup();
+    const ann = await orchestrator.ensure('ann');
+    const bob = await orchestrator.ensure('bob');
+    expect((await orchestrator.authenticate(ann.sandboxId, ann.key))?.routeKey).toBe('ann');
+    expect(await orchestrator.authenticate(ann.sandboxId, bob.key)).toBeNull();
+    expect(await orchestrator.authenticate(ann.sandboxId, 'master')).toBeNull();
+    expect(
+      await orchestrator.authenticate('00000000-0000-4000-8000-0000000000ee', ann.key)
+    ).toBeNull();
+    await orchestrator.remove('ann');
+    expect(await orchestrator.authenticate(ann.sandboxId, ann.key)).toBeNull();
   });
 
   it('gives a person, an agent and a project each a sandbox of their own, and the same one on the next call', async () => {

@@ -13,7 +13,7 @@
  *    a sandbox, the idle rules, and the NAMES of the variables every
  *    sandbox's worker is started with;
  *  - secrets (sealed): the Azure service principal's client secret, and
- *    the VALUES of those variables (a database URL, a delegate key). A
+ *    the VALUES of those variables (a delegate key, a sealing key). A
  *    secret is write-only: the page shows that one is stored, never what
  *    it is, and a blank field keeps it.
  *
@@ -80,6 +80,12 @@ export interface DockerSandboxSettings {
 
 export interface SandboxOrchestratorSettings {
   provider: SandboxProviderKind;
+  /**
+   * Where a sandbox reaches the orchestrator, as seen from inside a
+   * sandbox: for its sealed secrets and for every data store call (a
+   * sandbox has no database connection of its own).
+   */
+  callbackUrl: string;
   idleSuspendMinutes: number;
   idleEvictHours: number;
   azure: AzureSandboxSettings;
@@ -97,6 +103,7 @@ export const AZURE_CLIENT_SECRET_KEY = 'azureClientSecret';
 
 export const DEFAULT_ORCHESTRATOR_SETTINGS: SandboxOrchestratorSettings = {
   provider: 'azure',
+  callbackUrl: '',
   idleSuspendMinutes: 15,
   idleEvictHours: 24,
   azure: {
@@ -141,6 +148,9 @@ const RESERVED_ENV = new Set([
   'SANDBOX_WORKER_PORT',
   'SANDBOX_ORCHESTRATED',
   'SANDBOX_INSTANCE_ID',
+  'SANDBOX_ORCHESTRATOR_CALLBACK_URL',
+  // A sandbox holds no database connection: its worker's store calls go to the orchestrator.
+  'DATABASE_URL',
   'TOKEN_ENCRYPTION_KEY',
   'TOKEN_ENCRYPTION_KEYS',
   'CONTENT_ENCRYPTION_KEY',
@@ -189,6 +199,7 @@ export function orchestratorSettingsOfRow(
   const command = Array.isArray(docker.command) ? docker.command.map(text).filter(Boolean) : [];
   return {
     provider: settings.provider === 'docker' ? 'docker' : 'azure',
+    callbackUrl: text(settings.callbackUrl).replace(/\/+$/, ''),
     idleSuspendMinutes: numberIn(settings.idleSuspendMinutes, 15, 1, 1_440) ?? 15,
     idleEvictHours: numberIn(settings.idleEvictHours, 24, 1, 8_760) ?? 24,
     azure: {
@@ -244,6 +255,9 @@ export function parseOrchestratorInput(body: unknown): OrchestratorInput | strin
   const settings = orchestratorSettingsOfRow(body);
   if (body.provider !== 'azure' && body.provider !== 'docker') {
     return 'Choose where sandboxes are made: Azure or Docker.';
+  }
+  if (!/^https?:\/\/[^\s/]+/.test(settings.callbackUrl)) {
+    return 'Enter the address sandboxes reach the orchestrator at, as an http(s) URL: a sandbox has no database of its own and asks the orchestrator.';
   }
   const suspend = numberIn(body.idleSuspendMinutes, 15, 1, 1_440);
   if (suspend === null) return 'Suspend after 1 to 1440 idle minutes.';
@@ -306,7 +320,9 @@ export function parseOrchestratorInput(body: unknown): OrchestratorInput | strin
       return `"${name}" is not a variable name: capitals, digits and underscores.`;
     }
     if (RESERVED_ENV.has(name)) {
-      return `${name} cannot be handed to a sandbox: it is the orchestrator’s to set, or one of the organization’s own keys.`;
+      return name === 'DATABASE_URL'
+        ? 'DATABASE_URL cannot be handed to a sandbox: a sandbox has no database access; its worker asks the orchestrator instead.'
+        : `${name} cannot be handed to a sandbox: it is the orchestrator’s to set, or one of the organization’s own keys.`;
     }
   }
   const envValues: Record<string, string> = {};

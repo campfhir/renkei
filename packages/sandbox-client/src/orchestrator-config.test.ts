@@ -20,9 +20,10 @@ const AZURE = {
 
 const form = (overrides: Record<string, unknown> = {}) => ({
   provider: 'azure',
+  callbackUrl: 'https://orchestrator.internal:8097/',
   azure: AZURE,
-  envNames: ['DATABASE_URL'],
-  envValues: { DATABASE_URL: 'postgres://sandbox' },
+  envNames: ['DELEGATE_WORKER_API_KEY'],
+  envValues: { DELEGATE_WORKER_API_KEY: 'delegate-key' },
   ...overrides,
 });
 
@@ -47,11 +48,16 @@ describe('the sandbox setup an operator saves', () => {
     });
     expect(input.settings.idleSuspendMinutes).toBe(15);
     expect(input.settings.idleEvictHours).toBe(24);
-    expect(input.envValues).toEqual({ DATABASE_URL: 'postgres://sandbox' });
+    expect(input.envValues).toEqual({ DELEGATE_WORKER_API_KEY: 'delegate-key' });
+    expect(input.settings.callbackUrl).toBe('https://orchestrator.internal:8097');
   });
 
   it('or a Docker engine, which needs none of the Azure fields', () => {
-    const input = parsed({ provider: 'docker', docker: { image: 'renkei-sandbox:dev' } });
+    const input = parsed({
+      provider: 'docker',
+      callbackUrl: 'http://renkei-worker-orchestrator:8097',
+      docker: { image: 'renkei-sandbox:dev' },
+    });
     expect(input.settings.docker).toMatchObject({
       image: 'renkei-sandbox:dev',
       networks: ['renkei-sandbox'],
@@ -62,6 +68,8 @@ describe('the sandbox setup an operator saves', () => {
 
   it.each([
     [{ provider: 'kubernetes' }, /Azure or Docker/],
+    [{ callbackUrl: '' }, /address sandboxes reach the orchestrator/],
+    [{ callbackUrl: 'orchestrator:8097' }, /address sandboxes reach the orchestrator/],
     [{ azure: { ...AZURE, subscriptionId: 'prod' } }, /subscription id is a GUID/],
     [{ azure: { ...AZURE, sandboxGroup: '' } }, /sandbox group/],
     [{ azure: { ...AZURE, region: 'East US 2' } }, /region/],
@@ -87,6 +95,12 @@ describe('the sandbox setup an operator saves', () => {
     expect(input.settings.azure.portAuth).toBe('anonymous');
   });
 
+  it('never hands a sandbox a database URL: a sandbox has no database access', () => {
+    expect(parseOrchestratorInput(form({ envNames: ['DATABASE_URL'] }))).toMatch(
+      /a sandbox has no database access/
+    );
+  });
+
   it.each(['TOKEN_ENCRYPTION_KEY', 'CONTENT_ENCRYPTION_KEY', 'SANDBOX_WORKER_API_KEY'])(
     'never hands a sandbox %s',
     (name) => {
@@ -100,8 +114,8 @@ describe('the sandbox setup an operator saves', () => {
     const input = parsed(
       form({
         azure: { ...AZURE, entraAllowed: 'a@contoso.com, b@contoso.com\nA@contoso.com' },
-        envNames: 'DATABASE_URL\nDELEGATE_WORKER_URL',
-        envValues: { DATABASE_URL: 'x', DELEGATE_WORKER_URL: 'y' },
+        envNames: 'LOG_ENCRYPTION_KEY\nDELEGATE_WORKER_URL',
+        envValues: { LOG_ENCRYPTION_KEY: 'x', DELEGATE_WORKER_URL: 'y' },
       })
     );
     expect(input.settings.azure.entraAllowed).toEqual([
@@ -109,7 +123,7 @@ describe('the sandbox setup an operator saves', () => {
       'b@contoso.com',
       'A@contoso.com',
     ]);
-    expect(input.settings.envNames).toEqual(['DATABASE_URL', 'DELEGATE_WORKER_URL']);
+    expect(input.settings.envNames).toEqual(['LOG_ENCRYPTION_KEY', 'DELEGATE_WORKER_URL']);
   });
 });
 
@@ -117,19 +131,19 @@ describe('its secrets', () => {
   it('are what was typed, laid over what is stored: a blank keeps, a variable no longer named is dropped', () => {
     const input = parsed(
       form({
-        envNames: ['DATABASE_URL', 'DELEGATE_WORKER_API_KEY'],
+        envNames: ['SANDBOX_ENV_SECRETS_KEY', 'DELEGATE_WORKER_API_KEY'],
         envValues: { DELEGATE_WORKER_API_KEY: 'new-key' },
       })
     );
     expect(
       mergeOrchestratorSecrets(input, {
-        'env.DATABASE_URL': 'postgres://stored',
+        'env.SANDBOX_ENV_SECRETS_KEY': 'stored-sealing-key',
         'env.DELEGATE_WORKER_API_KEY': 'old-key',
         'env.GONE': 'x',
         [AZURE_CLIENT_SECRET_KEY]: 'stored-secret',
       })
     ).toEqual({
-      'env.DATABASE_URL': 'postgres://stored',
+      'env.SANDBOX_ENV_SECRETS_KEY': 'stored-sealing-key',
       'env.DELEGATE_WORKER_API_KEY': 'new-key',
       [AZURE_CLIENT_SECRET_KEY]: 'stored-secret',
     });
@@ -137,7 +151,7 @@ describe('its secrets', () => {
 
   it('must include a value for every variable named, and the client secret of a service principal', () => {
     expect(mergeOrchestratorSecrets(parsed(form({ envValues: {} })), {})).toBe(
-      'Enter a value for DATABASE_URL.'
+      'Enter a value for DELEGATE_WORKER_API_KEY.'
     );
     const principal = parsed(
       form({
@@ -155,14 +169,17 @@ describe('its secrets', () => {
   });
 
   it('become each sandbox’s environment under the variables’ own names', () => {
-    const settings = { ...DEFAULT_ORCHESTRATOR_SETTINGS, envNames: ['DATABASE_URL', 'MISSING'] };
+    const settings = {
+      ...DEFAULT_ORCHESTRATOR_SETTINGS,
+      envNames: ['SANDBOX_ENV_SECRETS_KEY', 'MISSING'],
+    };
     expect(
       orchestratorTemplateEnv(settings, {
-        'env.DATABASE_URL': 'postgres://sandbox',
+        'env.SANDBOX_ENV_SECRETS_KEY': 'sealing-key-value',
         'env.UNLISTED': 'x',
         [AZURE_CLIENT_SECRET_KEY]: 'never an env value',
       })
-    ).toEqual({ DATABASE_URL: 'postgres://sandbox' });
+    ).toEqual({ SANDBOX_ENV_SECRETS_KEY: 'sealing-key-value' });
   });
 });
 
@@ -172,15 +189,18 @@ describe('what the page is shown', () => {
     const view = orchestratorViewOfRow({
       enabled: true,
       settings: { ...input.settings },
-      secrets: { 'env.DATABASE_URL': 'postgres://sandbox', [AZURE_CLIENT_SECRET_KEY]: 's3cret' },
+      secrets: {
+        'env.DELEGATE_WORKER_API_KEY': 'sealing-key-value',
+        [AZURE_CLIENT_SECRET_KEY]: 's3cret',
+      },
     });
     expect(view).toMatchObject({
       configured: true,
       enabled: true,
       hasAzureClientSecret: true,
-      envStored: ['DATABASE_URL'],
+      envStored: ['DELEGATE_WORKER_API_KEY'],
     });
-    expect(JSON.stringify(view)).not.toContain('postgres://sandbox');
+    expect(JSON.stringify(view)).not.toContain('sealing-key-value');
     expect(JSON.stringify(view)).not.toContain('s3cret');
   });
 

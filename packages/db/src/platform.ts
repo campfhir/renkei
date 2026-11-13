@@ -10,6 +10,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { closeDatabase, getDatabase } from './client';
 import { memoryDataStoreRequested } from './store/selection';
+import { registeredDataStoreKind } from './store/registry';
 
 /** The bored-logs Postgres adapter's options, less the connection this package supplies. */
 export type LogAdapterOptions = Omit<PostgresAdapterOptions, 'db'>;
@@ -69,6 +70,9 @@ export async function migrateLogTables(adapter: LogTableMigrator): Promise<boole
  */
 export function checkDataStore(): Result<void, 'DB_INIT_ERROR'> {
   if (memoryDataStoreRequested()) return ok();
+  // A process whose store is elsewhere (a sandbox: store/remote.ts) has no
+  // database to open, and must not be asked for a DATABASE_URL.
+  if (registeredDataStoreKind() === 'remote') return ok();
   const db = getDatabase();
   return db.ok ? ok() : db;
 }

@@ -38,6 +38,8 @@ export interface BuiltOrchestration {
   env: Record<string, string>;
   idleSuspendMs: number;
   idleDeleteMs: number;
+  /** Where a sandbox reaches the orchestrator. */
+  callbackUrl: string;
 }
 
 /** Stand-ins for what reaches outside this process, for tests. */
@@ -127,6 +129,7 @@ export async function buildFromStored(
       env: orchestratorTemplateEnv(settings, row.secrets),
       idleSuspendMs: settings.idleSuspendMinutes * 60_000,
       idleDeleteMs: settings.idleEvictHours * 60 * 60_000,
+      callbackUrl: settings.callbackUrl,
     };
   } catch (error) {
     return `the sandbox provider could not be set up: ${error instanceof Error ? error.message : String(error)}`;

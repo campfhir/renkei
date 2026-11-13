@@ -37,6 +37,21 @@ export {
   resetDataStore,
 } from './store/registry';
 export { MEMORY_DATA_STORE, memoryDataStoreRequested } from './store/selection';
+// A store with no database behind it, for a sandbox: its calls go to the
+// orchestrator, which runs the ones a sandbox may make (store/remote.ts).
+export {
+  createHttpStoreTransport,
+  createRemoteDataStore,
+  decodeWire,
+  dispatchStoreCall,
+  encodeWire,
+  RemoteStoreError,
+  SANDBOX_STORE_ALLOW_LIST,
+  StoreCallRefused,
+  type StoreAllowList,
+  type StoreCall,
+  type StoreTransport,
+} from './store/remote';
 export { createMemoryDataStore, type MemoryDataStore, type MemorySeed } from './store/memory';
 export type { QueueSignal } from './store/memory/signals';
 export {

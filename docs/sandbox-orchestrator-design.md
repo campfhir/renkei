@@ -163,15 +163,42 @@ Both intervals are part of the organization's sandbox setup (below).
 
 ## Keys and what a sandbox holds
 
-- Each sandbox's worker takes a bearer key **of its own**:
-  `HMAC(SANDBOX_WORKER_API_KEY, sandbox id)`. The orchestrator hands it to
-  the caller with the address. The deployment's key is never inside a
-  sandbox, so what one sandbox holds opens no other.
-- A sandbox is started with the variables the organization's sandbox
-  setup names (below) — in practice what the shared worker had: the
-  database URL of the narrowed **sandbox role**, its delegate key, the
-  environment-secrets key. Never the organization's encryption keys: the
-  setup refuses those names when it is saved, and again when it is read.
+A sandbox runs other people's code, so it is given as little as it can
+work with.
+
+- **Its own key, and nothing else of value, at creation.** Each sandbox's
+  worker takes a bearer key of its own:
+  `HMAC(SANDBOX_WORKER_API_KEY, sandbox id)`. The deployment's key is
+  never inside a sandbox, so what one sandbox holds opens no other. A
+  sandbox is created with that key, its id and the orchestrator's
+  address — that is the whole of its environment as the platform, a
+  process listing or a scanner sees it.
+- **No database.** A sandbox has no database URL and no route to
+  Postgres. Its worker still reads and writes through `getDataStore()`,
+  as every process does, but the store registered there is a _remote_
+  one (`packages/db` `store/remote.ts`): each repository call is sent to
+  the orchestrator (`POST /sandbox/v1/store`, as that sandbox), which
+  runs it on its own store if it is on the sandbox's allow-list — the
+  repositories the sandbox database role used to be granted (its files,
+  checkouts, services, secrets and crawls; the organization's settings
+  and a checkout's approved size to read) and nothing about people,
+  chats, agents, grants, keys or other sandboxes. A database URL is
+  refused as a variable name in the setup, and dropped by the worker if
+  one ever reached it.
+- **Secrets arrive sealed, not in the environment.** What the worker
+  needs besides — its key for the delegate, the key its workspace
+  secrets are sealed with — it asks the orchestrator for at boot
+  (`POST /sandbox/v1/bootstrap`), before any of its own modules load
+  (`apps/worker-sandbox` `sealed-boot.ts`). The answer is sealed with
+  AES-256-GCM under a key derived from that sandbox's own key and bound
+  to its id (`packages/connector-sandbox` `sealed-env.ts`): on the
+  network, and to any inspector between the two, it is ciphertext only
+  that sandbox can open, and the answer for one sandbox is noise to
+  every other. Never the organization's encryption keys: the setup
+  refuses those names when it is saved, and again when it is read.
+- **A sandbox's key opens only its own two calls.** It is not a caller's
+  key: it cannot ask where another scope's sandbox is, list sandboxes,
+  or read the stored setup. A removed sandbox's key opens nothing.
 - **No sandbox has a way to the host's container engine.** The socket is
   mounted in the orchestrator alone, which is what retires the socket
   proxy.
@@ -243,6 +270,8 @@ own configuration**: one row in `connector_configs`
 like every connector's. An operator edits it on **Organization →
 Sandboxes** (`apps/web/app/(app)/admin/sandboxes`):
 
+- **Orchestrator address, as sandboxes reach it** — where a sandbox's
+  worker asks for its sealed secrets and makes its data store calls.
 - **Provider** — Azure Container Apps sandboxes (subscription, resource
   group, sandbox group, region, disk image, size, VNet connection) or a
   Docker engine (image, networks, size).
@@ -251,8 +280,9 @@ Sandboxes** (`apps/web/app/(app)/admin/sandboxes`):
 - **Who may call a sandbox** (Azure) — Entra or the sandbox key alone,
   the allowed identities, allowed source ranges.
 - **When a sandbox is idle** — suspend after, evict after.
-- **What a sandbox is started with** — variables by name; their values
-  are secrets.
+- **What a sandbox is started with** — its secrets, by variable name;
+  handed to each sandbox sealed under its own key, never in its
+  environment. No database URL.
 
 Secrets are write-only: the page shows which are stored, never what they
 are, and a blank field keeps the stored one. **Test connection** hands
@@ -275,12 +305,13 @@ sandbox. Nothing is created by hand.
 What stays in the environment is only what a process needs before it can
 read the database, and the keys two processes share:
 
-| Where                 | Variable                                                   | For                                       |
-| --------------------- | ---------------------------------------------------------- | ----------------------------------------- |
-| orchestrator          | `DATABASE_URL`, `TOKEN_ENCRYPTION_KEY`                     | reading the stored setup                  |
-| orchestrator          | `SANDBOX_ORCHESTRATOR_API_KEY`                             | the key its callers present               |
-| orchestrator          | `SANDBOX_WORKER_API_KEY`                                   | each sandbox's own key is derived from it |
-| web app, queue worker | `SANDBOX_ORCHESTRATOR_URL`, `SANDBOX_ORCHESTRATOR_API_KEY` | reaching the orchestrator                 |
+| Where                               | Variable                                                   | For                                       |
+| ----------------------------------- | ---------------------------------------------------------- | ----------------------------------------- |
+| orchestrator                        | `DATABASE_URL`, `TOKEN_ENCRYPTION_KEY`                     | reading the stored setup                  |
+| orchestrator                        | `SANDBOX_ORCHESTRATOR_API_KEY`                             | the key its callers present               |
+| orchestrator                        | `SANDBOX_WORKER_API_KEY`                                   | each sandbox's own key is derived from it |
+| a sandbox (set by the orchestrator) | its own key, its id, `SANDBOX_ORCHESTRATOR_CALLBACK_URL`   | everything it is created with             |
+| web app, queue worker               | `SANDBOX_ORCHESTRATOR_URL`, `SANDBOX_ORCHESTRATOR_API_KEY` | reaching the orchestrator                 |
 
 ## Running it locally
 
@@ -303,9 +334,10 @@ SANDBOX_ORCHESTRATOR_URL=http://127.0.0.1:8097 SANDBOX_ORCHESTRATOR_API_KEY=dev-
 
 Then, as an operator, on Organization → Sandboxes: provider **Docker
 engine**, image `renkei-sandbox:latest`, “Publish on” `127.0.0.1`, and
-the variables a worker needs (`DATABASE_URL` as the sandbox reaches it,
-e.g. `postgres://renkei:renkei@host.docker.internal:5432/renkei`). Save,
-then Test connection.
+the orchestrator's address as a sandbox reaches it
+(`http://host.docker.internal:8097`), and the secrets a worker needs
+(its delegate address and key, its sealing keys — no database URL).
+Save, then Test connection.
 
 In the deploy stack it is the `orchestrator` compose profile
 (`docker-compose.yaml`, `worker-orchestrator`).
@@ -318,13 +350,16 @@ In Azure, once:
 2. Give the orchestrator's identity — its managed identity, or a service
    principal — the **Container Apps SandboxGroup Data Owner** role on the
    group.
-3. Connect the group to the VNet the database and the delegate are on.
+3. Connect the group to the network the orchestrator and the delegate
+   are on. A sandbox needs to reach those two and nothing else of the
+   deployment: not the database.
 
 Then on Organization → Sandboxes: the subscription, resource group,
 sandbox group and region; the disk image and the VNet connection by
-name; the service principal's ids and secret (or neither, for a managed
-identity); the identity allowed to call a worker; and the variables a
-worker is started with. Test connection, then Save.
+name; the orchestrator's address as a sandbox reaches it; the service
+principal's ids and secret (or neither, for a managed identity); the
+identity allowed to call a worker; and the secrets a worker is started
+with. Test connection, then Save.
 
 One step may still need the portal: the preview SDK sets a port's
 allowed emails but not the tenant id that scripted (bearer) calls
@@ -342,11 +377,18 @@ describes users) and whether Podman starts as it is in the microVM.
 
 ## What is not done yet
 
-- **The sandbox worker is still a database client.** Every sandbox holds
-  the sandbox role's URL. The blast radius is one scope's machine rather
-  than everyone's, and the role is narrow, but the end state is a worker
-  that reaches no database: metadata through the orchestrator or the web
-  app. On Azure this is also what requires the VNet connection.
+- **A sandbox's store calls are not scoped to its own scope.** The
+  allow-list is by repository, as the database role was by table: a
+  sandbox's worker (root in the sandbox, which no caller's command can
+  become) could ask for another scope's file metadata or sealed
+  workspace secrets — not the bytes, which are on that scope's own disk,
+  and not their values, which are sealed. Scoping each call to the
+  calling sandbox's own subjects is the next tightening.
+- **The sandbox's own key is still in its environment.** It has to
+  start with something. Whoever reads a sandbox's environment at the
+  platform can ask the orchestrator for that sandbox's sealed secrets
+  and open them. What they cannot do is read any secret off the
+  environment or the wire, or reach another sandbox's.
 - **A chat moved between projects.** Which project a chat is in is
   remembered for a minute, and what the chat staged before the move stays
   in the sandbox it was staged in.

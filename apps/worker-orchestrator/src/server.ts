@@ -34,6 +34,19 @@
  *                       way): `starting` → 503 `sandbox_starting`,
  *                       anything else → 502 `sandbox_unavailable`.
  *
+ * And, for the sandboxes themselves — each authenticated by its OWN key
+ * (`authorization: Bearer <the sandbox's key>` with `x-sandbox-id`),
+ * which opens nothing above:
+ *
+ *   POST /sandbox/v1/bootstrap  → `{ sealed }`: what the sandbox's worker
+ *                       is started with (its secrets), sealed under that
+ *                       sandbox's key. Never in its environment.
+ *   POST /sandbox/v1/store      `{ domain, method, args }` → `{ ok, result }`:
+ *                       one data store call, run here. A sandbox holds no
+ *                       database connection; it may make the calls the
+ *                       sandbox database role was granted and no others
+ *                       (@renkei/db store/remote.ts).
+ *
  * Bearer-authenticated (SANDBOX_ORCHESTRATOR_API_KEY). The answer to
  * `ensure` carries a sandbox's key, so this surface is for the processes
  * that already held the one shared sandbox key — the web app and the
@@ -41,7 +54,16 @@
  */
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import type { SandboxState, SandboxStore } from '@renkei/db';
+import {
+  SANDBOX_STORE_ALLOW_LIST,
+  StoreCallRefused,
+  decodeWire,
+  dispatchStoreCall,
+  encodeWire,
+  type DataStore,
+  type SandboxState,
+  type SandboxStore,
+} from '@renkei/db';
 import { isRecord } from '@renkei/guards';
 import {
   OrchestratorError,
@@ -53,6 +75,8 @@ import { logger } from './logger';
 
 const COMPONENT = 'worker-orchestrator/server';
 const MAX_BODY_BYTES = 262_144;
+/** A store call's arguments: rows of metadata, never file bytes. */
+const MAX_STORE_BODY_BYTES = 4 * 1_048_576;
 const LIST_LIMIT = 1_000;
 const LISTED: SandboxState[] = [
   'provisioning',
@@ -94,6 +118,8 @@ export interface OrchestratorServerDeps {
   /** Which provider is in force, or why none is. */
   status: () => { provider: string | null; problem: string | null };
   store: () => SandboxStore;
+  /** The whole data store, for the calls sandboxes make through this process. */
+  dataStore: () => DataStore;
   /** Try a configuration: the one given, else the one stored. */
   check: (
     candidate: {
@@ -104,6 +130,87 @@ export interface OrchestratorServerDeps {
 }
 
 export function createOrchestratorServer(deps: OrchestratorServerDeps): Server {
+  /** A call from a sandbox's own worker: its id, and its own key as the bearer. */
+  async function handleSandbox(
+    request: IncomingMessage,
+    response: ServerResponse,
+    url: URL
+  ): Promise<void> {
+    if (request.method !== 'POST') return sendError(response, 'method_not_allowed');
+    const id = request.headers['x-sandbox-id'];
+    const header = request.headers.authorization?.trim() ?? '';
+    const key = header.slice(0, 7).toLowerCase() === 'bearer ' ? header.slice(7).trim() : '';
+    // Which sandbox is asking is settled before anything is read: with no
+    // orchestrator in force there is no sandbox to be.
+    const status = deps.status();
+    const sandbox =
+      typeof id === 'string' && key && !status.problem
+        ? await deps.orchestrator().authenticate(id, key)
+        : null;
+    if (!sandbox) return sendError(response, 'unauthorized');
+
+    if (url.pathname === '/sandbox/v1/bootstrap') {
+      request.resume();
+      return sendJson(response, 200, {
+        sealed: deps.orchestrator().sealedEnvironment(sandbox.id),
+      });
+    }
+    if (url.pathname === '/sandbox/v1/store') {
+      const raw = await readBody(request, MAX_STORE_BODY_BYTES);
+      if (raw === null) return sendError(response, 'too_large');
+      let body: unknown;
+      try {
+        body = JSON.parse(raw.toString('utf8'));
+      } catch {
+        return sendError(response, 'bad_request');
+      }
+      if (
+        !isRecord(body) ||
+        typeof body.domain !== 'string' ||
+        typeof body.method !== 'string' ||
+        !Array.isArray(body.args)
+      ) {
+        return sendError(response, 'bad_request', 'domain, method and args are required');
+      }
+      const args = decodeWire(body.args);
+      try {
+        const result = await dispatchStoreCall(deps.dataStore(), SANDBOX_STORE_ALLOW_LIST, {
+          domain: body.domain,
+          method: body.method,
+          args: Array.isArray(args) ? args : [],
+        });
+        return sendJson(response, 200, { ok: true, result: encodeWire(result) });
+      } catch (error) {
+        if (error instanceof StoreCallRefused) {
+          logger.warn(
+            'the sandbox for {scope} asked for {call}, which a sandbox may not; it was refused',
+            {
+              component: COMPONENT,
+              sandbox: sandbox.id,
+              scope: sandbox.routeKey,
+              call: `${body.domain}.${body.method}`,
+            }
+          );
+          return sendJson(response, 403, { ok: false, error: { message: error.message } });
+        }
+        // The call itself failed, as a query would: said back with the
+        // code a caller may act on (a duplicate's SQLSTATE), no more.
+        const code = isRecord(error) && typeof error.code === 'string' ? error.code : undefined;
+        const constraint =
+          isRecord(error) && typeof error.constraint === 'string' ? error.constraint : undefined;
+        return sendJson(response, 200, {
+          ok: false,
+          error: {
+            message: error instanceof Error ? error.message : String(error),
+            ...(code ? { code } : {}),
+            ...(constraint ? { constraint } : {}),
+          },
+        });
+      }
+    }
+    return sendError(response, 'unknown_operation');
+  }
+
   async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const url = new URL(request.url ?? '/', 'http://orchestrator.internal');
     if (request.method === 'GET' && url.pathname === '/health') {
@@ -119,6 +226,7 @@ export function createOrchestratorServer(deps: OrchestratorServerDeps): Server {
           : {}),
       });
     }
+    if (url.pathname.startsWith('/sandbox/v1/')) return handleSandbox(request, response, url);
     if (!matchApiKey(request, deps.apiKeys)) return sendError(response, 'unauthorized');
     if (url.pathname.startsWith('/unavailable/')) {
       request.resume();

@@ -14,8 +14,13 @@ const AZURE = {
 
 const row = (overrides: Partial<StoredRow> = {}): StoredRow => ({
   enabled: true,
-  settings: { provider: 'azure', azure: AZURE, envNames: ['DATABASE_URL'] },
-  secrets: { 'env.DATABASE_URL': 'postgres://sandbox' },
+  settings: {
+    provider: 'azure',
+    callbackUrl: 'https://orchestrator.internal:8097',
+    azure: AZURE,
+    envNames: ['DELEGATE_WORKER_API_KEY'],
+  },
+  secrets: { 'env.DELEGATE_WORKER_API_KEY': 'delegate-key' },
   ...overrides,
 });
 
@@ -51,8 +56,9 @@ describe('the organization’s stored sandbox setup', () => {
       row({
         settings: {
           provider: 'azure',
+          callbackUrl: 'https://orchestrator.internal:8097/',
           azure: AZURE,
-          envNames: ['DATABASE_URL'],
+          envNames: ['DELEGATE_WORKER_API_KEY'],
           idleSuspendMinutes: 10,
           idleEvictHours: 12,
         },
@@ -61,7 +67,8 @@ describe('the organization’s stored sandbox setup', () => {
     );
     if (typeof built === 'string') throw new Error(built);
     expect(built.provider.name).toBe('azure');
-    expect(built.env).toEqual({ DATABASE_URL: 'postgres://sandbox' });
+    expect(built.env).toEqual({ DELEGATE_WORKER_API_KEY: 'delegate-key' });
+    expect(built.callbackUrl).toBe('https://orchestrator.internal:8097');
     expect(built.idleSuspendMs).toBe(600_000);
     expect(built.idleDeleteMs).toBe(43_200_000);
   });
@@ -69,7 +76,11 @@ describe('the organization’s stored sandbox setup', () => {
   it('can be a Docker engine instead', async () => {
     const built = await buildFromStored(
       row({
-        settings: { provider: 'docker', docker: { image: 'renkei-sandbox:dev' } },
+        settings: {
+          provider: 'docker',
+          callbackUrl: 'http://renkei-worker-orchestrator:8097',
+          docker: { image: 'renkei-sandbox:dev' },
+        },
         secrets: {},
       })
     );
@@ -82,7 +93,13 @@ describe('the organization’s stored sandbox setup', () => {
     expect(await buildFromStored(row({ enabled: false }), deps())).toMatch(/switched off/);
     expect(
       await buildFromStored(
-        row({ settings: { provider: 'azure', azure: { ...AZURE, sandboxGroup: '' } } }),
+        row({
+          settings: {
+            provider: 'azure',
+            callbackUrl: 'https://o.internal',
+            azure: { ...AZURE, sandboxGroup: '' },
+          },
+        }),
         deps()
       )
     ).toMatch(/not usable: Enter the sandbox group’s name/);
@@ -150,7 +167,14 @@ describe('the orchestrator in force', () => {
     const first = live.current();
     await live.reload();
     expect(live.current()).toBe(first);
-    stored = row({ settings: { provider: 'azure', azure: AZURE, idleSuspendMinutes: 5 } });
+    stored = row({
+      settings: {
+        provider: 'azure',
+        callbackUrl: 'https://o.internal',
+        azure: AZURE,
+        idleSuspendMinutes: 5,
+      },
+    });
     await live.reload();
     expect(live.current()).not.toBe(first);
   });

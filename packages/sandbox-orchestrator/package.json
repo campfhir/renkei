@@ -15,6 +15,7 @@
   "dependencies": {
     "@azure/containerapps-sandbox": "1.0.0-beta.1",
     "@azure/identity": "^4.13.0",
+    "@renkei/connector-sandbox": "workspace:*",
     "@renkei/db": "workspace:*",
     "@renkei/guards": "workspace:*"
   },

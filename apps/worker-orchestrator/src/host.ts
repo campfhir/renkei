@@ -90,6 +90,7 @@ export class OrchestratorHost {
       store: () => getDataStore().sandboxes,
       masterKey: this.options.masterKey,
       env: built.env,
+      callbackUrl: built.callbackUrl,
       logger: this.options.logger,
       idleSuspendMs: built.idleSuspendMs,
       idleDeleteMs: built.idleDeleteMs,

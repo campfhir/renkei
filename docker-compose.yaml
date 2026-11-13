@@ -687,7 +687,10 @@ services:
   #
   # It holds TOKEN_ENCRYPTION_KEY, to open that stored configuration, and
   # it is the ONE container given the engine: both because it runs
-  # nobody's code. No sandbox gets the socket or that key. Each sandbox's
+  # nobody's code. No sandbox gets the socket, that key or a database URL:
+  # a sandbox's data store calls come through this service (which is why
+  # it is on the sandbox network), and its secrets are handed to it sealed
+  # under its own key. Each sandbox's
   # bearer key is derived from SANDBOX_WORKER_API_KEY, which no sandbox
   # ever holds. Code project services run INSIDE each sandbox, on an
   # engine of its own (Podman).

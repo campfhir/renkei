@@ -33,6 +33,8 @@ export interface EnvRow {
 export interface SandboxesDraft {
   enabled: boolean;
   provider: 'azure' | 'docker';
+  /** Where a sandbox reaches the orchestrator. */
+  callbackUrl: string;
   idleSuspendMinutes: string;
   idleEvictHours: string;
   azure: {
@@ -93,9 +95,12 @@ export type SandboxesAction =
   | { type: 'tested'; ok: boolean; detail: string }
   | { type: 'failed'; message: string };
 
-/** What a sandbox worker needs to be started with, offered as the first rows of an empty setup. */
+/**
+ * What a sandbox worker needs to be started with, offered as the first
+ * rows of an empty setup. No database URL: a sandbox has no database
+ * access (its worker asks the orchestrator).
+ */
 export const SUGGESTED_ENV = [
-  'DATABASE_URL',
   'DELEGATE_WORKER_URL',
   'DELEGATE_WORKER_API_KEY',
   'SANDBOX_ENV_SECRETS_KEY',
@@ -109,6 +114,7 @@ export function draftOf(view: SandboxesView | null): SandboxesDraft {
   return {
     enabled: view?.configured ? view.enabled : true,
     provider: settings?.provider ?? 'azure',
+    callbackUrl: settings?.callbackUrl ?? '',
     idleSuspendMinutes: String(settings?.idleSuspendMinutes ?? 15),
     idleEvictHours: String(settings?.idleEvictHours ?? 24),
     azure: {
@@ -269,6 +275,7 @@ export function requestBody(state: SandboxesState): Record<string, unknown> {
   return {
     enabled: draft.enabled,
     provider: draft.provider,
+    callbackUrl: draft.callbackUrl.trim(),
     idleSuspendMinutes: draft.idleSuspendMinutes.trim(),
     idleEvictHours: draft.idleEvictHours.trim(),
     azure: {

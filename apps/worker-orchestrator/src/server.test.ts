@@ -1,5 +1,6 @@
 import type { Server } from 'node:http';
-import { createMemoryDataStore } from '@renkei/db';
+import { openSandboxEnv } from '@renkei/connector-sandbox';
+import { createHttpStoreTransport, createMemoryDataStore, createRemoteDataStore } from '@renkei/db';
 import { isRecord } from '@renkei/guards';
 import {
   FakeSandboxProvider,
@@ -24,7 +25,7 @@ async function start() {
     provider,
     store: () => data.sandboxes,
     masterKey: 'master',
-    env: {},
+    env: { DELEGATE_WORKER_API_KEY: 'delegate-s3cret' },
     logger: silent,
     probe: async () => ({ ok: true, capabilities: { browser: true, scripts: 'isolated' } }),
   });
@@ -38,6 +39,7 @@ async function start() {
     },
     status: () => ({ provider: state.problem ? null : provider.name, problem: state.problem }),
     store: () => data.sandboxes,
+    dataStore: () => data,
     check: async (candidate) => {
       checked.push(candidate);
       return { ok: true, detail: 'Reached it.' };
@@ -52,7 +54,7 @@ async function start() {
       headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
-  return { base, post, provider, server, state, checked };
+  return { base, post, provider, server, state, checked, data };
 }
 
 describe('the orchestrator’s HTTP surface', () => {
@@ -200,5 +202,105 @@ describe('the orchestrator’s HTTP surface', () => {
     expect(await (await running.post('/v1/remove', { key: 'ann' })).json()).toEqual({
       removed: false,
     });
+  });
+});
+
+describe('what a sandbox itself may ask of the orchestrator', () => {
+  let running: Awaited<ReturnType<typeof start>>;
+  let ann: { sandboxId: string; key: string };
+  let bob: { sandboxId: string; key: string };
+  const made = async (key: string) => {
+    const body = await record(await running.post('/v1/ensure', { key }));
+    return { sandboxId: String(body.sandboxId), key: String(body.key) };
+  };
+  const asSandbox = (who: { sandboxId: string; key: string }, path: string, body: unknown = {}) =>
+    fetch(`${running.base}/sandbox/v1/${path}`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${who.key}`,
+        'x-sandbox-id': who.sandboxId,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+  beforeEach(async () => {
+    running = await start();
+    ann = await made('ann');
+    bob = await made('bob');
+  });
+  afterEach(async () => {
+    await new Promise((resolve) => running.server.close(resolve));
+  });
+
+  it('is its secrets, sealed under its own key: on the wire they are ciphertext, and no other sandbox opens them', async () => {
+    const response = await asSandbox(ann, 'bootstrap');
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).not.toContain('delegate-s3cret');
+    const sealed = String(JSON.parse(text).sealed);
+    expect(openSandboxEnv(ann.key, ann.sandboxId, sealed)).toEqual({
+      DELEGATE_WORKER_API_KEY: 'delegate-s3cret',
+    });
+    expect(openSandboxEnv(bob.key, bob.sandboxId, sealed)).toBeNull();
+  });
+
+  it('is its own rows in the data store, with no database connection of its own', async () => {
+    const store = createRemoteDataStore(
+      createHttpStoreTransport({ url: running.base, sandboxId: ann.sandboxId, sandboxKey: ann.key })
+    );
+    const expiresAt = new Date(Date.UTC(2026, 0, 2));
+    await store.sandboxFiles.insert({
+      id: '00000000-0000-4000-8000-000000000001',
+      subject: 'ann',
+      scope: '',
+      filename: 'notes.txt',
+      contentType: 'text/plain',
+      sizeBytes: 12,
+      storageKey: 'k',
+      source: 'test',
+      batchId: null,
+      expiresAt,
+    });
+    const listed = await store.sandboxFiles.list('ann', '');
+    expect(listed.map((file) => [file.filename, file.expiresAt])).toEqual([
+      ['notes.txt', expiresAt],
+    ]);
+    // It landed in the orchestrator's store.
+    expect(await running.data.sandboxFiles.list('ann', '')).toHaveLength(1);
+  });
+
+  it('is refused everything else in the store: people, chats, other sandboxes, the stored setup', async () => {
+    const store = createRemoteDataStore(
+      createHttpStoreTransport({ url: running.base, sandboxId: ann.sandboxId, sandboxKey: ann.key })
+    );
+    await expect(store.identities.get('ann')).rejects.toThrow(/not a call a sandbox may make/);
+    await expect(store.sandboxes.live('bob')).rejects.toThrow(/not a call a sandbox may make/);
+    await expect(store.connectorConfigs.get('sandbox-orchestrator')).rejects.toThrow(
+      /not a call a sandbox may make/
+    );
+    await expect(store.settings.set('log_level', 'debug')).rejects.toThrow(
+      /not a call a sandbox may make/
+    );
+  });
+
+  it('is nothing for a caller that is not that sandbox: a wrong key, another sandbox’s key, the callers’ key, a removed sandbox', async () => {
+    expect((await asSandbox({ sandboxId: ann.sandboxId, key: 'wrong' }, 'bootstrap')).status).toBe(
+      401
+    );
+    expect((await asSandbox({ sandboxId: ann.sandboxId, key: bob.key }, 'bootstrap')).status).toBe(
+      401
+    );
+    expect((await asSandbox({ sandboxId: ann.sandboxId, key: 'caller-key' }, 'store')).status).toBe(
+      401
+    );
+    await running.post('/v1/remove', { key: 'ann' });
+    expect((await asSandbox(ann, 'bootstrap')).status).toBe(401);
+  });
+
+  it('opens none of the callers’ operations with a sandbox’s key', async () => {
+    expect((await running.post('/v1/list', {}, ann.key)).status).toBe(401);
+    expect((await running.post('/v1/ensure', { key: 'bob' }, ann.key)).status).toBe(401);
+    expect((await running.post('/v1/check', {}, ann.key)).status).toBe(401);
   });
 });

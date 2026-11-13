@@ -142,6 +142,7 @@ async function main(): Promise<void> {
     orchestrator: () => host.current(),
     status: () => host.status(),
     store: () => getDataStore().sandboxes,
+    dataStore: () => getDataStore(),
     check: async (candidate) => {
       const row = candidate ? { enabled: true, ...candidate } : await read();
       if (!row) {

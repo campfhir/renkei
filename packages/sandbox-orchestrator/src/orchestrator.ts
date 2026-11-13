@@ -31,7 +31,8 @@
  * suspended or removed by itself is noticed.
  */
 
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { sealSandboxEnv } from '@renkei/connector-sandbox';
 import type { SandboxRecord, SandboxState, SandboxStore } from '@renkei/db';
 import {
   DEFAULT_ARCHIVE_RETENTION_MS,
@@ -60,8 +61,19 @@ export interface OrchestratorOptions {
   store: () => SandboxStore;
   /** The deployment's sandbox key; each sandbox's own is derived from it (keys.ts). */
   masterKey: string;
-  /** What every sandbox's worker is started with, besides what the orchestrator sets itself. */
+  /**
+   * What every sandbox's worker needs besides what the orchestrator sets
+   * itself — its secrets. Never put in a sandbox's environment: a worker
+   * asks for it at boot and is answered it sealed under its own key
+   * (`sealedEnvironment`).
+   */
   env: Record<string, string>;
+  /**
+   * Where a sandbox reaches this orchestrator: for its sealed
+   * environment, and for the data store calls it makes instead of
+   * holding a database connection. Told to each sandbox as it is made.
+   */
+  callbackUrl?: string | null;
   logger: OrchestratorLogger;
   /**
    * Where an evicted sandbox's contents are kept, and brought back from.
@@ -292,16 +304,44 @@ export class Orchestrator {
     return {
       sandboxId: row.id,
       kind: row.kind,
+      // No secret but the sandbox's own key, and nothing of the database:
+      // the rest is asked for, sealed, once the worker is up.
       env: {
-        ...this.options.env,
-        // Set last: nothing in the template can stand in for these.
         SANDBOX_WORKER_API_KEY: sandboxApiKey(this.options.masterKey, row.id),
         SANDBOX_WORKER_PORT: String(SANDBOX_WORKER_PORT),
         SANDBOX_ORCHESTRATED: '1',
         SANDBOX_INSTANCE_ID: row.id,
+        ...(this.options.callbackUrl
+          ? { SANDBOX_ORCHESTRATOR_CALLBACK_URL: this.options.callbackUrl.replace(/\/+$/, '') }
+          : {}),
       },
       idleSuspendSeconds: Math.round(this.idleSuspendMs / 1000),
     };
+  }
+
+  /**
+   * The sandbox that is calling, when `presentedKey` is its own: the
+   * sandbox must exist and not be deleted, and the key must be the one
+   * derived for that id. Null otherwise — an id alone opens nothing.
+   */
+  async authenticate(sandboxId: string, presentedKey: string): Promise<SandboxRecord | null> {
+    const expected = Buffer.from(sandboxApiKey(this.options.masterKey, sandboxId));
+    const presented = Buffer.from(presentedKey);
+    if (presented.length !== expected.length || !timingSafeEqual(presented, expected)) return null;
+    const row = await this.store().get(sandboxId);
+    return row && row.state !== 'deleted' ? row : null;
+  }
+
+  /**
+   * What a sandbox's worker is started with, sealed under that sandbox's
+   * own key and bound to its id: only it can open the answer.
+   */
+  sealedEnvironment(sandboxId: string): string {
+    return sealSandboxEnv(
+      sandboxApiKey(this.options.masterKey, sandboxId),
+      sandboxId,
+      this.options.env
+    );
   }
 
   /**

@@ -762,7 +762,10 @@ Set `SANDBOX_ORCHESTRATOR_URL` and `SANDBOX_ORCHESTRATOR_API_KEY` in
 and then set sandboxes up as an operator under **Organization →
 Sandboxes**: where they are made, the identity, the idle rules and what
 each is started with are stored sealed in the database, not in `.env`,
-and the orchestrator picks a change up without a restart. The
+and the orchestrator picks a change up without a restart. A sandbox has
+no database access and is created with no secret but its own key: its
+worker makes its data store calls through the orchestrator and is handed
+its secrets sealed under that key. The
 orchestrator is the only container holding the engine's socket; no
 sandbox does. Code project services run inside each sandbox on an engine
 of its own (Podman) — on Azure as they are, on this host's Docker only

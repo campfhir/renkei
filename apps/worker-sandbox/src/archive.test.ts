@@ -12,15 +12,16 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
+import { buffer } from 'node:stream/consumers';
 import { readArchive, writeArchive } from './archive';
 
 /** An archive of `roots`, whole, in memory. */
 async function pack(roots: string[]): Promise<Buffer> {
   const sink = new PassThrough();
-  const chunks: Buffer[] = [];
-  sink.on('data', (chunk: Buffer) => chunks.push(chunk));
-  await writeArchive(roots, sink);
-  return Buffer.concat(chunks);
+  // Read to the stream's END, not merely until the writer is done: the
+  // last chunk is still on its way out of the stream when the write side finishes.
+  const [archive] = await Promise.all([buffer(sink), writeArchive(roots, sink)]);
+  return archive;
 }
 
 describe('a sandbox’s archive', () => {
