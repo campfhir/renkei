@@ -1003,10 +1003,12 @@ describe('notebook kernels over the wire', () => {
     require('readline').createInterface({ input: process.stdin }).on('line', (line) => {
       const { id, code } = JSON.parse(line);
       count += 1;
-      console.log(JSON.stringify({ id, execution_count: count, ok: true, outputs: [
+      // A cell written "slow:<ms>" takes that long to answer.
+      const wait = /^slow:([0-9]+)$/.exec(code);
+      setTimeout(() => console.log(JSON.stringify({ id, execution_count: count, ok: true, outputs: [
         { output_type: 'stream', name: 'stdout', text: code + ' token=' + process.env.API_TOKEN },
         { output_type: 'execute_result', data: { 'text/plain': ['again ', process.env.API_TOKEN] } },
-      ] }));
+      ] })), wait ? Number(wait[1]) : 0);
     });`;
   let kernelServer: Server;
   let kernelBase: string;
@@ -1078,6 +1080,37 @@ describe('notebook kernels over the wire', () => {
     expect((await post(kernelBase, 'workspaces/kernel/close', NOTEBOOK)).json).toEqual({
       closed: false,
     });
+  });
+
+  it('a cell whose caller gives up waiting runs on, and the worker is none the worse for it', async () => {
+    envStore.listSealedEnv.mockResolvedValue([]);
+    const escaped: unknown[] = [];
+    const caught = (error: unknown) => escaped.push(error);
+    process.on('uncaughtException', caught);
+    process.on('unhandledRejection', caught);
+    try {
+      const controller = new AbortController();
+      const gone = fetch(`${kernelBase}/v1/workspaces/kernel/execute`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${API_KEY}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ ...NOTEBOOK, code: 'slow:400' }),
+        signal: controller.signal,
+      }).catch(() => null);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      controller.abort();
+      await gone;
+      // The cell finishes with nobody to tell.
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      expect(escaped).toEqual([]);
+      // The kernel is still there, and so is what it ran.
+      const next = await post(kernelBase, 'workspaces/kernel/execute', { ...NOTEBOOK, code: 'x' });
+      expect(next.status).toBe(200);
+      expect(next.json).toMatchObject({ started: false, succeeded: true });
+    } finally {
+      process.off('uncaughtException', caught);
+      process.off('unhandledRejection', caught);
+      await post(kernelBase, 'workspaces/kernel/close', NOTEBOOK);
+    }
   });
 
   it('refuses what is not a notebook of the caller’s checkout, or has no code', async () => {
