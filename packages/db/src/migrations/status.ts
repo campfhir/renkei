@@ -202,6 +202,7 @@ export const EXPECTED_MIGRATIONS = [
   '176-chat-project-model',
   '177-audit-events-append-only',
   '178-artifact-bulk-jobs',
+  '179-sandbox-instances',
 ];
 
 export interface MigrationStatus {

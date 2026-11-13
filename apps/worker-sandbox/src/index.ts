@@ -74,6 +74,7 @@
  */
 
 import { checkDataStore, closeDataStore } from '@renkei/db';
+import { advertisedAddress, instanceId, startInstanceHeartbeat } from './instance-registry';
 import { ensureDataRoot, getDataRoot } from './disk';
 import { createBrowserStateStore } from './browser-state';
 import { createSecretKeyStore } from './secret-key-store';
@@ -519,7 +520,10 @@ async function main(): Promise<void> {
     uidIsolation,
     capabilityProblems: problems,
   });
+  let heartbeat: { stop: () => void } | null = null;
   server.listen(port, '0.0.0.0', () => {
+    // Up and listening: say so, so the app sends this instance its callers.
+    heartbeat = startInstanceHeartbeat({ id: instanceId(), address: advertisedAddress(port) });
     logger.info(
       'started {application} {version} on port {port} — can do: browser, charts {charts}, workspaces {workspaces}, services {services}, scripts {scripts}; each organization turns its own on in Settings',
       {
@@ -564,6 +568,9 @@ async function main(): Promise<void> {
     }, SHUTDOWN_DEADLINE_MS);
     deadline.unref();
     void (async () => {
+      // The row stays: a restart is back before its callers are moved, and
+      // an instance gone for good is noticed by its heartbeat going stale.
+      heartbeat?.stop();
       await server.drain();
       const stoppedPreviews = await previews.stopAll();
       if (stoppedPreviews) {

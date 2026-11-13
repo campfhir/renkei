@@ -1823,6 +1823,9 @@ importers:
 
   packages/sandbox-client:
     dependencies:
+      '@renkei/db':
+        specifier: workspace:*
+        version: link:../db
       '@renkei/guards':
         specifier: workspace:*
         version: link:../guards

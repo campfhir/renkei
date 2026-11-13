@@ -1559,6 +1559,19 @@ export interface DelegateGitTickets {
   write: Generated<boolean>;
 }
 
+export interface SandboxInstances {
+  address: string;
+  id: string;
+  last_seen_at: Timestamp;
+  started_at: Timestamp;
+}
+
+export interface SandboxAssignments {
+  assigned_at: Timestamp;
+  instance_id: string;
+  subject: string;
+}
+
 export interface SandboxWorkspaces {
   branch: string;
   created_at: Generated<Timestamp>;
@@ -1844,6 +1857,8 @@ export interface DB {
   sandbox_secrets: SandboxSecrets;
   sandbox_services: SandboxServices;
   sandbox_workspaces: SandboxWorkspaces;
+  sandbox_instances: SandboxInstances;
+  sandbox_assignments: SandboxAssignments;
   schedule_calendars: ScheduleCalendars;
   sessions: Sessions;
   jira_sites: JiraSites;

@@ -190,6 +190,15 @@ export function createPreviewHandlers(deps: PreviewHandlerDeps) {
     lines.map((line) => `${line.at} [${line.stream}] ${line.line}`).join('\n');
 
   async function handlePreviews(op: string, body: Body, response: ServerResponse): Promise<void> {
+    if (op === 'holds-token') {
+      // A share link names no caller, so the app cannot tell which instance
+      // serves it: it asks each whether the token is one of theirs.
+      if (!(await enabled(response))) return;
+      const token = str(body.token);
+      return sendJson(response, 200, {
+        held: isPreviewToken(token) && manager.byToken(token) !== null,
+      });
+    }
     const subject = str(body.subject);
     if (!subject) return sendError(response, 400, 'bad_request');
     if (!(await enabled(response))) return;

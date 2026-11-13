@@ -771,6 +771,44 @@ and the worker says so at boot. Each replica's sweep removes
 only bytes it can see and leaves the rest a day past expiry, so replicas
 on separate disks (several hosts) never delete each other's rows early.
 
+**Each caller is served by one instance.** Much of what the sandbox
+holds for a caller is one instance's alone — a notebook's kernel, an
+editor's language servers, a preview's process — and Compose's DNS sends
+each call to whichever replica it likes. So the app does not use the
+shared address for a caller's calls. Every instance writes itself into
+`sandbox_instances` at boot (its name and its own address) and touches
+the row every ten seconds; the app assigns each caller — a person, or a
+code project — to one live instance on their first call
+(`sandbox_assignments`) and sends every later call for them straight to
+it (`packages/sandbox-client` routing). The shared `SANDBOX_WORKER_URL`
+is still what the app is given: it is used for what any instance answers
+alike, and for everything until an instance has registered.
+
+- An instance whose row has not been touched for 45 seconds is taken for
+  gone, and its callers are moved to another on their next call. What it
+  held for them is made again there: a kernel starts fresh (the notebook
+  says so), a preview is started again, and a repository that is not on
+  the new instance's disk is cloned again — uncommitted changes in a
+  checkout that only the lost instance had are lost with it.
+- An instance keeps its callers across a restart when it comes back
+  under the same name within that time. The name is the container's
+  hostname unless `SANDBOX_INSTANCE_ID` is set: a restarted container
+  and a StatefulSet's pod keep theirs; a container made afresh (a new
+  image under `scale: N`) is a new instance, and callers are spread over
+  the new ones. With the shared volumes above their checkouts are still
+  there; without, give instances stable names and their own disks.
+- Nothing has to be set for the app to find an instance. Each
+  advertises every address it has on the worker's port (it is usually on
+  more than one network: the app's, and its own for its database) and the
+  app uses the one that answers from where it is. Set
+  `SANDBOX_WORKER_ADVERTISE_URL` only where none of those is the way in
+  (a pod's stable DNS name behind a NAT, say). A process that can reach
+  no instance directly keeps using the shared address, as before.
+- Sharing `/workspaces` and `/data` between instances is no longer what
+  makes several of them work. It is what lets a caller moved off a lost
+  instance find their checkout and staged files where they land; without
+  it they are cloned and staged again.
+
 **Horizontal scale:** either process may run as N instances. Claims take
 row locks (`FOR UPDATE SKIP LOCKED`), and messages sharing an ordering key
 (one To Do list's index writes, one subscription's delta rounds, one room's

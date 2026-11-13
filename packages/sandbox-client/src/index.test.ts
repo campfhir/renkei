@@ -8,6 +8,7 @@ jest.mock('@renkei/settings', () => ({ getOrgSettings: jest.fn() }));
  * same way for every caller.
  */
 
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import {
   sandboxConfig,
   sbFetchUrl,
@@ -106,10 +107,14 @@ beforeEach(() => {
     SANDBOX_WORKER_URL: 'http://sandbox.internal:8092',
     SANDBOX_WORKER_API_KEY: 'test-key',
   };
+  // No instance has registered: every call goes to the shared address,
+  // which is what these tests are about (routing.test.ts has the rest).
+  registerDataStore(createMemoryDataStore());
 });
 
 afterEach(() => {
   process.env = ORIGINAL_ENV;
+  resetDataStore();
 });
 
 describe('sandboxConfig', () => {
@@ -280,9 +285,11 @@ describe('sbFetchUrl / sbListFiles / sbStatFile / sbDeleteFile (JSON ops)', () =
     fetchSpy = jest.spyOn(globalThis, 'fetch').mockImplementation(
       (_url, init) =>
         new Promise((_resolve, reject) => {
-          init?.signal?.addEventListener('abort', () =>
-            reject(Object.assign(new Error('This operation was aborted'), { name: 'AbortError' }))
-          );
+          const aborted = () =>
+            reject(Object.assign(new Error('This operation was aborted'), { name: 'AbortError' }));
+          // As fetch does: a signal that fired before the call rejects at once.
+          if (init?.signal?.aborted) aborted();
+          else init?.signal?.addEventListener('abort', aborted);
         })
     );
     const controller = new AbortController();
@@ -1463,23 +1470,94 @@ describe('previews', () => {
     });
   });
 
-  it('names the worker proxy path for a member, a named port and a share token, and nothing when unconfigured', () => {
-    expect(sbPreviewProxyTarget({ subject: 'code-project:p1', name: 'web' }, '/a/b?x=1')).toEqual({
+  it('names the worker proxy path for a member, a named port and a share token, and nothing when unconfigured', async () => {
+    expect(
+      await sbPreviewProxyTarget({ subject: 'code-project:p1', name: 'web' }, '/a/b?x=1')
+    ).toEqual({
       url: 'http://sandbox.internal:8092/v1/previews/proxy/web/a/b?x=1',
       headers: { authorization: 'Bearer test-key', 'x-sandbox-subject': 'code-project:p1' },
     });
     expect(
-      sbPreviewProxyTarget({ subject: 'code-project:p1', name: 'web', port: 'api' }, 'x')
+      await sbPreviewProxyTarget({ subject: 'code-project:p1', name: 'web', port: 'api' }, 'x')
     ).toEqual({
       url: 'http://sandbox.internal:8092/v1/previews/port/web/api/x',
       headers: { authorization: 'Bearer test-key', 'x-sandbox-subject': 'code-project:p1' },
     });
-    expect(sbPreviewProxyTarget({ token: 't'.repeat(43) }, '')).toEqual({
+    expect(await sbPreviewProxyTarget({ token: 't'.repeat(43) }, '')).toEqual({
       url: `http://sandbox.internal:8092/v1/previews/public/${'t'.repeat(43)}/`,
       headers: { authorization: 'Bearer test-key' },
     });
     delete process.env.SANDBOX_WORKER_URL;
-    expect(sbPreviewProxyTarget({ token: 't'.repeat(43) }, '')).toBeNull();
+    expect(await sbPreviewProxyTarget({ token: 't'.repeat(43) }, '')).toBeNull();
+  });
+
+  describe('with several instances registered', () => {
+    const { resetPreviewTokenHoldersForTests, resetSandboxRoutingForTests } =
+      jest.requireActual<typeof import('./index')>('./index');
+    const { getMemoryDataStore } = jest.requireActual<typeof import('@renkei/db')>('@renkei/db');
+    const A = 'http://10.0.0.1:8092';
+    const B = 'http://10.0.0.2:8092';
+    const TOKEN = 't'.repeat(43);
+
+    beforeEach(async () => {
+      resetPreviewTokenHoldersForTests();
+      resetSandboxRoutingForTests();
+      const now = new Date();
+      const store = getMemoryDataStore();
+      if (!store) throw new Error('the memory store is not registered');
+      for (const [id, address] of [
+        ['sandbox-a', A],
+        ['sandbox-b', B],
+      ]) {
+        await store.sandboxInstances.heartbeat({
+          id,
+          address,
+          startedAt: now,
+          at: now,
+        });
+      }
+    });
+
+    it('a member’s preview is reached on the instance the caller is assigned to', async () => {
+      // Both instances answer their health check from here.
+      global.fetch = jest.fn(
+        async () => new Response('{"ok":true}', { status: 200 })
+      ) as unknown as typeof fetch;
+      const first = await sbPreviewProxyTarget({ subject: 'code-project:p1', name: 'web' }, 'x');
+      const again = await sbPreviewProxyTarget({ subject: 'code-project:p1', name: 'web' }, 'y');
+      expect([`${A}/v1/previews/proxy/web/x`, `${B}/v1/previews/proxy/web/x`]).toContain(
+        first?.url
+      );
+      expect(again?.url.slice(0, A.length)).toBe(first?.url.slice(0, A.length));
+    });
+
+    it('a share link, which names no caller, goes to the instance that says the token is its own', async () => {
+      const asked: string[] = [];
+      global.fetch = jest.fn(async (url: string) => {
+        if (url.endsWith('/health')) return new Response('{"ok":true}', { status: 200 });
+        asked.push(url);
+        return new Response(JSON.stringify({ held: url.startsWith(B) }), { status: 200 });
+      }) as unknown as typeof fetch;
+      expect((await sbPreviewProxyTarget({ token: TOKEN }, 'a'))?.url).toBe(
+        `${B}/v1/previews/public/${TOKEN}/a`
+      );
+      expect(asked.sort()).toEqual([
+        `${A}/v1/previews/holds-token`,
+        `${B}/v1/previews/holds-token`,
+      ]);
+      // Remembered: the page's next requests do not ask again.
+      await sbPreviewProxyTarget({ token: TOKEN }, 'b');
+      expect(asked).toHaveLength(2);
+    });
+
+    it('a token nobody holds still has somewhere to go, to be told so', async () => {
+      global.fetch = jest.fn(
+        async () => new Response(JSON.stringify({ held: false }), { status: 200 })
+      ) as unknown as typeof fetch;
+      expect((await sbPreviewProxyTarget({ token: TOKEN }, ''))?.url).toBe(
+        `${A}/v1/previews/public/${TOKEN}/`
+      );
+    });
   });
 });
 
@@ -1496,6 +1574,8 @@ describe('notebook kernels', () => {
           JSON.stringify({
             kernel: { engine: 'kernel', python: '3.12.1' },
             started: true,
+            previous: 'idle',
+            workerUptimeMs: 90_000,
             outputs,
             executionCount: 4,
             succeeded: true,
@@ -1511,6 +1591,8 @@ describe('notebook kernels', () => {
       val: {
         kernel: { engine: 'kernel', python: '3.12.1' },
         started: true,
+        previous: 'idle',
+        workerUptimeMs: 90_000,
         outputs,
         executionCount: 4,
         succeeded: true,

@@ -84,6 +84,15 @@ export type ExecuteOutcome =
       kernel: KernelView;
       /** This call started the kernel: nothing earlier cells defined is there. */
       started: boolean;
+      /**
+       * When this call started the kernel: what this worker knows became of
+       * the notebook's last one — reaped for idleness, or ended (it exited,
+       * crashed or was closed). Null when this worker never had one, which
+       * with `workerUptimeMs` tells a restart from another replica.
+       */
+      previous: 'idle' | 'ended' | null;
+      /** How long this worker process has been up. */
+      workerUptimeMs: number;
       /** nbformat outputs, as the notebook stores them. */
       outputs: unknown[];
       executionCount: number | null;
@@ -125,8 +134,14 @@ function keyOf(input: { owner: KernelOwner; workspaceId: string; path: string })
   return `${input.owner.subject}\n${input.workspaceId}\n${input.path}`;
 }
 
+/** How many ended kernels are remembered, to say why a notebook's last one is gone. */
+const ENDED_MEMORY = 1_000;
+
 export class KernelSessions {
   private readonly kernels = new Map<string, Kernel>();
+  /** What became of each notebook's last kernel here, until its next one starts. */
+  private readonly ended = new Map<string, 'idle' | 'ended'>();
+  private readonly bootedAt = Date.now();
   private readonly reaper: NodeJS.Timeout;
 
   constructor(private readonly deps: KernelSessionsDeps = {}) {
@@ -147,13 +162,16 @@ export class KernelSessions {
   /** The notebook's kernel, started if it has none. */
   private async ensure(
     input: KernelInput
-  ): Promise<{ ok: true; kernel: Kernel; started: boolean } | KernelFailure> {
+  ): Promise<
+    | { ok: true; kernel: Kernel; started: boolean; previous: 'idle' | 'ended' | null }
+    | KernelFailure
+  > {
     const key = keyOf(input);
     const existing = this.kernels.get(key);
     if (existing && existing.state !== 'exited') {
       const failure = await existing.ready;
       if (failure) return failure;
-      return { ok: true, kernel: existing, started: false };
+      return { ok: true, kernel: existing, started: false, previous: null };
     }
     const inWorkspace = [...this.kernels.values()].filter(
       (kernel) => kernel.workspaceId === input.workspaceId
@@ -185,6 +203,8 @@ export class KernelSessions {
         message: error instanceof Error ? error.message : String(error),
       };
     }
+    const previous = this.ended.get(key) ?? null;
+    this.ended.delete(key);
     let settle: (failure: KernelFailure | null) => void = () => {};
     const kernel: Kernel = {
       key,
@@ -266,6 +286,8 @@ export class KernelSessions {
       kernel.state = 'exited';
       clearTimeout(startTimer);
       if (this.kernels.get(key) === kernel) this.kernels.delete(key);
+      // A kernel that had run is remembered as gone, unless the reaper said why already.
+      if (!starting && !this.ended.has(key)) this.remember(key, 'ended');
       if (starting) {
         settle({
           ok: false,
@@ -297,14 +319,25 @@ export class KernelSessions {
       this.end(kernel);
       return failure;
     }
-    return { ok: true, kernel, started: true };
+    return { ok: true, kernel, started: true, previous };
+  }
+
+  private remember(key: string, how: 'idle' | 'ended'): void {
+    this.ended.delete(key);
+    this.ended.set(key, how);
+    // Oldest first out: this is a courtesy to the next run, not a record.
+    while (this.ended.size > ENDED_MEMORY) {
+      const oldest = this.ended.keys().next();
+      if (oldest.done) break;
+      this.ended.delete(oldest.value);
+    }
   }
 
   /** Run one cell in the notebook's kernel, starting the kernel when it has none. */
   async execute(input: KernelInput, code: string, timeoutMs: number): Promise<ExecuteOutcome> {
     const ensured = await this.ensure(input);
     if (!ensured.ok) return ensured;
-    const { kernel, started } = ensured;
+    const { kernel, started, previous } = ensured;
     kernel.busy += 1;
     kernel.lastActivity = Date.now();
     const turn = kernel.tail.then(() => this.runCell(kernel, code, timeoutMs));
@@ -312,7 +345,13 @@ export class KernelSessions {
     try {
       const answer = await turn;
       if (!answer.ok) return answer;
-      return { ...answer, kernel: kernel.view, started };
+      return {
+        ...answer,
+        kernel: kernel.view,
+        started,
+        previous,
+        workerUptimeMs: Date.now() - this.bootedAt,
+      };
     } finally {
       kernel.busy -= 1;
       kernel.lastActivity = Date.now();
@@ -422,6 +461,7 @@ export class KernelSessions {
     let reaped = 0;
     for (const kernel of [...this.kernels.values()]) {
       if (kernel.busy === 0 && now - kernel.lastActivity > KERNEL_IDLE_MS) {
+        if (kernel.state === 'ready') this.remember(kernel.key, 'idle');
         this.end(kernel);
         reaped += 1;
       }

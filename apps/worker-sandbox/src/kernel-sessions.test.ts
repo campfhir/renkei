@@ -220,6 +220,34 @@ withPython('a kernel on a real Python', () => {
     expect(sessions.count()).toBe(0);
   });
 
+  it('a run that starts a kernel says what became of the last one here', async () => {
+    // Never had one: nothing to say (a first run, or a kernel on another worker).
+    const first = ran(await sessions.execute(input(), 'x = 1', 30_000));
+    expect(first).toMatchObject({ started: true, previous: null });
+    expect(first.workerUptimeMs).toBeGreaterThanOrEqual(0);
+    // Reaped unused.
+    sessions.reapIdle(Date.now() + KERNEL_IDLE_MS + 1_000);
+    expect(ran(await sessions.execute(input(), 'x = 1', 30_000))).toMatchObject({
+      started: true,
+      previous: 'idle',
+    });
+    // A run in a live kernel has no previous to speak of.
+    expect(ran(await sessions.execute(input(), 'x', 30_000))).toMatchObject({
+      started: false,
+      previous: null,
+    });
+    // Died under a cell.
+    await sessions.execute(input(), 'import os\nos._exit(3)', 30_000);
+    expect(ran(await sessions.execute(input(), '1', 30_000))).toMatchObject({
+      started: true,
+      previous: 'ended',
+    });
+    // Another notebook's history is its own.
+    expect(
+      ran(await sessions.execute(input({ path: 'notebooks/other.ipynb' }), '1', 30_000))
+    ).toMatchObject({ started: true, previous: null });
+  });
+
   it('a checkout going away takes its kernels with it', async () => {
     ran(await sessions.execute(input(), 'x = 1', 30_000));
     ran(await sessions.execute(input({ workspaceId: 'ws-2' }), 'x = 1', 30_000));

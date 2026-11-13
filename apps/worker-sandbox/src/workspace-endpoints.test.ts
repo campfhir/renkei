@@ -201,7 +201,7 @@ describe('a checkout that vanished from disk', () => {
     const result = await post(enabledBase, 'workspaces/ls', { ...TARGET, id: 'ws-elsewhere' });
     expect(result.status).toBe(409);
     expect(result.json.error.message).toMatch(
-      /no files for this project at all.*second worker instance behind the same address/
+      /no files for this project at all.*moved to this instance from one that stopped answering/
     );
   });
 

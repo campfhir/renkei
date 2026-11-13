@@ -300,7 +300,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       const where = `worker ${workerInstance()}, up ${workerUptime()}`;
       const why = callerOnDisk
         ? `this worker has the project’s other files but not this checkout, so the checkout alone was removed (${where})`
-        : `this worker has no files for this project at all, so it is not the worker that cloned it — one started without the workspaces volume mounted, or a second worker instance behind the same address (${where})`;
+        : `this worker has no files for this project at all, so it is not the worker that cloned it — the project was moved to this instance from one that stopped answering, or this one was started without the workspaces volume mounted (${where})`;
       logger.warn(
         "the checkout of {repo} of {actor} is missing from this worker's disk although the workspace reads ready ({why}); it is marked failed and will be cloned again",
         {
@@ -1897,6 +1897,8 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         return sendJson(response, 200, {
           kernel: outcome.kernel,
           started: outcome.started,
+          previous: outcome.previous,
+          workerUptimeMs: outcome.workerUptimeMs,
           outputs: scrubDeep(outcome.outputs, (text) => scrubEnv(text, env)),
           executionCount: outcome.executionCount,
           succeeded: outcome.succeeded,

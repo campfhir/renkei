@@ -24,6 +24,20 @@
 
 import { getOrgSettings } from '@renkei/settings';
 import { isRecord } from '@renkei/guards';
+import {
+  forgetSandboxEndpoint,
+  sandboxConfig,
+  sandboxEndpointFor,
+  sandboxEndpoints,
+} from './routing';
+
+export {
+  SANDBOX_INSTANCE_LIVE_MS,
+  resetSandboxRoutingForTests,
+  sandboxConfig,
+  sandboxEndpointFor,
+  type SandboxEndpoint,
+} from './routing';
 
 export interface WireSandboxFile {
   id: string;
@@ -64,13 +78,6 @@ function str(value: unknown): string {
 
 function optStr(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
-}
-
-export function sandboxConfig(): { url: string; key: string } | null {
-  const url = process.env.SANDBOX_WORKER_URL?.trim().replace(/\/$/, '');
-  const key = process.env.SANDBOX_WORKER_API_KEY?.trim();
-  if (!url || !key) return null;
-  return { url, key };
 }
 
 /**
@@ -294,7 +301,8 @@ async function callOp(
   body: unknown,
   options: { retry?: boolean } = {}
 ): Promise<ClientResult<Response>> {
-  const cfg = sandboxConfig();
+  const subject = isRecord(body) && typeof body.subject === 'string' ? body.subject : null;
+  const cfg = await sandboxEndpointFor(subject);
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   for (let attempt = 0; ; attempt += 1) {
     const delay = RETRY_DELAYS_MS[attempt];
@@ -308,6 +316,9 @@ async function callOp(
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch (error) {
+      // The caller's instance did not answer: the next call looks again
+      // at where they are assigned, in case it has gone for good.
+      if (isConnectionFailure(error)) forgetSandboxEndpoint(subject);
       if (mayRetry && isConnectionFailure(error)) {
         await retryDelay(delay);
         continue;
@@ -435,7 +446,7 @@ export async function sbWriteFile(
   input: { filename: string; contentType?: string; source?: string; batchId?: string },
   bytes: Uint8Array
 ): Promise<ClientResult<WireSandboxFile>> {
-  const cfg = sandboxConfig();
+  const cfg = await sandboxEndpointFor(target.subject);
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   const query = new URLSearchParams({
     subject: target.subject,
@@ -992,7 +1003,7 @@ export async function sbWorkspaceDownload(
   target: SandboxTarget,
   input: { id: string; path: string }
 ): Promise<ClientResult<WireWorkspaceDownload>> {
-  const cfg = sandboxConfig();
+  const cfg = await sandboxEndpointFor(target.subject);
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   let response: Response;
   try {
@@ -1140,7 +1151,7 @@ export async function sbWorkspaceUpload(
   target: SandboxTarget,
   input: { id: string; path: string; bytes: Uint8Array<ArrayBuffer> }
 ): Promise<ClientResult<{ path: string; created: boolean; sizeBytes: number }>> {
-  const cfg = sandboxConfig();
+  const cfg = await sandboxEndpointFor(target.subject);
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   const query = new URLSearchParams({
     subject: target.subject,
@@ -1253,7 +1264,7 @@ export async function sbWorkspaceExec(
     signal?: AbortSignal;
   } = {}
 ): Promise<ClientResult<WireExecResult>> {
-  const cfg = sandboxConfig();
+  const cfg = await sandboxEndpointFor(target.subject);
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   // The client waits a little beyond the command's own limit: the worker
   // kills the process at timeoutMs and still has to answer.
@@ -2027,7 +2038,7 @@ export async function sbServiceStart(
     exports?: Record<string, string>;
   }
 ): Promise<ClientResult<WireService>> {
-  const cfg = sandboxConfig();
+  const cfg = await sandboxEndpointFor(target.subject);
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   let response: Response;
   try {
@@ -2254,7 +2265,7 @@ export async function sbPreviewStart(
     waitMs?: number;
   }
 ): Promise<ClientResult<{ preview: WirePreview; listening: string[]; logs: string }>> {
-  const cfg = sandboxConfig();
+  const cfg = await sandboxEndpointFor(target.subject);
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   let response: Response;
   try {
@@ -2314,6 +2325,52 @@ export async function sbPreviewStop(
   return preview ? { ok: true, val: preview } : malformed();
 }
 
+/** Which instance holds each share token, as last found; a preview lives minutes, not days. */
+const TOKEN_HOLDER_TTL_MS = 60_000;
+const tokenHolders = new Map<string, { url: string; until: number }>();
+
+/** Test-only: forget which instance held which share token. */
+export function resetPreviewTokenHoldersForTests(): void {
+  tokenHolders.clear();
+}
+
+/**
+ * The instance serving a share token's preview. A share link names no
+ * caller, so there is no assignment to read: each live instance is asked
+ * whether the token is one of its own, and the answer is remembered for
+ * a minute. With one address to ask (no instance registered) that is
+ * the answer; a token nobody holds goes to the first, which says so.
+ */
+async function tokenEndpoint(token: string): Promise<{ url: string; key: string } | null> {
+  const endpoints = await sandboxEndpoints();
+  const first = endpoints[0];
+  if (!first) return null;
+  if (endpoints.length === 1) return first;
+  const now = Date.now();
+  const known = tokenHolders.get(token);
+  if (known && known.until > now) return { url: known.url, key: first.key };
+  const answers = await Promise.all(
+    endpoints.map(async (endpoint) => {
+      try {
+        const response = await fetch(`${endpoint.url}/v1/previews/holds-token`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${endpoint.key}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ token }),
+          signal: AbortSignal.timeout(5_000),
+        });
+        const value: unknown = response.ok ? await response.json() : null;
+        return isRecord(value) && value.held === true;
+      } catch {
+        return false;
+      }
+    })
+  );
+  const holder = endpoints[answers.indexOf(true)];
+  if (!holder) return first;
+  tokenHolders.set(token, { url: holder.url, until: now + TOKEN_HOLDER_TTL_MS });
+  return holder;
+}
+
 /**
  * Where the web app relays a browser's request to a preview: the
  * worker's proxy path for a member's request (the subject rides a
@@ -2321,19 +2378,21 @@ export async function sbPreviewStop(
  * token, with the headers the worker needs. `path` is what follows the
  * preview's own prefix, query included.
  */
-export function sbPreviewProxyTarget(
+export async function sbPreviewProxyTarget(
   ref: { subject: string; name: string; port?: string | null } | { token: string },
   path: string
-): { url: string; headers: Record<string, string> } | null {
-  const cfg = sandboxConfig();
-  if (!cfg) return null;
+): Promise<{ url: string; headers: Record<string, string> } | null> {
   const rest = path.replace(/^\/+/, '');
   if ('token' in ref) {
+    const holder = await tokenEndpoint(ref.token);
+    if (!holder) return null;
     return {
-      url: `${cfg.url}/v1/previews/public/${encodeURIComponent(ref.token)}/${rest}`,
-      headers: { authorization: `Bearer ${cfg.key}` },
+      url: `${holder.url}/v1/previews/public/${encodeURIComponent(ref.token)}/${rest}`,
+      headers: { authorization: `Bearer ${holder.key}` },
     };
   }
+  const cfg = await sandboxEndpointFor(ref.subject);
+  if (!cfg) return null;
   const where = ref.port
     ? `port/${encodeURIComponent(ref.name)}/${encodeURIComponent(ref.port)}`
     : `proxy/${encodeURIComponent(ref.name)}`;
@@ -2486,7 +2545,7 @@ export async function sbRunScript(
     signal?: AbortSignal;
   } = {}
 ): Promise<ClientResult<WireScriptResult>> {
-  const cfg = sandboxConfig();
+  const cfg = await sandboxEndpointFor(target.subject);
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   // The client waits a little beyond the script's own limit: the worker
   // kills the process at timeoutMs, stages what it wrote, and answers.
@@ -2721,6 +2780,14 @@ export interface WireKernelRun {
   kernel: WireKernel;
   /** This run started the kernel: nothing earlier cells defined is there. */
   started: boolean;
+  /**
+   * When this run started the kernel: what the answering worker knows became
+   * of the notebook's last one — 'idle' (reaped unused), 'ended' (exited,
+   * crashed or closed) — or null when that worker never had one.
+   */
+  previous: 'idle' | 'ended' | null;
+  /** How long the answering worker has been up, to tell a restart from another replica. */
+  workerUptimeMs: number;
   /** The cell's outputs in nbformat's own shapes, as a notebook stores them. */
   outputs: unknown[];
   executionCount: number | null;
@@ -2746,7 +2813,7 @@ export async function sbKernelExecute(
   target: SandboxTarget,
   input: { id: string; path: string; code: string; timeoutMs?: number }
 ): Promise<ClientResult<WireKernelRun>> {
-  const cfg = sandboxConfig();
+  const cfg = await sandboxEndpointFor(target.subject);
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   // The cell's own limit, the interrupt's grace, and a first start's time on top.
   const wait = (input.timeoutMs ?? 10 * 60_000) + 150_000;
@@ -2775,6 +2842,8 @@ export async function sbKernelExecute(
     val: {
       kernel,
       started: value.started === true,
+      previous: value.previous === 'idle' || value.previous === 'ended' ? value.previous : null,
+      workerUptimeMs: typeof value.workerUptimeMs === 'number' ? value.workerUptimeMs : 0,
       outputs: value.outputs,
       executionCount: typeof value.executionCount === 'number' ? value.executionCount : null,
       succeeded: value.succeeded === true,
@@ -2897,7 +2966,7 @@ export async function sbLspEvents(
   input: { session: string },
   signal: AbortSignal
 ): Promise<ClientResult<ReadableStream<Uint8Array>>> {
-  const cfg = sandboxConfig();
+  const cfg = await sandboxEndpointFor(target.subject);
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   let response: Response;
   try {

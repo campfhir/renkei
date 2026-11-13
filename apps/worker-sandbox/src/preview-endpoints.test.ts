@@ -366,6 +366,15 @@ describe('a preview', () => {
     );
     expect((await through('/v1/previews/port/full/nope/hello')).status).toBe(404);
     // Each port's own share token, and nothing for one that is not held.
+    // A share link names no caller: the app asks each instance whether the
+    // token is one of its own, and only the one running the preview says yes.
+    expect((await post('previews/holds-token', { token: TOKEN })).json).toEqual({ held: true });
+    expect((await post('previews/holds-token', { token: 'z'.repeat(43) })).json).toEqual({
+      held: false,
+    });
+    expect((await post('previews/holds-token', { token: 'not a token' })).json).toEqual({
+      held: false,
+    });
     expect((await through(`/v1/previews/public/${TOKEN}/hello`, { subject: null })).text).toContain(
       'host=127.0.0.1:10000'
     );

@@ -46,6 +46,7 @@ import Markdown from '../../chat/_components/markdown';
 import NotebookHtml from './notebook-html';
 import {
   cellStatus,
+  cellsToRecover,
   cellsToRun,
   editBlocker,
   initialNotebookView,
@@ -254,6 +255,7 @@ export default function NotebookView({
     edit(clearNotebookOutputs(text.current));
   };
 
+  const recover = cellsToRecover(state, notebook?.cells ?? []);
   const tall = touch ? ' h-9' : '';
   const busy = state.running !== null;
   const count = notebook?.cells.length ?? 0;
@@ -430,7 +432,22 @@ export default function NotebookView({
                 : 'border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-200'
           }`}
         >
-          <span className="flex-1">{state.notice.text}</span>
+          <span className="flex-1">
+            {state.notice.text}
+            {recover.length > 0 && blocked === null ? (
+              <>
+                {' '}
+                <button
+                  type="button"
+                  onClick={() => run(recover)}
+                  className="font-semibold underline hover:no-underline"
+                >
+                  Run the {recover.length - 1} cell{recover.length === 2 ? '' : 's'} above, then
+                  this one
+                </button>
+              </>
+            ) : null}
+          </span>
           <button
             type="button"
             onClick={() => dispatch({ type: 'noticeDismissed' })}

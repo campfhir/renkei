@@ -57,6 +57,11 @@ export interface NotebookViewState {
   /** The cell that raised and stopped the last run. */
   failed: number | null;
   notice: Notice | null;
+  /**
+   * The cell whose run found no kernel and had to start one, when there had
+   * been one: the cells above it are no longer defined in the new kernel.
+   */
+  lostAt: number | null;
   /** The markdown cell open as text. */
   editing: number | null;
   restarting: boolean;
@@ -70,6 +75,14 @@ export interface CellRun {
   succeeded: boolean;
   /** The kernel was started by this run: nothing earlier cells defined is there. */
   started: boolean;
+  /**
+   * When this run started the kernel: what the sandbox worker that answered
+   * knows became of the last one — reaped unused, or ended — or null when
+   * that worker never had one.
+   */
+  previous: 'idle' | 'ended' | null;
+  /** How long that worker has been up: a restart, or another replica. */
+  workerUptimeMs: number;
   timedOut: boolean;
   kernel: KernelInfo;
 }
@@ -108,13 +121,40 @@ export const initialNotebookView: NotebookViewState = {
   stopping: false,
   failed: null,
   notice: null,
+  lostAt: null,
   editing: null,
   restarting: false,
   packages: { open: false, text: '', installing: false, log: null, succeeded: null },
 };
 
-const LOST_KERNEL =
-  'The kernel had stopped and was started again: what earlier cells defined is gone. Run them again if this cell needs them.';
+const GONE = 'What earlier cells defined is gone.';
+
+function ago(ms: number): string {
+  const minutes = Math.max(1, Math.round(ms / 60_000));
+  if (minutes < 90) return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} hours` : `${Math.round(hours / 24)} days`;
+}
+
+/**
+ * Why a run found no kernel where there had been one, as far as the
+ * sandbox can say: it reaped it, it ended, the instance itself restarted
+ * since — or the instance that answered never had it, which means the
+ * project's calls now go to another instance than before (its old one
+ * stopped answering and it was moved: packages/sandbox-client routing.ts).
+ */
+export function lostKernelText(run: Pick<CellRun, 'previous' | 'workerUptimeMs'>): string {
+  if (run.previous === 'idle') {
+    return `The kernel was ended after half an hour unused, and a new one was started. ${GONE}`;
+  }
+  if (run.previous === 'ended') {
+    return `The kernel had ended (it crashed, or was closed elsewhere), and a new one was started. ${GONE}`;
+  }
+  if (run.workerUptimeMs < 60 * 60_000) {
+    return `The sandbox restarted ${ago(run.workerUptimeMs)} ago, which ended the kernel, and a new one was started. ${GONE}`;
+  }
+  return `This project is now served by a different sandbox instance (up ${ago(run.workerUptimeMs)}) than the one that ran the earlier cells, so a new kernel was started. ${GONE}`;
+}
 
 /** The error a cell's outputs end in, as "NameError: name 'x' is not defined". */
 export function raisedIn(outputs: unknown[]): string | null {
@@ -179,12 +219,16 @@ export function notebookViewReducer(
         stopping: false,
         failed: null,
         notice: null,
+        lostAt: null,
       };
     }
     case 'cellFinished': {
       if (action.index !== state.running) return state;
       const { run } = action;
       const lost = run.started && state.kernel !== null;
+      // The first cell of this run to land in the new kernel is where state was lost.
+      const lostAt = lost ? (state.lostAt ?? action.index) : state.lostAt;
+      const lostNotice: Notice | null = lost ? { tone: 'info', text: lostKernelText(run) } : null;
       const ran = state.ran + 1;
       if (!run.succeeded) {
         const skipped = state.queue.length;
@@ -201,9 +245,10 @@ export function notebookViewReducer(
           ran: 0,
           stopping: false,
           failed: state.stopping ? null : action.index,
+          lostAt,
           notice: {
             tone: state.stopping ? 'info' : 'bad',
-            text: `${why}${skipped > 0 ? ` ${plural(skipped, 'cell')} after it ${skipped === 1 ? 'was' : 'were'} not run.` : ''}${lost ? ` ${LOST_KERNEL}` : ''}`,
+            text: `${why}${skipped > 0 ? ` ${plural(skipped, 'cell')} after it ${skipped === 1 ? 'was' : 'were'} not run.` : ''}${lostNotice ? ` ${lostNotice.text}` : ''}`,
           },
         };
       }
@@ -215,7 +260,8 @@ export function notebookViewReducer(
           running: next,
           queue: state.queue.slice(1),
           ran,
-          notice: lost ? { tone: 'info', text: LOST_KERNEL } : state.notice,
+          lostAt,
+          notice: lostNotice ?? state.notice,
         };
       }
       return {
@@ -225,14 +271,18 @@ export function notebookViewReducer(
         queue: [],
         ran: 0,
         stopping: false,
-        notice: lost
-          ? { tone: 'info', text: LOST_KERNEL }
-          : ran > 1
-            ? {
-                tone: 'good',
-                text: `Ran ${plural(ran, 'cell')}. The outputs are unsaved until you save the notebook.`,
-              }
-            : state.notice,
+        lostAt,
+        // A run that lost the kernel on the way keeps saying so: that matters more than a count.
+        notice:
+          lostNotice ??
+          (lostAt !== null
+            ? state.notice
+            : ran > 1
+              ? {
+                  tone: 'good',
+                  text: `Ran ${plural(ran, 'cell')}. The outputs are unsaved until you save the notebook.`,
+                }
+              : state.notice),
       };
     }
     case 'runRefused':
@@ -258,6 +308,7 @@ export function notebookViewReducer(
         restarting: false,
         kernel: null,
         failed: null,
+        lostAt: null,
         notice: {
           tone: 'info',
           text: 'The kernel was restarted: nothing is defined until cells are run again. Installed packages are kept.',
@@ -266,18 +317,21 @@ export function notebookViewReducer(
     case 'restartRefused':
       return { ...state, restarting: false, notice: { tone: 'bad', text: action.error } };
     case 'noticeDismissed':
-      return { ...state, notice: null };
+      return { ...state, notice: null, lostAt: null };
     case 'cellInserted':
       if (structureLocked(state)) return state;
       return {
         ...state,
         failed: null,
+        lostAt: null,
         // New text opens ready to type; a code cell is always ready.
         editing: action.cell === 'markdown' ? action.index : null,
       };
     case 'cellRemoved':
     case 'cellMoved':
-      return structureLocked(state) ? state : { ...state, failed: null, editing: null };
+      return structureLocked(state)
+        ? state
+        : { ...state, failed: null, lostAt: null, editing: null };
     case 'editStarted':
       return { ...state, editing: action.index };
     case 'editEnded':
@@ -374,6 +428,22 @@ export function cellsToRun(
     .map((cell) => cell.index);
 }
 
+/**
+ * After a run that had to start a new kernel: the cells to run to get back
+ * what was lost — every code cell from the top down to and including the
+ * one that found the kernel gone. Empty when nothing was lost, or when
+ * that cell is the first there is (nothing above it to bring back).
+ */
+export function cellsToRecover(
+  state: NotebookViewState,
+  cells: readonly { type: string; index: number; source: string }[]
+): number[] {
+  const lostAt = state.lostAt;
+  if (lostAt === null) return [];
+  const upTo = cellsToRun(cells).filter((index) => index <= lostAt);
+  return upTo.length > 1 ? upTo : [];
+}
+
 /** The kernel, in the toolbar's words. */
 export function kernelLabel(state: NotebookViewState): string {
   if (state.restarting) return 'Restarting the kernel…';
@@ -427,6 +497,8 @@ export function readRunAnswer(
         executionCount: typeof run.executionCount === 'number' ? run.executionCount : null,
         succeeded: run.succeeded === true,
         started: run.started === true,
+        previous: run.previous === 'idle' || run.previous === 'ended' ? run.previous : null,
+        workerUptimeMs: typeof run.workerUptimeMs === 'number' ? run.workerUptimeMs : 0,
         timedOut: run.timedOut === true,
         kernel: {
           engine: kernel.engine === 'kernel' ? 'kernel' : 'builtin',

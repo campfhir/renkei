@@ -351,6 +351,14 @@ disk would silently leave them out.
      run that finds no kernel starts one and says so, which is the one
      signal the page needs to tell the person state was lost (a worker
      restart, the idle reaper).
+   - The sandbox runs as several instances with no session affinity, and
+     a kernel is one instance's process: the first deployment lost the
+     kernel on nearly every run. Rather than pass kernel calls between
+     instances, or copy state to a shared disk as the browser sessions
+     do, the app now sends everything it does for a caller to one
+     instance (`sandbox_instances`, `sandbox_assignments`,
+     `packages/sandbox-client` routing). That fixes language servers and
+     previews by the same stroke, and asks nothing of a shared volume.
    - A cell's run is one request and one answer, not a stream: simple,
      and it survives a reload badly only in that the answer is lost, not
      the kernel's state.
