@@ -1572,6 +1572,21 @@ export interface SandboxAssignments {
   subject: string;
 }
 
+export interface Sandboxes {
+  address: string | null;
+  created_at: Timestamp;
+  error: string | null;
+  id: string;
+  kind: string;
+  last_active_at: Timestamp;
+  provider: string;
+  provider_id: string | null;
+  route_key: string;
+  state: string;
+  state_changed_at: Timestamp;
+  verified_at: Timestamp;
+}
+
 export interface SandboxWorkspaces {
   branch: string;
   created_at: Generated<Timestamp>;
@@ -1859,6 +1874,7 @@ export interface DB {
   sandbox_workspaces: SandboxWorkspaces;
   sandbox_instances: SandboxInstances;
   sandbox_assignments: SandboxAssignments;
+  sandboxes: Sandboxes;
   schedule_calendars: ScheduleCalendars;
   sessions: Sessions;
   jira_sites: JiraSites;

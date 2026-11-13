@@ -1,0 +1,29 @@
+export default {
+  preset: 'ts-jest',
+  testEnvironment: 'node',
+  roots: ['<rootDir>'],
+  testMatch: ['**/*.test.ts'],
+  moduleNameMapper: {
+    // The real logger imports the bored-logs Postgres adapter, which reaches
+    // ESM-only kysely helpers jest cannot parse; tests get a silent logger.
+    '^\\./logger$': '<rootDir>/src/test-support/logger-mock.ts',
+    '^@renkei/db$': '<rootDir>/../../packages/db/src/index.ts',
+    '^@renkei/worker-kit$': '<rootDir>/../../packages/worker-kit/src/index.ts',
+    '^@renkei/sandbox-orchestrator$':
+      '<rootDir>/../../packages/sandbox-orchestrator/src/index.ts',
+  },
+  // kysely's published build is ESM-only; ts-jest (allowJs) transforms it to
+  // CJS for the test run — the worker-agents arrangement.
+  transformIgnorePatterns: ['/node_modules/(?!.*kysely)'],
+  transform: {
+    '^.+\\.(t|j)sx?$': [
+      'ts-jest',
+      {
+        tsconfig: {
+          esModuleInterop: true,
+          allowJs: true,
+        },
+      },
+    ],
+  },
+};

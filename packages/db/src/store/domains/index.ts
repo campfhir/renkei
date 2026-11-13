@@ -76,6 +76,7 @@ import { contentWatches } from './content-watches';
 import { sandboxFiles } from './sandbox-files';
 import { sandboxWorkspaces } from './sandbox-workspaces';
 import { sandboxInstances } from './sandbox-instances';
+import { sandboxes } from './sandboxes';
 import { sandboxSecrets } from './sandbox-secrets';
 import { sandboxServices } from './sandbox-services';
 import { codeServiceImageRules } from './code-service-image-rules';
@@ -162,6 +163,7 @@ export const DOMAINS = {
   sandboxFiles,
   sandboxWorkspaces,
   sandboxInstances,
+  sandboxes,
   sandboxSecrets,
   sandboxServices,
   codeServiceImageRules,

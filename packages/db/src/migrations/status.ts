@@ -203,6 +203,7 @@ export const EXPECTED_MIGRATIONS = [
   '177-audit-events-append-only',
   '178-artifact-bulk-jobs',
   '179-sandbox-instances',
+  '180-sandboxes',
 ];
 
 export interface MigrationStatus {
