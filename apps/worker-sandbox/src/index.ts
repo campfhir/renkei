@@ -75,6 +75,7 @@
 
 import { checkDataStore, closeDataStore } from '@renkei/db';
 import { advertisedAddress, instanceId, startInstanceHeartbeat } from './instance-registry';
+import { Inflight, describeInflight, inflightFile, takePreviousInflight } from './inflight';
 import { ensureDataRoot, getDataRoot } from './disk';
 import { createBrowserStateStore } from './browser-state';
 import { createSecretKeyStore } from './secret-key-store';
@@ -505,6 +506,24 @@ async function main(): Promise<void> {
     max: portRange.range.max,
     count: portRange.range.max - portRange.range.min + 1,
   });
+  // What the last run of this instance was doing when it ended, if it ended
+  // without a word (killed for memory, a crash in native code): said once,
+  // here, since that run could not say it.
+  const noteFile = inflightFile(getDataRoot(), instanceId());
+  const unfinished = takePreviousInflight(noteFile);
+  if (unfinished.length > 0) {
+    logger.warn(
+      'the last run of sandbox instance {instance} ended without saying why, while {count} request(s) were under way: {requests}; one of them is the likely cause',
+      {
+        component: 'worker-sandbox/process',
+        instance: instanceId(),
+        count: unfinished.length,
+        requests: unfinished.map(describeInflight).join(' | '),
+      }
+    );
+  }
+  const inflight = new Inflight(noteFile);
+
   const server = createSandboxServer({
     apiKeys,
     browser,
@@ -519,6 +538,7 @@ async function main(): Promise<void> {
     scriptsNetworkIsolation: isolation.mode,
     uidIsolation,
     capabilityProblems: problems,
+    inflight,
   });
   let heartbeat: { stop: () => void } | null = null;
   server.listen(port, '0.0.0.0', () => {
@@ -572,6 +592,8 @@ async function main(): Promise<void> {
       // an instance gone for good is noticed by its heartbeat going stale.
       heartbeat?.stop();
       await server.drain();
+      // Stopped on purpose: nothing was left under way that needs explaining.
+      inflight.clear();
       const stoppedPreviews = await previews.stopAll();
       if (stoppedPreviews) {
         logger.info('shutdown stopped {count} running preview(s)', {

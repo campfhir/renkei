@@ -524,13 +524,26 @@ export async function probeNetworkIsolation(
 /**
  * The shell prelude every command runs behind: process and file-size
  * limits (per uid, so a fork bomb stops at the caller's own ceiling), no
- * core dumps. Failures to lower a limit are ignored — a developer's
+ * core dumps, and first place in the queue when memory runs out. Failures to lower a limit are ignored — a developer's
  * checkout may already sit under one.
  */
 export function shellPrelude(): string {
   const fileKb = Math.floor(EXEC_MAX_FILE_BYTES / 1024);
-  return `ulimit -u ${EXEC_MAX_PROCESSES} -f ${fileKb} -c 0 2>/dev/null\n`;
+  return (
+    `ulimit -u ${EXEC_MAX_PROCESSES} -f ${fileKb} -c 0 2>/dev/null\n` +
+    // When the container runs out of memory the kernel kills ONE process
+    // in it, the one it scores highest. A caller's work is often many
+    // modest processes (a pool of workers, a build), none of them bigger
+    // than this worker — which is then the one killed, taking every
+    // caller's kernels, servers and previews with it, silently. So every
+    // caller's process marks itself, and all it starts, as what should go
+    // first. A process may always raise its own score; failing to is ignored.
+    `{ echo ${CALLER_OOM_SCORE_ADJ} > /proc/$$/oom_score_adj; } 2>/dev/null\n`
+  );
 }
+
+/** A caller's processes volunteer for the out-of-memory killer ahead of the worker (1000 is the most willing). */
+export const CALLER_OOM_SCORE_ADJ = 900;
 
 /**
  * What a spawn that never started should say. Node reports a working
@@ -881,18 +894,33 @@ export async function measureWorkspace(dir: string): Promise<number> {
 
 /**
  * A storage key names exactly one checkout: `<caller hash>/<checkout
- * id>`, the two segments `newWorkspaceStorageKey` joins. Anything else
+ * id>`, the two segments `newWorkspaceStorageKey` joins (or the older
+ * three-segment form below). Anything else
  * (an empty key, a bare caller hash, one that climbs) would make the
  * recursive removal below reach for a caller's whole directory or the
  * volume itself, so it is refused rather than trusted.
  */
 export function isCheckoutStorageKey(storageKey: string): boolean {
   const segments = storageKey.split('/');
+  if (!segments.every((segment) => segment.length > 0 && segment !== '.' && segment !== '..')) {
+    return false;
+  }
+  if (segments.length === 2) return true;
+  // A checkout from before the single organization (migration 153) is
+  // stored a level deeper, under its tenant: `<tenant id>/<caller hash>/
+  // <checkout id>`. It still names exactly one checkout, and it has to be
+  // removable, or the sweep refuses it on every pass for ever and its
+  // bytes are never freed. Only that exact shape: a tenant's uuid, then
+  // the caller's 64-hex hash — never three segments of anything.
   return (
-    segments.length === 2 &&
-    segments.every((segment) => segment.length > 0 && segment !== '.' && segment !== '..')
+    segments.length === 3 &&
+    LEGACY_TENANT_SEGMENT.test(segments[0] ?? '') &&
+    CALLER_HASH_SEGMENT.test(segments[1] ?? '')
   );
 }
+
+const LEGACY_TENANT_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const CALLER_HASH_SEGMENT = /^[0-9a-f]{64}$/;
 
 /**
  * How long past its expiry a row whose bytes are on no instance's disk

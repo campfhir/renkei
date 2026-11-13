@@ -632,7 +632,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
           ];
           const status = await sbWorkspaceGitStatus(target, { id });
           let keep = !status.ok;
-          if (status.ok && status.val.status.trim()) {
+          if (status.ok && status.val.changes) {
             const saved = await sbWorkspaceGitCommit(target, {
               id,
               message: 'Work in progress a sub-agent left uncommitted',

@@ -83,6 +83,7 @@ import { orgSandboxFeatures, type OrgFeaturesLookup, type SandboxCapabilities } 
 import type { NetworkIsolation } from './workspaces';
 import type { LspSessions } from './lsp-sessions';
 import type { KernelSessions } from './kernel-sessions';
+import type { Inflight } from './inflight';
 import { logger } from './logger';
 import { logErrorResponse, withRequestScope } from './request-log';
 import { isRecord } from '@renkei/guards';
@@ -152,6 +153,8 @@ export interface SandboxServerDeps {
   lsp?: LspSessions;
   /** The notebook kernels behind `workspaces/kernel/*`; made here when not given. */
   kernels?: KernelSessions;
+  /** This instance's note of what it is doing, for explaining an unannounced death (inflight.ts). */
+  inflight?: Inflight;
   /**
    * The runner that copies a caller's files into a throwaway directory and
    * runs their Python there as their own uid (scripts.ts), or null when
@@ -1081,7 +1084,14 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
       if (crawlsOp !== null) return crawls.handleCrawls(crawlsOp, body, response);
       await jsonHandler!(body, response);
     };
-    return withRequestScope(op, str(body.subject), dispatch);
+    // Noted before it is handled, struck when it has been answered: a death
+    // nobody announced is then explained by what was still on the list.
+    const answered = deps.inflight?.begin(op, str(body.subject), body);
+    try {
+      return await withRequestScope(op, str(body.subject), dispatch);
+    } finally {
+      answered?.();
+    }
   }
 
   const server: SandboxServer = Object.assign(

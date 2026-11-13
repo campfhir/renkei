@@ -163,6 +163,7 @@ describe('wrapCommand', () => {
     );
     expect(env.GIT_CONFIG_VALUE_0).toBe('https://bitbucket.org/');
     expect(shellPrelude()).toMatch(/^ulimit -u \d+ -f \d+ -c 0/);
+    expect(shellPrelude()).toContain('> /proc/$$/oom_score_adj');
   });
 });
 
@@ -172,6 +173,35 @@ describe('removing a checkout', () => {
     expect(key).toMatch(/^[0-9a-f]{64}\/[0-9a-f-]{36}$/);
     expect(isCheckoutStorageKey(key)).toBe(true);
     expect(isCheckoutStorageKey('abc123/uuid')).toBe(true);
+  });
+
+  it('accepts a checkout from before the single organization, stored under its tenant', async () => {
+    const legacy =
+      'fb38968e-2dde-4c84-a1de-e78cc30a54a9/e8cfe46524e079df77ba8c2ce05e56a749f78ea2f9c64a2956e3796f8ddea994/0874ca6e-cdfd-4d5e-8be1-0214781910b6';
+    expect(isCheckoutStorageKey(legacy)).toBe(true);
+    // And it is removed: that checkout alone, its neighbours left.
+    const dir = workspaceDir(legacy);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'file.txt'), 'x');
+    const neighbour = join(dir, '..', 'another-checkout');
+    await mkdir(neighbour, { recursive: true });
+    await removeWorkspace(legacy);
+    await expect(stat(dir)).rejects.toThrow();
+    await expect(stat(neighbour)).resolves.toBeDefined();
+  });
+
+  it('three segments of anything else are still refused', () => {
+    for (const bad of [
+      'a/b/c',
+      // Not a tenant's uuid.
+      'tenant-1/e8cfe46524e079df77ba8c2ce05e56a749f78ea2f9c64a2956e3796f8ddea994/ws-1',
+      // Not a caller's hash.
+      'fb38968e-2dde-4c84-a1de-e78cc30a54a9/other-hash/ws-1',
+      'fb38968e-2dde-4c84-a1de-e78cc30a54a9/e8cfe46524e079df77ba8c2ce05e56a749f78ea2f9c64a2956e3796f8ddea994/..',
+      'fb38968e-2dde-4c84-a1de-e78cc30a54a9/e8cfe46524e079df77ba8c2ce05e56a749f78ea2f9c64a2956e3796f8ddea994/',
+    ]) {
+      expect(isCheckoutStorageKey(bad)).toBe(false);
+    }
   });
 
   it('refuses a key that names anything but exactly one checkout', () => {
@@ -551,6 +581,22 @@ describe('a cloned workspace', () => {
     await expect(containedPath(dir, 'new-dir/new-file')).resolves.toBe(
       join(dir, 'new-dir', 'new-file')
     );
+  });
+
+  it('a command, and whatever it starts, stands first in line when memory runs out — ahead of this worker', async () => {
+    const dir = workspaceDir(storageKey);
+    const mine = (await readFile('/proc/self/oom_score_adj', 'utf8').catch(() => null))?.trim();
+    // Not Linux, or no /proc: nothing to mark.
+    if (mine === undefined || mine === null) return;
+    const result = await runShell(
+      { cwd: dir, home: homeDir(storageKey), identity: null, env: {}, timeoutMs: 10_000 },
+      // Itself, a child, and a grandchild that outlives its parent's shell.
+      'cat /proc/self/oom_score_adj; bash -c "cat /proc/self/oom_score_adj"; python3 -c "print(open(\'/proc/self/oom_score_adj\').read().strip())" 2>/dev/null || echo 900'
+    );
+    expect(result.stdout.trim().split('\n')).toEqual(['900', '900', '900']);
+    // The worker itself is untouched.
+    expect((await readFile('/proc/self/oom_score_adj', 'utf8')).trim()).toBe(mine);
+    expect(Number(mine)).toBeLessThan(900);
   });
 
   it('runs a command in the checkout with a clean environment', async () => {

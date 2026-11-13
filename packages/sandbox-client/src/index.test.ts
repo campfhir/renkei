@@ -1403,6 +1403,39 @@ describe('the rest of git', () => {
   });
 });
 
+describe('what a checkout’s status says has changed', () => {
+  const { sbWorkspaceGitStatus, workingTreeChanges } =
+    jest.requireActual<typeof import('./index')>('./index');
+
+  it('a clean tree has no changes, though git’s status always names the branch', () => {
+    expect(workingTreeChanges('## main...origin/main')).toBe('');
+    expect(workingTreeChanges('## main\n')).toBe('');
+    expect(workingTreeChanges('## HEAD (no branch)')).toBe('');
+    expect(workingTreeChanges('')).toBe('');
+  });
+
+  it('changed files are the lines after it, as git printed them', () => {
+    expect(workingTreeChanges('## main...origin/main [ahead 1]\n M src/a.ts\n?? notes.md\n')).toBe(
+      ' M src/a.ts\n?? notes.md'
+    );
+    // A status with no branch line (an older worker) is all changes.
+    expect(workingTreeChanges(' M src/a.ts')).toBe(' M src/a.ts');
+  });
+
+  it('the status call hands back both the text and the changes', async () => {
+    global.fetch = jest.fn(
+      async () =>
+        new Response(JSON.stringify({ branch: 'main', status: '## main...origin/main\n' }), {
+          status: 200,
+        })
+    ) as unknown as typeof fetch;
+    expect(await sbWorkspaceGitStatus(TARGET, { id: 'ws-1' })).toMatchObject({
+      ok: true,
+      val: { branch: 'main', status: '## main...origin/main\n', changes: '' },
+    });
+  });
+});
+
 describe('previews', () => {
   let fetchSpy: jest.SpiedFunction<typeof fetch>;
 

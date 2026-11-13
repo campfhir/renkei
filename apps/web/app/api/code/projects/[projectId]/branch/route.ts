@@ -117,7 +117,9 @@ export async function POST(
     }
     return jsonError(failure.status, 'status', failure.message);
   }
-  if (status.val.status.trim()) {
+  // The changed files, not the status text: git's status always opens
+  // with a branch line, clean tree or not.
+  if (status.val.changes) {
     return jsonError(
       409,
       'dirty',
