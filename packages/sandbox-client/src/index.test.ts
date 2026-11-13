@@ -1482,3 +1482,97 @@ describe('previews', () => {
     expect(sbPreviewProxyTarget({ token: 't'.repeat(43) }, '')).toBeNull();
   });
 });
+
+describe('notebook kernels', () => {
+  const { sbKernelExecute, sbKernelStatus, sbKernelInterrupt, sbKernelClose } =
+    jest.requireActual<typeof import('./index')>('./index');
+  const NOTEBOOK = { id: 'ws-1', path: 'notebooks/revenue.ipynb' };
+
+  it('runs a cell and hands back the outputs as the worker gave them', async () => {
+    const outputs = [{ output_type: 'stream', name: 'stdout', text: 'hi\n' }];
+    global.fetch = jest.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            kernel: { engine: 'kernel', python: '3.12.1' },
+            started: true,
+            outputs,
+            executionCount: 4,
+            succeeded: true,
+            timedOut: false,
+          }),
+          { status: 200 }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await sbKernelExecute(TARGET, { ...NOTEBOOK, code: 'print("hi")', timeoutMs: 5_000 })
+    ).toEqual({
+      ok: true,
+      val: {
+        kernel: { engine: 'kernel', python: '3.12.1' },
+        started: true,
+        outputs,
+        executionCount: 4,
+        succeeded: true,
+        timedOut: false,
+      },
+    });
+    const [url, init] = (global.fetch as jest.Mock).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://sandbox.internal:8092/v1/workspaces/kernel/execute');
+    expect(JSON.parse(init.body as string)).toEqual({
+      ...TARGET,
+      ...NOTEBOOK,
+      code: 'print("hi")',
+      timeoutMs: 5_000,
+    });
+  });
+
+  it('a kernel that died is the worker’s refusal, with its status', async () => {
+    global.fetch = jest.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ error: { type: 'kernel_died', message: 'The notebook kernel ended.' } }),
+          { status: 410 }
+        )
+    ) as unknown as typeof fetch;
+    expect(await sbKernelExecute(TARGET, { ...NOTEBOOK, code: 'x' })).toEqual({
+      ok: false,
+      err: { kind: 'op', type: 'kernel_died', message: 'The notebook kernel ended.', status: 410 },
+    });
+  });
+
+  it('an answer without a kernel or outputs is not taken for a run', async () => {
+    global.fetch = jest.fn(
+      async () => new Response(JSON.stringify({ outputs: 'x' }), { status: 200 })
+    ) as unknown as typeof fetch;
+    expect((await sbKernelExecute(TARGET, { ...NOTEBOOK, code: 'x' })).ok).toBe(false);
+  });
+
+  it('status, interrupt and close say what the worker said', async () => {
+    global.fetch = jest.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ running: true, kernel: { engine: 'builtin', python: '3.11.2' } }),
+          { status: 200 }
+        )
+    ) as unknown as typeof fetch;
+    expect(await sbKernelStatus(TARGET, NOTEBOOK)).toEqual({
+      ok: true,
+      val: { engine: 'builtin', python: '3.11.2' },
+    });
+    global.fetch = jest.fn(
+      async () => new Response(JSON.stringify({ running: false, kernel: null }), { status: 200 })
+    ) as unknown as typeof fetch;
+    expect(await sbKernelStatus(TARGET, NOTEBOOK)).toEqual({ ok: true, val: null });
+    global.fetch = jest.fn(
+      async () => new Response(JSON.stringify({ interrupted: true }), { status: 200 })
+    ) as unknown as typeof fetch;
+    expect(await sbKernelInterrupt(TARGET, NOTEBOOK)).toEqual({ ok: true, val: true });
+    global.fetch = jest.fn(
+      async () => new Response(JSON.stringify({ closed: false }), { status: 200 })
+    ) as unknown as typeof fetch;
+    expect(await sbKernelClose(TARGET, NOTEBOOK)).toEqual({ ok: true, val: false });
+    const [url] = (global.fetch as jest.Mock).mock.calls[0] as [string];
+    expect(url).toBe('http://sandbox.internal:8092/v1/workspaces/kernel/close');
+  });
+});

@@ -1670,3 +1670,42 @@ input[type='number']::-webkit-inner-spin-button {
     scroll-behavior: auto !important;
   }
 }
+
+/*
+ * A notebook output's HTML in the code pane (notebook-html.tsx): mostly
+ * a DataFrame's table, drawn the way Jupyter draws one — compact, the
+ * figures to the right, a rule under the header — in the app's own
+ * colours, since the notebook's own styles are not carried over.
+ */
+.notebook-html {
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+}
+.notebook-html table {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.notebook-html :is(th, td) {
+  padding: 0.2rem 0.6rem;
+  text-align: right;
+  white-space: nowrap;
+}
+.notebook-html thead tr {
+  border-bottom: 1px solid var(--color-gray-300);
+}
+.notebook-html th {
+  font-weight: 600;
+}
+.notebook-html tbody tr:nth-child(odd) {
+  background: var(--color-gray-50);
+}
+.notebook-html a {
+  color: var(--color-blue-600);
+  text-decoration: underline;
+}
+:root[data-theme='dark'] .notebook-html thead tr {
+  border-bottom-color: var(--color-gray-700);
+}
+:root[data-theme='dark'] .notebook-html tbody tr:nth-child(odd) {
+  background: var(--color-gray-900);
+}

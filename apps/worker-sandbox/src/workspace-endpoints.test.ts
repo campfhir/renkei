@@ -989,3 +989,109 @@ describe('a worktree of a base checkout', () => {
     expect(result.json.error.type).toBe('not_ready');
   });
 });
+
+describe('notebook kernels over the wire', () => {
+  // Its own server, with the kernel scripted: a host that speaks the
+  // protocol from a line of node, echoing the cell and an environment value.
+  const { spawn: spawnChild } =
+    jest.requireActual<typeof import('node:child_process')>('node:child_process');
+  const { KernelSessions } =
+    jest.requireActual<typeof import('./kernel-sessions')>('./kernel-sessions');
+  const HOST = `
+    console.log(JSON.stringify({ ready: true, engine: 'builtin', python: '3.11.2' }));
+    let count = 0;
+    require('readline').createInterface({ input: process.stdin }).on('line', (line) => {
+      const { id, code } = JSON.parse(line);
+      count += 1;
+      console.log(JSON.stringify({ id, execution_count: count, ok: true, outputs: [
+        { output_type: 'stream', name: 'stdout', text: code + ' token=' + process.env.API_TOKEN },
+        { output_type: 'execute_result', data: { 'text/plain': ['again ', process.env.API_TOKEN] } },
+      ] }));
+    });`;
+  let kernelServer: Server;
+  let kernelBase: string;
+  let kernels: InstanceType<typeof KernelSessions>;
+
+  beforeAll(async () => {
+    kernels = new KernelSessions({
+      spawnKernel: (input) =>
+        spawnChild(process.execPath, ['-e', HOST], {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          detached: true,
+          env: { ...process.env, ...input.env },
+        }),
+    });
+    kernelServer = createSandboxServer({
+      apiKeys: [API_KEY],
+      workspaces: true,
+      kernels,
+      orgFeatures: async () => ALL_ORG_FEATURES,
+    });
+    kernelBase = await listen(kernelServer);
+  });
+
+  afterAll(async () => {
+    kernels.closeAll();
+    await new Promise((resolve) => kernelServer.close(resolve));
+  });
+
+  const NOTEBOOK = { ...TARGET, id: 'ws-1', path: 'notebooks/revenue.ipynb' };
+
+  it('runs a cell in the notebook’s kernel with the caller’s variables, scrubbed on the way back', async () => {
+    envStore.listSealedEnv.mockResolvedValue([
+      { id: 'e2', name: 'API_TOKEN', sealed: sealEnvValue('hunter2', envSecretsKey()!) },
+    ]);
+    const none = await post(kernelBase, 'workspaces/kernel/status', NOTEBOOK);
+    expect(none.json).toEqual({ running: false, kernel: null });
+
+    const first = await post(kernelBase, 'workspaces/kernel/execute', {
+      ...NOTEBOOK,
+      code: 'x = 1',
+    });
+    expect(first.status).toBe(200);
+    expect(first.json).toMatchObject({
+      kernel: { engine: 'builtin', python: '3.11.2' },
+      started: true,
+      executionCount: 1,
+      succeeded: true,
+      timedOut: false,
+    });
+    // The kernel had the value; nothing that comes back shows it, in any shape.
+    expect(JSON.stringify(first.json)).not.toContain('hunter2');
+    expect(first.json.outputs[0].text).toBe('x = 1 token=••••••');
+    expect(first.json.outputs[1].data['text/plain']).toEqual(['again ', '••••••']);
+
+    const second = await post(kernelBase, 'workspaces/kernel/execute', { ...NOTEBOOK, code: 'x' });
+    expect(second.json).toMatchObject({ started: false, executionCount: 2 });
+    expect((await post(kernelBase, 'workspaces/kernel/status', NOTEBOOK)).json.running).toBe(true);
+
+    expect((await post(kernelBase, 'workspaces/kernel/interrupt', NOTEBOOK)).json).toEqual({
+      interrupted: true,
+    });
+    expect((await post(kernelBase, 'workspaces/kernel/close', NOTEBOOK)).json).toEqual({
+      closed: true,
+    });
+    expect((await post(kernelBase, 'workspaces/kernel/close', NOTEBOOK)).json).toEqual({
+      closed: false,
+    });
+  });
+
+  it('refuses what is not a notebook of the caller’s checkout, or has no code', async () => {
+    for (const path of [undefined, 'scripts/run.py', '../other/n.ipynb']) {
+      const refused = await post(kernelBase, 'workspaces/kernel/execute', {
+        ...NOTEBOOK,
+        path,
+        code: '1',
+      });
+      expect(refused.status).toBe(400);
+    }
+    expect((await post(kernelBase, 'workspaces/kernel/execute', NOTEBOOK)).status).toBe(400);
+    const notMine = await post(kernelBase, 'workspaces/kernel/execute', {
+      ...NOTEBOOK,
+      subject: 'mallory',
+      code: '1',
+    });
+    expect(notMine.status).toBe(404);
+    expect(kernels.count()).toBe(0);
+  });
+});

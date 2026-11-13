@@ -82,6 +82,7 @@ import type { ScriptRunner } from './scripts';
 import { orgSandboxFeatures, type OrgFeaturesLookup, type SandboxCapabilities } from './features';
 import type { NetworkIsolation } from './workspaces';
 import type { LspSessions } from './lsp-sessions';
+import type { KernelSessions } from './kernel-sessions';
 import { logger } from './logger';
 import { logErrorResponse, withRequestScope } from './request-log';
 import { isRecord } from '@renkei/guards';
@@ -149,6 +150,8 @@ export interface SandboxServerDeps {
   services?: ServiceManager | null;
   /** The language server sessions behind `workspaces/lsp/*`; made here when not given (tests script one). */
   lsp?: LspSessions;
+  /** The notebook kernels behind `workspaces/kernel/*`; made here when not given. */
+  kernels?: KernelSessions;
   /**
    * The runner that copies a caller's files into a throwaway directory and
    * runs their Python there as their own uid (scripts.ts), or null when
@@ -353,6 +356,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     // A running service's variables join every command's environment.
     ...(deps.services ? { serviceEnv: (target) => deps.services!.environmentFor(target) } : {}),
     lsp: deps.lsp,
+    kernels: deps.kernels,
     previews: previewManager,
   });
   // Previews: a checkout's own server, under the workspaces switch (no
@@ -1185,6 +1189,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     if (!deps.vault) vault.close();
     // Language servers and previews are this process's children; none outlives it.
     void workspaces.lsp.closeAll();
+    workspaces.kernels.closeAll();
     void previewManager.stopAll();
   });
 

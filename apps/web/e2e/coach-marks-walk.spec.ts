@@ -222,6 +222,30 @@ const WALKS: Record<string, Walk> = {
     },
     spotlight: true,
   },
+  // Starts only where a notebook is open in the code pane for someone who
+  // may run it: the seeded notebook of a cloned code project's chat.
+  'code-notebook': {
+    path: async (page, request) => {
+      const tag = randomUUID().slice(0, 8);
+      const modelId = await setUpCode(page, request, `tour-${tag}`);
+      staged.push(modelId);
+      const { chatIds } = await stageCodeProject(page.request, {
+        name: `Tour notebook project (${tag})`,
+        repository: 'acme/billing-service',
+        branch: 'main',
+        chats: [`Tour notebook chat (${tag})`],
+        clone: true,
+        llmModelId: modelId,
+      });
+      return `/chat/${chatIds[0]}`;
+    },
+    spotlight: true,
+    open: async (page) => {
+      const tree = page.getByRole('main').getByRole('tree', { name: 'Files' });
+      await tree.getByRole('button', { name: 'notebooks', exact: true }).click({ timeout: 30_000 });
+      await tree.getByRole('button', { name: /^revenue\.ipynb/ }).click();
+    },
+  },
   'code-new': { path: `/code`, spotlight: false },
   // The catalog greets its first opening; the walk opens it.
   'add-connector': {

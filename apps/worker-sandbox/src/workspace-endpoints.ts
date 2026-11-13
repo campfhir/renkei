@@ -107,6 +107,11 @@ import {
   spawnArchive,
 } from './workspaces';
 import { LspSessions, probeLanguageServers } from './lsp-sessions';
+import {
+  KERNEL_EXECUTE_DEFAULT_MS,
+  KERNEL_EXECUTE_MAX_MS,
+  KernelSessions,
+} from './kernel-sessions';
 import { createGitVerbs, operationState } from './git-verbs';
 import type { PreviewManager } from './previews';
 import { actorAttrs } from '@renkei/db';
@@ -129,6 +134,8 @@ export interface WorkspaceHandlerDeps {
   serviceEnv?: (target: store.WorkspaceTarget) => Promise<Record<string, string>>;
   /** The language server sessions; the handlers make their own when not given (tests share one). */
   lsp?: LspSessions;
+  /** The notebook kernels behind `kernel/*`; made here when not given (tests script one). */
+  kernels?: KernelSessions;
   /** The previews (previews.ts): a checkout that goes takes its previews with it. */
   previews?: PreviewManager;
 }
@@ -137,6 +144,18 @@ const SSE_PING_MS = 15_000;
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type Body = Record<string, unknown>;
+
+/** Every string in a JSON value passed through `scrub`: a cell's outputs, whatever their shape. */
+export function scrubDeep(value: unknown, scrub: (text: string) => string): unknown {
+  if (typeof value === 'string') return scrub(value);
+  if (Array.isArray(value)) return value.map((entry) => scrubDeep(entry, scrub));
+  if (typeof value === 'object' && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, scrubDeep(entry, scrub)])
+    );
+  }
+  return value;
+}
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
@@ -229,6 +248,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
   }
 
   const lsp = deps.lsp ?? new LspSessions();
+  const kernels = deps.kernels ?? new KernelSessions();
 
   /** The checkout size limit for this caller: the org's, or their approved larger one. */
   async function limitFor(workspace: store.WorkspaceTarget): Promise<number> {
@@ -576,6 +596,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     const deleted = id ? await store.deleteWorkspace(target, id) : undefined;
     if (!deleted) return sendError(response, 404, 'not_found');
     await deps.previews?.stopForWorkspace(deleted.id);
+    kernels.closeWorkspace(deleted.id);
     if (deleted.parentId) {
       const base = await store.getWorkspace(target, deleted.parentId);
       await removeWorktree(base?.storageKey ?? null, deleted.storageKey, identityFor(target));
@@ -583,6 +604,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       // A base clone takes its worktrees with it: they cannot work without it.
       for (const child of await store.listWorktrees(target, deleted.id)) {
         await deps.previews?.stopForWorkspace(child.id);
+        kernels.closeWorkspace(child.id);
         await store.deleteWorkspaceById(child.id);
         await removeWorktree(null, child.storageKey, identityFor(target));
       }
@@ -1809,11 +1831,92 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     }
   }
 
+  // ─── Notebook kernels ──────────────────────────────────────────────────
+
+  /**
+   * `kernel/execute`: one cell's code run in the notebook's kernel (the
+   * notebook named by `path`), which is started when there is none —
+   * `started` says so. `kernel/status`: whether it has one. `kernel/
+   * interrupt`: stop the running cell, keep the kernel. `kernel/close`:
+   * end it. A kernel gets the caller's variables like a command does,
+   * and what a cell printed goes back scrubbed of their values.
+   */
+  async function handleKernel(
+    op: string,
+    target: store.WorkspaceTarget,
+    body: Body,
+    response: ServerResponse
+  ): Promise<void> {
+    const path = validateWorkspacePath(body.path);
+    if (!path.ok || !path.path || !/\.ipynb$/i.test(path.path)) {
+      return sendError(
+        response,
+        400,
+        'bad_path',
+        path.ok ? 'A notebook is required.' : path.message
+      );
+    }
+    const workspace = await loadReady(target, body, response);
+    if (!workspace) return;
+    const named = { owner: target, workspaceId: workspace.id, path: path.path };
+    switch (op) {
+      case 'status': {
+        const kernel = kernels.status(named);
+        return sendJson(response, 200, { running: kernel !== null, kernel });
+      }
+      case 'interrupt':
+        return sendJson(response, 200, { interrupted: kernels.interrupt(named) });
+      case 'close':
+        return sendJson(response, 200, { closed: kernels.close(named) });
+      case 'execute': {
+        if (typeof body.code !== 'string' || body.code.length > WRITE_MAX_CHARS) {
+          return sendError(response, 400, 'bad_request', 'A cell of code is required.');
+        }
+        const timeoutMs =
+          typeof body.timeoutMs === 'number' && Number.isFinite(body.timeoutMs)
+            ? Math.min(KERNEL_EXECUTE_MAX_MS, Math.max(1_000, Math.floor(body.timeoutMs)))
+            : KERNEL_EXECUTE_DEFAULT_MS;
+        const env = envSecretsEnabled() ? await openCallerEnv(target) : EMPTY_ENV;
+        const serviceEnv = deps.serviceEnv ? await deps.serviceEnv(workspace) : {};
+        const previewEnv = deps.previews?.environmentFor(workspace) ?? {};
+        const outcome = await kernels.execute(
+          {
+            ...named,
+            rootDir: workspaceDir(workspace.storageKey),
+            home: homeDir(workspace.storageKey),
+            identity: identityFor(workspace),
+            env: { ...env.values, ...serviceEnv, ...previewEnv },
+            sandboxPython: process.env.SANDBOX_PYTHON ?? null,
+          },
+          body.code,
+          timeoutMs
+        );
+        await markEnvUsed(env);
+        if (!outcome.ok) return sendError(response, outcome.status, outcome.type, outcome.message);
+        await store.touchWorkspace(workspace.id);
+        return sendJson(response, 200, {
+          kernel: outcome.kernel,
+          started: outcome.started,
+          outputs: scrubDeep(outcome.outputs, (text) => scrubEnv(text, env)),
+          executionCount: outcome.executionCount,
+          succeeded: outcome.succeeded,
+          timedOut: outcome.timedOut,
+          unreadableEnv: env.unreadable,
+        });
+      }
+      default:
+        return sendError(response, 404, 'unknown_operation');
+    }
+  }
+
   async function handleWorkspaces(op: string, body: Body, response: ServerResponse): Promise<void> {
     const target = targetOf(body);
     if (!target) return sendError(response, 400, 'bad_request');
     if (!(await enabled(response))) return;
     if (op.startsWith('lsp/')) return handleLsp(op.slice('lsp/'.length), target, body, response);
+    if (op.startsWith('kernel/')) {
+      return handleKernel(op.slice('kernel/'.length), target, body, response);
+    }
     switch (op) {
       case 'clone':
         return clone(target, body, response);
@@ -1893,7 +1996,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
   const openEnv = (target: store.WorkspaceTarget): Promise<OpenedEnv> =>
     envSecretsEnabled() ? openCallerEnv(target) : Promise.resolve(EMPTY_ENV);
 
-  return { handleWorkspaces, handleUpload, handleEnv, sweep, lsp, loadReady, openEnv };
+  return { handleWorkspaces, handleUpload, handleEnv, sweep, lsp, kernels, loadReady, openEnv };
 }
 
 /** Exposed for tests: the contained-path check the file verbs rely on. */

@@ -46,6 +46,17 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-13',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Notebooks open, edit and run in code projects',
+        detail:
+          "A Jupyter notebook (.ipynb) in a code project's code pane now opens as a notebook — text, code and each cell's tables, charts and errors — instead of raw JSON. Edit cells where they are, add, move and remove them, and run one cell at a time (Shift+Enter) or all of them in a kernel the sandbox keeps for the notebook, so each cell sees what earlier ones defined. Packages installs what the notebook imports. Outputs are unsaved until you save, then commit or discard as usual. A short tour introduces it the first time you open a notebook, and it is on the Tutorials page afterwards.",
+      },
+    ],
+  },
+  {
     date: '2026-11-12',
     entries: [
       {

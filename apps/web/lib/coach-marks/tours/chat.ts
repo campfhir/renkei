@@ -317,4 +317,47 @@ export const CHAT_TOURS: CoachMarkTour[] = [
       },
     ],
   },
+  {
+    id: 'code-notebook',
+    area: 'Chat',
+    version: 1,
+    title: 'Notebooks',
+    description: 'Editing and running a Jupyter notebook in a code project.',
+    startPath: '/code',
+    // A greeting for the first notebook someone opens that they can run:
+    // the buttons it points at are only there then.
+    autoStart: true,
+    requires: ['notebook-run-all', 'notebook-packages'],
+    audience: 'everyone',
+    steps: [
+      {
+        id: 'cells',
+        title: 'A notebook, not its JSON',
+        target: 'notebook-view-switch',
+        placement: 'bottom',
+        body: 'A .ipynb opens as its cells. Type in a code cell where it is; double-click a text cell to write in it. Hover between two cells to add one, and over a cell to move or delete it. Source shows the file itself.',
+      },
+      {
+        id: 'run',
+        title: 'Run a cell, or all of them',
+        target: 'notebook-run-all',
+        placement: 'bottom',
+        body: 'Shift+Enter in a cell runs just that cell; Run all goes top to bottom and stops at the first error. While cells run this button is Stop. Outputs land in the notebook as unsaved edits: Save, then commit, when you want to keep them.',
+      },
+      {
+        id: 'kernel',
+        title: 'The kernel remembers',
+        target: 'notebook-kernel',
+        placement: 'bottom',
+        body: 'The first run starts a Python for this notebook in the project’s sandbox, and it stays: later cells see what earlier ones defined. Restart clears it. It is ended after half an hour unused, and the notebook says so when a run has to start a new one.',
+      },
+      {
+        id: 'packages',
+        title: 'Install what it imports',
+        target: 'notebook-packages',
+        placement: 'bottom',
+        body: 'Name packages here and they are installed with pip where the kernel runs, and kept for next time. %pip install in a cell does the same.',
+      },
+    ],
+  },
 ];

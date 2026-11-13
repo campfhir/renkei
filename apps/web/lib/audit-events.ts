@@ -166,6 +166,8 @@ export type AuditAction =
   | 'code.files.deleted'
   /** A file or folder renamed or moved within the checkout's working tree. */
   | 'code.files.renamed'
+  /** A kernel started on the sandbox for a notebook, to run its cells from the code pane. */
+  | 'code.notebook.run'
   | 'code.commit'
   | 'code.push'
   | 'code.branch_switch'

@@ -2707,6 +2707,116 @@ export function clientFailure(error: SandboxClientError): { status: number; mess
   }
 }
 
+// ─── Notebook kernels (the code pane's notebooks) ───────────────────────────
+
+/** The Python a notebook's cells run in. */
+export interface WireKernel {
+  /** A real Jupyter kernel in the checkout's environment, or the worker's built-in runner. */
+  engine: 'kernel' | 'builtin';
+  /** The Python's version ("3.11.2"). */
+  python: string;
+}
+
+export interface WireKernelRun {
+  kernel: WireKernel;
+  /** This run started the kernel: nothing earlier cells defined is there. */
+  started: boolean;
+  /** The cell's outputs in nbformat's own shapes, as a notebook stores them. */
+  outputs: unknown[];
+  executionCount: number | null;
+  /** The cell ran without raising. */
+  succeeded: boolean;
+  /** The cell was interrupted by its time limit. */
+  timedOut: boolean;
+}
+
+function kernelOf(value: unknown): WireKernel | null {
+  if (!isRecord(value)) return null;
+  return { engine: value.engine === 'kernel' ? 'kernel' : 'builtin', python: str(value.python) };
+}
+
+/**
+ * Run one cell in the kernel of the notebook at `path` (started when it
+ * has none). The call lasts as long as the cell: the worker interrupts a
+ * cell at `timeoutMs` and still answers, so the client waits a little
+ * past that. A caller that goes away does not stop the cell — that is
+ * `sbKernelInterrupt`.
+ */
+export async function sbKernelExecute(
+  target: SandboxTarget,
+  input: { id: string; path: string; code: string; timeoutMs?: number }
+): Promise<ClientResult<WireKernelRun>> {
+  const cfg = sandboxConfig();
+  if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
+  // The cell's own limit, the interrupt's grace, and a first start's time on top.
+  const wait = (input.timeoutMs ?? 10 * 60_000) + 150_000;
+  let response: Response;
+  try {
+    response = await fetch(`${cfg.url}/v1/workspaces/kernel/execute`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ ...target, ...input }),
+      signal: AbortSignal.timeout(wait),
+    });
+  } catch (error) {
+    return unreachable(error instanceof Error ? error.message : String(error));
+  }
+  if (!response.ok) return opFailure(response);
+  let value: unknown;
+  try {
+    value = await response.json();
+  } catch {
+    return unreachable('The sandbox service answered an unreadable response.');
+  }
+  const kernel = isRecord(value) ? kernelOf(value.kernel) : null;
+  if (!isRecord(value) || !kernel || !Array.isArray(value.outputs)) return malformed();
+  return {
+    ok: true,
+    val: {
+      kernel,
+      started: value.started === true,
+      outputs: value.outputs,
+      executionCount: typeof value.executionCount === 'number' ? value.executionCount : null,
+      succeeded: value.succeeded === true,
+      timedOut: value.timedOut === true,
+    },
+  };
+}
+
+/** The notebook's kernel, when it has a live one. */
+export async function sbKernelStatus(
+  target: SandboxTarget,
+  input: { id: string; path: string }
+): Promise<ClientResult<WireKernel | null>> {
+  const called = await callJson(
+    'workspaces/kernel/status',
+    { ...target, ...input },
+    { retry: true }
+  );
+  if (!called.ok) return called;
+  return { ok: true, val: isRecord(called.val) ? kernelOf(called.val.kernel) : null };
+}
+
+/** Stop the cell the notebook's kernel is running; the kernel and its state stay. False when there is no kernel. */
+export async function sbKernelInterrupt(
+  target: SandboxTarget,
+  input: { id: string; path: string }
+): Promise<ClientResult<boolean>> {
+  const called = await callJson('workspaces/kernel/interrupt', { ...target, ...input });
+  if (!called.ok) return called;
+  return { ok: true, val: isRecord(called.val) && called.val.interrupted === true };
+}
+
+/** End the notebook's kernel and everything it holds. False when there was none. */
+export async function sbKernelClose(
+  target: SandboxTarget,
+  input: { id: string; path: string }
+): Promise<ClientResult<boolean>> {
+  const called = await callJson('workspaces/kernel/close', { ...target, ...input });
+  if (!called.ok) return called;
+  return { ok: true, val: isRecord(called.val) && called.val.closed === true };
+}
+
 // ─── Language servers (the code pane's editor) ──────────────────────────────
 
 /** A language server session the worker runs for one editor in one checkout. */

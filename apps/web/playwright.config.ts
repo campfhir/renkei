@@ -59,6 +59,7 @@ const DARK_SPECS = [
   'code.spec.ts',
   'branch-switcher.spec.ts',
   'code-file-management.spec.ts',
+  'code-notebook.spec.ts',
   'pr-subscriptions.spec.ts',
   'project-pulls-commits.spec.ts',
 ];

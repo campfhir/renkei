@@ -33,11 +33,13 @@ const RESERVED = new Set(['PATH', 'HOME', 'LD_PRELOAD', 'NODE_OPTIONS']);
  */
 const TREE = {
   '': [
+    { path: 'notebooks', kind: 'dir', sizeBytes: null },
     { path: 'src', kind: 'dir', sizeBytes: null },
     { path: 'node_modules', kind: 'dir', sizeBytes: null, ignored: true },
     { path: 'package.json', kind: 'file', sizeBytes: 812 },
     { path: 'README.md', kind: 'file', sizeBytes: 1204 },
   ],
+  notebooks: [{ path: 'notebooks/revenue.ipynb', kind: 'file', sizeBytes: 2310 }],
   src: [
     { path: 'src/billing.ts', kind: 'file', sizeBytes: 4410 },
     { path: 'src/index.ts', kind: 'file', sizeBytes: 302 },
@@ -178,7 +180,189 @@ index 1111111..2222222 100644
  * What the code pane reads: the files the tree names, as text. A file a
  * person uploads or saves lands in the workspace's own map and wins.
  */
+const REVENUE_TABLE = `<div>
+<style scoped>.dataframe tbody tr th { vertical-align: top; }</style>
+<table border="1" class="dataframe">
+  <thead><tr style="text-align: right;"><th></th><th>month</th><th>invoices</th><th>revenue</th></tr></thead>
+  <tbody>
+    <tr><th>0</th><td>2026-01</td><td>412</td><td>38210.50</td></tr>
+    <tr><th>1</th><td>2026-02</td><td>389</td><td>36104.00</td></tr>
+    <tr><th>2</th><td>2026-03</td><td>451</td><td>42987.25</td></tr>
+    <tr><th>3</th><td>2026-04</td><td>478</td><td>45120.75</td></tr>
+  </tbody>
+</table>
+</div>`;
+
+/** The figure a stubbed run "draws": what matplotlib's SVG backend would hand a kernel. */
+const REVENUE_CHART = `<svg xmlns="http://www.w3.org/2000/svg" width="460" height="240" viewBox="0 0 460 240">
+<rect width="460" height="240" fill="#ffffff"/>
+<text x="230" y="22" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#111827">Revenue by month</text>
+<line x1="50" y1="200" x2="440" y2="200" stroke="#9ca3af"/><line x1="50" y1="40" x2="50" y2="200" stroke="#9ca3af"/>
+<rect x="75" y="78" width="60" height="122" fill="#2563eb"/><rect x="170" y="85" width="60" height="115" fill="#2563eb"/>
+<rect x="265" y="63" width="60" height="137" fill="#2563eb"/><rect x="360" y="56" width="60" height="144" fill="#2563eb"/>
+<g font-family="sans-serif" font-size="11" fill="#374151" text-anchor="middle">
+<text x="105" y="216">2026-01</text><text x="200" y="216">2026-02</text><text x="295" y="216">2026-03</text><text x="390" y="216">2026-04</text>
+</g></svg>`;
+
+/**
+ * A notebook as a repository would hold it: the first two code cells
+ * committed with their outputs, the chart cell never run — so the pane
+ * has outputs to draw before anything runs, and a run has something to add.
+ */
+const REVENUE_NOTEBOOK = `${JSON.stringify(
+  {
+    cells: [
+      {
+        cell_type: 'markdown',
+        metadata: {},
+        source: [
+          '# Monthly revenue\n',
+          '\n',
+          'Invoices and revenue per month from the billing export, for the **quarterly review**.',
+        ],
+      },
+      {
+        cell_type: 'code',
+        execution_count: 1,
+        metadata: {},
+        outputs: [{ output_type: 'stream', name: 'stdout', text: ['Loaded 4 months\n'] }],
+        source: [
+          'import pandas as pd\n',
+          '\n',
+          'df = pd.read_csv("data/revenue.csv")\n',
+          'print(f"Loaded {len(df)} months")',
+        ],
+      },
+      {
+        cell_type: 'code',
+        execution_count: 2,
+        metadata: {},
+        outputs: [
+          {
+            output_type: 'execute_result',
+            execution_count: 2,
+            metadata: {},
+            data: { 'text/html': REVENUE_TABLE, 'text/plain': '     month  invoices   revenue' },
+          },
+        ],
+        source: ['df.head()'],
+      },
+      { cell_type: 'markdown', metadata: {}, source: ['## Trend'] },
+      {
+        cell_type: 'code',
+        execution_count: null,
+        metadata: {},
+        outputs: [],
+        source: [
+          'import matplotlib.pyplot as plt\n',
+          '\n',
+          'plt.bar(df["month"], df["revenue"])\n',
+          'plt.title("Revenue by month")',
+        ],
+      },
+    ],
+    metadata: {
+      kernelspec: { display_name: 'Python 3 (ipykernel)', language: 'python', name: 'python3' },
+      language_info: { name: 'python' },
+    },
+    nbformat: 4,
+    nbformat_minor: 5,
+  },
+  null,
+  1
+)}\n`;
+
+/**
+ * A notebook's kernel, stubbed (`workspaces/kernel/*`): no Python here,
+ * so a cell "runs" by what its code says — a `print("…")` prints its
+ * text, `.head()` shows the table, a `plt.` cell draws the chart, a
+ * `raise X("…")` raises, `%pip install …` says what it installed — with
+ * the execution count kept per kernel as a real one keeps it. One kernel
+ * per (scope, checkout, notebook), started by its first cell.
+ */
+function runCellStub(kernel, code) {
+  kernel.count += 1;
+  const outputs = [];
+  const raised = /raise (\w+)\((?:"|')(.*?)(?:"|')\)/.exec(code);
+  if (raised) {
+    outputs.push({
+      output_type: 'error',
+      ename: raised[1],
+      evalue: raised[2],
+      traceback: [
+        'Traceback (most recent call last):',
+        `  File "<cell ${kernel.count}>", line 1, in <module>`,
+        `${raised[1]}: ${raised[2]}`,
+      ],
+    });
+    return { outputs, executionCount: kernel.count, succeeded: false };
+  }
+  const installed = /^%pip install (.+)$/m.exec(code);
+  if (installed) {
+    outputs.push({
+      output_type: 'stream',
+      name: 'stdout',
+      text: `Collecting ${installed[1]}\nSuccessfully installed ${installed[1]}\n`,
+    });
+  }
+  const printed = /print\(f?(?:"|')(.*?)(?:"|')\)/.exec(code);
+  if (printed) {
+    const text = printed[1].replace('{len(df)}', '4');
+    outputs.push({ output_type: 'stream', name: 'stdout', text: `${text}\n` });
+  }
+  if (code.includes('.head()')) {
+    outputs.push({
+      output_type: 'execute_result',
+      execution_count: kernel.count,
+      metadata: {},
+      data: { 'text/html': REVENUE_TABLE, 'text/plain': '     month  invoices   revenue' },
+    });
+  }
+  if (code.includes('plt.')) {
+    outputs.push({
+      output_type: 'display_data',
+      metadata: {},
+      data: { 'image/svg+xml': REVENUE_CHART, 'text/plain': '<Figure size 640x480 with 1 Axes>' },
+    });
+  }
+  return { outputs, executionCount: kernel.count, succeeded: true };
+}
+
+function handleKernel(op, body, response) {
+  const scope = scopeOf(body);
+  const workspace = scope.workspaces.get(body.id ?? '');
+  if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
+  if (!/\.ipynb$/.test(body.path ?? '')) return error(response, 400, 'bad_path');
+  workspace.kernels = workspace.kernels ?? new Map();
+  const kernel = workspace.kernels.get(body.path);
+  const view = { engine: 'builtin', python: '3.11.2' };
+  switch (op) {
+    case 'status':
+      return json(response, 200, { running: Boolean(kernel), kernel: kernel ? view : null });
+    case 'interrupt':
+      return json(response, 200, { interrupted: Boolean(kernel) });
+    case 'close':
+      workspace.kernels.delete(body.path);
+      return json(response, 200, { closed: Boolean(kernel) });
+    case 'execute': {
+      if (typeof body.code !== 'string') return error(response, 400, 'bad_request');
+      const live = kernel ?? { count: 0 };
+      workspace.kernels.set(body.path, live);
+      return json(response, 200, {
+        kernel: view,
+        started: !kernel,
+        ...runCellStub(live, body.code),
+        timedOut: false,
+        unreadableEnv: [],
+      });
+    }
+    default:
+      return error(response, 404, 'unknown_operation');
+  }
+}
+
 const FILES = {
+  'notebooks/revenue.ipynb': REVENUE_NOTEBOOK,
   'package.json': `{
   "name": "billing-service",
   "version": "2.4.1",
@@ -726,6 +910,7 @@ function handleLsp(op, body, response) {
 
 function handleWorkspaces(op, body, response) {
   if (op.startsWith('lsp/')) return handleLsp(op.slice('lsp/'.length), body, response);
+  if (op.startsWith('kernel/')) return handleKernel(op.slice('kernel/'.length), body, response);
   const scope = scopeOf(body);
   switch (op) {
     case 'clone': {
