@@ -26,6 +26,7 @@ export function memorySandboxes(tables: MemoryTables): SandboxStore {
           last_active_at: input.at,
           state_changed_at: input.at,
           verified_at: input.at,
+          subjects: [],
         })
       );
     },
@@ -59,6 +60,14 @@ export function memorySandboxes(tables: MemoryTables): SandboxStore {
       tables.update('sandboxes', (r) => r.id === id && r.last_active_at.getTime() < at.getTime(), {
         last_active_at: at,
       });
+    },
+    async allowSubject(id, subject, limit) {
+      const row = tables.first('sandboxes', (r) => r.id === id);
+      if (!row) return false;
+      if (row.subjects.includes(subject)) return true;
+      if (row.subjects.length >= limit) return false;
+      tables.update('sandboxes', (r) => r.id === id, { subjects: [...row.subjects, subject] });
+      return true;
     },
     async verified(id, at) {
       tables.update('sandboxes', (r) => r.id === id, { verified_at: at });

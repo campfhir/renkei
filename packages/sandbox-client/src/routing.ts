@@ -124,7 +124,10 @@ export function resetSandboxRoutingForTests(): void {
 export function forgetSandboxEndpoint(subject: string | null | undefined): void {
   if (sandboxOrchestratorConfig()) {
     const key = subject || SYSTEM_ROUTE_KEY;
-    cache.delete(key);
+    // Whoever it was asked for: every remembered answer for the scope goes.
+    for (const cached of cache.keys()) {
+      if (cached === key || cached.startsWith(`${key}\n`)) cache.delete(cached);
+    }
     suspect.add(key);
     return;
   }
@@ -144,13 +147,27 @@ function unavailableEndpoint(orchestrator: SandboxEndpoint, why: string): Sandbo
   return { url: `${orchestrator.url}/unavailable/${why}`, key: orchestrator.key };
 }
 
+/** The cache entry of one scope's sandbox as asked for on one person's behalf. */
+function servedKey(routeKey: string, served: string | null | undefined): string {
+  return `${routeKey}\n${served ?? ''}`;
+}
+
 async function orchestratedEndpoint(
   orchestrator: SandboxEndpoint,
   subject: string | null | undefined,
-  now: number
+  now: number,
+  /**
+   * Whom the call is for. The orchestrator is told, because the sandbox
+   * has no database of its own: the data store calls its worker makes go
+   * through the orchestrator, which lets it touch only the rows of the
+   * people it has been asked — here, by a caller that has already checked
+   * they may work in this scope — to serve.
+   */
+  served: string | null | undefined
 ): Promise<SandboxEndpoint> {
   const routeKey = subject || SYSTEM_ROUTE_KEY;
-  const cached = cache.get(routeKey);
+  const cacheKey = servedKey(routeKey, served);
+  const cached = cache.get(cacheKey);
   if (cached && cached.key && cached.until > now) {
     return {
       url: cached.url,
@@ -166,7 +183,11 @@ async function orchestratedEndpoint(
         authorization: `Bearer ${orchestrator.key}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({ key: routeKey, ...(suspect.has(routeKey) ? { verify: true } : {}) }),
+      body: JSON.stringify({
+        key: routeKey,
+        ...(served ? { subject: served } : {}),
+        ...(suspect.has(routeKey) ? { verify: true } : {}),
+      }),
       signal: AbortSignal.timeout(ENSURE_TIMEOUT_MS),
     });
   } catch {
@@ -187,7 +208,7 @@ async function orchestratedEndpoint(
   if (!url || !key) return unavailableEndpoint(orchestrator, 'provider');
   const headers = isRecord(body) ? headersOf(body.headers) : undefined;
   suspect.delete(routeKey);
-  cache.set(routeKey, { url, key, ...(headers ? { headers } : {}), until: now + CACHE_MS });
+  cache.set(cacheKey, { url, key, ...(headers ? { headers } : {}), until: now + CACHE_MS });
   return { url, key, ...(headers ? { headers } : {}) };
 }
 
@@ -295,10 +316,12 @@ async function assignedAddress(subject: string, now: number): Promise<string | n
  */
 export async function sandboxEndpointFor(
   subject: string | null | undefined,
-  now: number = Date.now()
+  now: number = Date.now(),
+  /** With an orchestrator: whom the call is for (see `orchestratedEndpoint`). */
+  served?: string | null
 ): Promise<SandboxEndpoint | null> {
   const orchestrator = sandboxOrchestratorConfig();
-  if (orchestrator) return orchestratedEndpoint(orchestrator, subject, now);
+  if (orchestrator) return orchestratedEndpoint(orchestrator, subject, now, served);
   const cfg = sandboxConfig();
   if (!cfg || !subject) return cfg;
   const cached = cache.get(subject);

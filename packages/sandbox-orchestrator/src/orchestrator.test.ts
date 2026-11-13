@@ -661,3 +661,45 @@ describe('a preview port opened to people’s own browsers', () => {
     expect(env.provider.machines.size).toBe(0);
   });
 });
+
+describe('whom a sandbox serves', () => {
+  it('a person’s own sandbox serves that person from the start, and nobody else', async () => {
+    const { orchestrator, data } = setup();
+    await orchestrator.ensure('ann');
+    const row = await data.sandboxes.live('ann');
+    expect(Orchestrator.servedBy(row!)).toEqual(['ann']);
+  });
+
+  it('a project’s sandbox serves the project’s checkout and each member a caller has named, once each', async () => {
+    const { orchestrator, data } = setup();
+    await orchestrator.ensure('code-project:p1', { subject: 'ann' });
+    await orchestrator.ensure('code-project:p1', { subject: 'bob' });
+    await orchestrator.ensure('code-project:p1', { subject: 'ann' });
+    const row = await data.sandboxes.live('code-project:p1');
+    expect(row?.subjects).toEqual(['ann', 'bob']);
+    expect(Orchestrator.servedBy(row!)).toEqual(['code-project:p1', 'ann', 'bob']);
+  });
+
+  it('an agent’s sandbox serves the person the agent acts as, once a caller names them', async () => {
+    const { orchestrator, data } = setup();
+    await orchestrator.ensure('agent:a1');
+    expect(Orchestrator.servedBy((await data.sandboxes.live('agent:a1'))!)).toEqual([]);
+    await orchestrator.ensure('agent:a1', { subject: 'ann' });
+    expect(Orchestrator.servedBy((await data.sandboxes.live('agent:a1'))!)).toEqual(['ann']);
+  });
+
+  it('starts over with the scope’s next sandbox: nobody is carried across an eviction unnamed', async () => {
+    const env = setup();
+    await env.orchestrator.ensure('code-project:p1', { subject: 'bob' });
+    await env.orchestrator.remove('code-project:p1');
+    await env.orchestrator.ensure('code-project:p1', { subject: 'ann' });
+    expect((await env.data.sandboxes.live('code-project:p1'))?.subjects).toEqual(['ann']);
+  });
+
+  it('refuses a subject that is not one', async () => {
+    const { orchestrator } = setup();
+    await expect(orchestrator.ensure('ann', { subject: 'a\nb' })).rejects.toMatchObject({
+      type: 'bad_request',
+    });
+  });
+});

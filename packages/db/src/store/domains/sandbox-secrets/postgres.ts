@@ -78,5 +78,15 @@ export function postgresSandboxSecrets(db: () => Kysely<DB>): SandboxSecretStore
     async deleteById(id) {
       await db().deleteFrom('sandbox_secrets').where('id', '=', id).execute();
     },
+    async subjectsOf(ids) {
+      if (ids.length === 0) return [];
+      const rows = await db()
+        .selectFrom('sandbox_secrets')
+        .select('subject')
+        .distinct()
+        .where('id', 'in', ids)
+        .execute();
+      return rows.map((row) => row.subject).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    },
   };
 }

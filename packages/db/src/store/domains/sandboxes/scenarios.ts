@@ -18,7 +18,12 @@ function row(
   kind: string,
   state: string,
   minutes: { created: number; active: number; changed: number },
-  extra: { provider_id?: string | null; address?: string | null; error?: string | null } = {}
+  extra: {
+    provider_id?: string | null;
+    address?: string | null;
+    error?: string | null;
+    subjects?: string[];
+  } = {}
 ) {
   return {
     id,
@@ -33,6 +38,7 @@ function row(
     last_active_at: at(minutes.active),
     state_changed_at: at(minutes.changed),
     verified_at: at(minutes.changed),
+    subjects: extra.subjects ?? [],
   };
 }
 
@@ -68,6 +74,7 @@ const fixture = {
       {
         provider_id: 'c-project',
         address: 'http://10.0.0.3:8092',
+        subjects: ['code-project:p1', 'ann'],
       }
     ),
     row(
@@ -235,6 +242,22 @@ export const sandboxScenarios: Scenario<DataStore>[] = [
         states: ['provisioning', 'running', 'suspended'],
         limit: 10,
       }),
+    ],
+  },
+  {
+    method: 'sandboxes.allowSubject',
+    name: 'a subject is added once, in the order it came, up to the limit; a sandbox that is not there serves nobody',
+    fixture,
+    run: async (store) => [
+      await store.sandboxes.allowSubject(ID.ann, 'ann', 3),
+      await store.sandboxes.allowSubject(ID.ann, 'ann', 3),
+      await store.sandboxes.allowSubject(ID.project, 'bob', 3),
+      await store.sandboxes.allowSubject(ID.project, 'ann', 3),
+      // Full: a fourth is not added, and the call says so.
+      await store.sandboxes.allowSubject(ID.project, 'cy', 3),
+      await store.sandboxes.allowSubject('00000000-0000-4000-8000-0000000000ff', 'ann', 3),
+      await store.sandboxes.get(ID.ann),
+      await store.sandboxes.get(ID.project),
     ],
   },
 ];

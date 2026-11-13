@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import type { DB } from '../../../db.types';
 import { sandboxRecordOf } from './record';
 import type { SandboxStore } from './types';
@@ -21,6 +21,7 @@ export function postgresSandboxes(db: () => Kysely<DB>): SandboxStore {
           last_active_at: input.at,
           state_changed_at: input.at,
           verified_at: input.at,
+          subjects: [],
         })
         // The partial unique index: one sandbox that is not deleted per scope.
         .onConflict((conflict) =>
@@ -70,6 +71,23 @@ export function postgresSandboxes(db: () => Kysely<DB>): SandboxStore {
         .where('id', '=', id)
         .where('last_active_at', '<', at)
         .execute();
+    },
+    async allowSubject(id, subject, limit) {
+      // One statement: appended only when absent and there is room, so two
+      // orchestrators adding at once cannot list a subject twice.
+      await db()
+        .updateTable('sandboxes')
+        .set({ subjects: sql<string[]>`array_append(subjects, ${subject})` })
+        .where('id', '=', id)
+        .where(sql<boolean>`NOT (${subject} = ANY(subjects))`)
+        .where(sql<boolean>`cardinality(subjects) < ${limit}`)
+        .execute();
+      const row = await db()
+        .selectFrom('sandboxes')
+        .select('subjects')
+        .where('id', '=', id)
+        .executeTakeFirst();
+      return row ? row.subjects.includes(subject) : false;
     },
     async verified(id, at) {
       await db().updateTable('sandboxes').set({ verified_at: at }).where('id', '=', id).execute();

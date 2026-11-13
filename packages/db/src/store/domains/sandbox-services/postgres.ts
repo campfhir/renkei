@@ -68,5 +68,15 @@ export function postgresSandboxServices(db: () => Kysely<DB>): SandboxServiceSto
         .execute();
       return rows.flatMap((row) => (row.container_id === null ? [] : [row.container_id]));
     },
+    async subjectsOf(ids) {
+      if (ids.length === 0) return [];
+      const rows = await db()
+        .selectFrom('sandbox_services')
+        .select('subject')
+        .distinct()
+        .where('id', 'in', ids)
+        .execute();
+      return rows.map((row) => row.subject).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    },
   };
 }

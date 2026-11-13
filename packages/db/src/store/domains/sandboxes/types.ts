@@ -37,6 +37,8 @@ export interface SandboxRecord {
   stateChangedAt: Date;
   /** When the provider was last asked and agreed with `state`. */
   verifiedAt: Date;
+  /** Whom it serves: the subjects its data store calls are scoped to, in the order they were added. */
+  subjects: string[];
 }
 
 export interface SandboxStore {
@@ -72,6 +74,12 @@ export interface SandboxStore {
   }): Promise<boolean>;
   /** A call was made for the scope: `last_active_at` moves forward to `at`, never back. */
   touch(id: string, at: Date): Promise<void>;
+  /**
+   * The sandbox serves this subject too: added to `subjects` unless it is
+   * there already, or the list is at `limit`. True when it is on the list
+   * afterwards.
+   */
+  allowSubject(id: string, subject: string, limit: number): Promise<boolean>;
   /** The provider was asked and agrees with the row: `verified_at` becomes `at`. */
   verified(id: string, at: Date): Promise<void>;
   /**

@@ -116,6 +116,8 @@ const DEFAULT_SWEEP_BATCH = 100;
 const DEFAULT_EVICT_RETRY_MS = 15 * 60_000;
 /** How often a long transfer says it is still at it, so nobody takes it for abandoned. */
 const KEEP_ALIVE_MS = 60_000;
+/** How many people one sandbox may serve: a shared project's members, with room. */
+const MAX_SUBJECTS = 500;
 const POLL_MS = 500;
 const PROBE_TIMEOUT_MS = 2_000;
 const COMPONENT = 'sandbox-orchestrator';
@@ -350,17 +352,65 @@ export class Orchestrator {
    * `verify` asks the provider even where the row was checked lately —
    * for a caller whose last call did not connect.
    */
-  ensure(routeKey: string, options: { verify?: boolean } = {}): Promise<SandboxEndpoint> {
+  async ensure(
+    routeKey: string,
+    options: { verify?: boolean; subject?: string | null } = {}
+  ): Promise<SandboxEndpoint> {
     if (!isRouteKey(routeKey)) {
-      return Promise.reject(new OrchestratorError('bad_request', 'not a sandbox scope'));
+      throw new OrchestratorError('bad_request', 'not a sandbox scope');
     }
-    const running = this.inflight.get(routeKey);
-    if (running) return running;
-    const made = this.ensureOnce(routeKey, options.verify === true).finally(() => {
-      this.inflight.delete(routeKey);
-    });
-    this.inflight.set(routeKey, made);
-    return made;
+    if (options.subject != null && !isRouteKey(options.subject)) {
+      throw new OrchestratorError('bad_request', 'not a subject a sandbox can serve');
+    }
+    let running = this.inflight.get(routeKey);
+    if (!running) {
+      running = this.ensureOnce(routeKey, options.verify === true).finally(() => {
+        this.inflight.delete(routeKey);
+      });
+      this.inflight.set(routeKey, running);
+    }
+    const endpoint = await running;
+    // Whom the call is for: the caller (the web app, which has already
+    // checked that person may work in this scope) names them, and from
+    // here on the sandbox's own data store calls may be for them.
+    if (options.subject) await this.serve(endpoint.sandboxId, routeKey, options.subject);
+    return endpoint;
+  }
+
+  /** Subjects already recorded for a sandbox, so a busy scope is not written to on every call. */
+  private readonly served = new Map<string, Set<string>>();
+
+  private async serve(sandboxId: string, routeKey: string, subject: string): Promise<void> {
+    let known = this.served.get(sandboxId);
+    if (known?.has(subject)) return;
+    const added = await this.store().allowSubject(sandboxId, subject, MAX_SUBJECTS);
+    if (!added) {
+      throw new OrchestratorError(
+        'bad_request',
+        `the sandbox for ${routeKey} already serves ${MAX_SUBJECTS} people, and cannot serve another`
+      );
+    }
+    if (!known) {
+      known = new Set();
+      this.served.set(sandboxId, known);
+      // Bounded: the oldest sandbox's memory goes first, and is read again if needed.
+      if (this.served.size > 5_000) {
+        const oldest = this.served.keys().next().value;
+        if (oldest !== undefined) this.served.delete(oldest);
+      }
+    }
+    known.add(subject);
+  }
+
+  /**
+   * Whom a sandbox may make data store calls for: the subjects it has
+   * been asked to serve. A person's own sandbox serves that person, and
+   * a code project's serves the project's checkout, from the start.
+   */
+  static servedBy(row: SandboxRecord): string[] {
+    const own =
+      row.kind === 'user' || row.routeKey.startsWith('code-project:') ? [row.routeKey] : [];
+    return [...new Set([...own, ...row.subjects])];
   }
 
   private async ensureOnce(routeKey: string, verify: boolean): Promise<SandboxEndpoint> {

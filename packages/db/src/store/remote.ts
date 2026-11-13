@@ -7,9 +7,9 @@
  * route to Postgres: its worker still reads and writes through
  * `getDataStore()`, as every process does, but the store registered there
  * is this one, and each call goes to the orchestrator — which decides
- * whether that sandbox may make it (`dispatchStoreCall`'s allow-list: the
- * repositories the sandbox database role was granted, and no others) and
- * runs it on its own store.
+ * whether that sandbox may make it (`dispatchStoreCall` and its policy:
+ * the repositories the sandbox database role was granted, every call
+ * held to the subjects that sandbox serves) and runs it on its own store.
  *
  * The wire is JSON with the few values JSON has no word for written as
  * tagged objects (`encodeWire` / `decodeWire`): a Date, bytes, a bigint.
@@ -145,32 +145,201 @@ export function createRemoteDataStore(transport: StoreTransport): DataStore {
   return store as unknown as DataStore;
 }
 
-/**
- * Which calls a remote caller may make: a repository's every method
- * (`'all'`), or the ones named.
- */
-export type StoreAllowList = Readonly<Record<string, 'all' | readonly string[]>>;
+/** The sandbox that is calling: what it is for, and whom it serves. */
+export interface StoreCaller {
+  /** `system` is the sandbox of calls made for no caller; it serves no subject. */
+  kind: 'user' | 'agent' | 'project' | 'system';
+  /**
+   * The subjects whose rows it may touch: the people, and the code
+   * project, it has been asked to work for (`sandboxes.subjects`).
+   */
+  subjects: readonly string[];
+}
+
+type Owners = (store: DataStore, ids: string[]) => Promise<string[]>;
 
 /**
- * What a sandbox may ask of the store: exactly the repositories the
- * sandbox database role was granted (roles.ts, SANDBOX_TABLE_GRANTS) —
- * the sandbox's own tables in full, the organization's settings and a
- * checkout's approved size to read — and nothing about people, chats,
- * agents, grants or keys.
+ * How one repository method is held to the calling sandbox's own scope.
+ *
+ *  - `open`: nothing of any one subject's — the organization's settings,
+ *    a count for a batch whose id the caller already holds.
+ *  - `system`: the organization's own rows (the image allow-list), which
+ *    only the system sandbox changes.
+ *  - `subject`: the argument at `arg` is the subject, or an object whose
+ *    `subject` is: it must be one the sandbox serves.
+ *  - `owned`: the argument at `arg` is a row's id (or ids). Whose rows
+ *    they are is looked up first, and every owner must be one the sandbox
+ *    serves. An id with no row is nobody's, and the call goes through to
+ *    find nothing.
+ *  - `rows`: a read across subjects (what has expired). It runs, and only
+ *    the rows of subjects the sandbox serves are answered.
+ *  - `custom`: answered here, from calls that are themselves scoped.
  */
-export const SANDBOX_STORE_ALLOW_LIST: StoreAllowList = {
-  sandboxFiles: 'all',
-  sandboxWorkspaces: 'all',
-  sandboxServices: 'all',
-  sandboxSecrets: 'all',
-  sandboxEnvSecrets: 'all',
-  sandboxCrawls: 'all',
-  codeServiceImageRules: 'all',
-  settings: ['all', 'get'],
-  codeProjects: ['approvedSizes'],
+type Guard =
+  | { kind: 'open' }
+  | { kind: 'system' }
+  | { kind: 'subject'; arg: number }
+  | { kind: 'owned'; arg: number; owners: Owners }
+  | { kind: 'rows' }
+  | {
+      kind: 'custom';
+      run: (store: DataStore, caller: StoreCaller, args: unknown[]) => Promise<unknown>;
+    };
+
+export type StorePolicy = Readonly<Record<string, Readonly<Record<string, Guard>>>>;
+
+const OPEN: Guard = { kind: 'open' };
+const SYSTEM: Guard = { kind: 'system' };
+const ROWS: Guard = { kind: 'rows' };
+const subject = (arg: number): Guard => ({ kind: 'subject', arg });
+const owned = (arg: number, owners: Owners): Guard => ({ kind: 'owned', arg, owners });
+
+const fileOwners: Owners = (store, ids) => store.sandboxFiles.subjectsOf(ids);
+const serviceOwners: Owners = (store, ids) => store.sandboxServices.subjectsOf(ids);
+const secretOwners: Owners = (store, ids) => store.sandboxSecrets.subjectsOf(ids);
+const envSecretOwners: Owners = (store, ids) => store.sandboxEnvSecrets.subjectsOf(ids);
+const workspaceOwners: Owners = async (store, ids) => {
+  const rows = await Promise.all(ids.map((id) => store.sandboxWorkspaces.getById(id)));
+  return rows.flatMap((row) => (row ? [row.subject] : []));
+};
+const crawlOwners: Owners = async (store, ids) => {
+  const rows = await Promise.all(ids.map((id) => store.sandboxCrawls.getById(id)));
+  return rows.flatMap((row) => (row ? [row.subject] : []));
 };
 
-/** A call that is not on the list, or names nothing the store has. */
+/**
+ * What a sandbox may ask of the store, and how each call is held to that
+ * sandbox's own scope. The repositories are the ones the sandbox database
+ * role was granted (roles.ts, SANDBOX_TABLE_GRANTS) — its files,
+ * checkouts, services, secrets and crawls, the organization's settings
+ * and a checkout's approved size to read — and every method is listed:
+ * one that is not here is refused, so a new method is unreachable from a
+ * sandbox until someone decides how it is scoped.
+ *
+ * Two calls reach across subjects by design, and only ever answer a
+ * number: the crawls' housekeeping (`releaseStale`, `sweepExpired`),
+ * which acts on rows that are already abandoned or expired.
+ */
+export const SANDBOX_STORE_POLICY: StorePolicy = {
+  sandboxFiles: {
+    insert: subject(0),
+    list: subject(0),
+    countForSubject: subject(0),
+    totalBytesForSubject: subject(0),
+    countForBatch: OPEN,
+    totalBytesForBatch: OPEN,
+    get: subject(0),
+    delete: subject(0),
+    listExpired: ROWS,
+    deleteById: owned(0, fileOwners),
+    subjectsOf: owned(0, fileOwners),
+  },
+  sandboxWorkspaces: {
+    insert: subject(0),
+    list: subject(0),
+    count: subject(0),
+    get: subject(0),
+    setStatus: owned(0, workspaceOwners),
+    listWorktrees: subject(0),
+    touch: owned(0, workspaceOwners),
+    delete: subject(0),
+    listExpired: ROWS,
+    deleteById: owned(0, workspaceOwners),
+    getById: owned(0, workspaceOwners),
+    listWorktreesOf: owned(0, workspaceOwners),
+  },
+  sandboxServices: {
+    insert: subject(0),
+    list: subject(0),
+    getByName: subject(0),
+    update: owned(0, serviceOwners),
+    touch: owned(0, serviceOwners),
+    deleteById: owned(0, serviceOwners),
+    listExpired: ROWS,
+    // The containers the sandbox's own subjects claim: what its own engine may hold.
+    listClaimedContainerIds: {
+      kind: 'custom',
+      run: async (store, caller) => {
+        const lists = await Promise.all(
+          caller.subjects.map((served) => store.sandboxServices.list(served))
+        );
+        return lists
+          .flat()
+          .flatMap((service) => (service.containerId ? [service.containerId] : []))
+          .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+      },
+    },
+    subjectsOf: owned(0, serviceOwners),
+  },
+  sandboxSecrets: {
+    insert: subject(0),
+    list: subject(0),
+    count: subject(0),
+    get: subject(0),
+    getByName: subject(0),
+    touchUsed: owned(0, secretOwners),
+    delete: subject(0),
+    // Expired ids, of the subjects the sandbox serves only.
+    listExpiredIds: {
+      kind: 'custom',
+      run: async (store, caller, args) => {
+        const [before, limit] = args;
+        if (!(before instanceof Date) || typeof limit !== 'number') {
+          throw new StoreCallRefused('sandboxSecrets.listExpiredIds takes a date and a limit');
+        }
+        const ids = await store.sandboxSecrets.listExpiredIds(before, limit);
+        const kept: string[] = [];
+        for (const id of ids) {
+          const owners = await store.sandboxSecrets.subjectsOf([id]);
+          if (owners.every((owner) => caller.subjects.includes(owner))) kept.push(id);
+        }
+        return kept;
+      },
+    },
+    deleteById: owned(0, secretOwners),
+    subjectsOf: owned(0, secretOwners),
+  },
+  sandboxEnvSecrets: {
+    upsert: subject(0),
+    list: subject(0),
+    count: subject(0),
+    has: subject(0),
+    listSealed: subject(0),
+    touchUsed: owned(0, envSecretOwners),
+    delete: subject(0),
+    subjectsOf: owned(0, envSecretOwners),
+  },
+  sandboxCrawls: {
+    create: subject(0),
+    get: subject(0),
+    getById: owned(0, crawlOwners),
+    list: subject(0),
+    transition: owned(0, crawlOwners),
+    progress: owned(0, crawlOwners),
+    extend: owned(0, crawlOwners),
+    putPage: owned(0, crawlOwners),
+    visitedUrls: owned(0, crawlOwners),
+    pages: subject(0),
+    saveRecipe: subject(0),
+    recipe: subject(0),
+    recipes: subject(0),
+    releaseStale: OPEN,
+    sweepExpired: OPEN,
+  },
+  codeServiceImageRules: {
+    list: OPEN,
+    count: OPEN,
+    listForMatching: OPEN,
+    insert: SYSTEM,
+    update: SYSTEM,
+    delete: SYSTEM,
+    insertMissing: SYSTEM,
+  },
+  settings: { all: OPEN, get: OPEN },
+  codeProjects: { approvedSizes: subject(0) },
+};
+
+/** A call that is not allowed, is not this sandbox's, or names nothing the store has. */
 export class StoreCallRefused extends Error {
   constructor(message: string) {
     super(message);
@@ -178,20 +347,11 @@ export class StoreCallRefused extends Error {
   }
 }
 
-/**
- * Run one remote call on `store` if `allow` admits it. The method must be
- * a repository's own function: nothing inherited, nothing that is not a
- * function, is ever reached by name.
- */
-export async function dispatchStoreCall(
+/** A repository's own method, by name: nothing inherited, nothing that is not a function. */
+function methodOf(
   store: DataStore,
-  allow: StoreAllowList,
   call: StoreCall
-): Promise<unknown> {
-  const allowed = Object.hasOwn(allow, call.domain) ? allow[call.domain] : undefined;
-  if (!allowed || (allowed !== 'all' && !allowed.includes(call.method))) {
-    throw new StoreCallRefused(`${call.domain}.${call.method} is not a call a sandbox may make`);
-  }
+): { repository: object; method: (...args: unknown[]) => unknown } {
   const repository: unknown = Reflect.get(store, call.domain);
   if (
     typeof repository !== 'object' ||
@@ -204,7 +364,59 @@ export async function dispatchStoreCall(
   if (typeof method !== 'function') {
     throw new StoreCallRefused(`the store has no ${call.domain}.${call.method}`);
   }
-  return Reflect.apply(method, repository, call.args);
+  return {
+    repository,
+    method: (...args: unknown[]): unknown => Reflect.apply(method, repository, args),
+  };
+}
+
+function subjectOfRow(row: unknown): string | null {
+  return isPlainObject(row) && typeof row.subject === 'string' ? row.subject : null;
+}
+
+/**
+ * Run one call from a sandbox on `store`, if `policy` admits it and it is
+ * within what `caller` serves. Refused otherwise — the same refusal
+ * whether the method is unknown, not allowed, or another scope's, so a
+ * refusal says nothing about what exists.
+ */
+export async function dispatchStoreCall(
+  store: DataStore,
+  policy: StorePolicy,
+  call: StoreCall,
+  caller: StoreCaller
+): Promise<unknown> {
+  const name = `${call.domain}.${call.method}`;
+  const methods = Object.hasOwn(policy, call.domain) ? policy[call.domain] : undefined;
+  const guard = methods && Object.hasOwn(methods, call.method) ? methods[call.method] : undefined;
+  if (!guard) throw new StoreCallRefused(`${name} is not a call a sandbox may make`);
+  const outside = (): StoreCallRefused =>
+    new StoreCallRefused(`${name} was asked for a scope this sandbox does not serve`);
+  const serves = (candidate: unknown): boolean =>
+    typeof candidate === 'string' && caller.subjects.includes(candidate);
+
+  if (guard.kind === 'custom') return guard.run(store, caller, call.args);
+  const { method } = methodOf(store, call);
+
+  if (guard.kind === 'system' && caller.kind !== 'system') {
+    throw new StoreCallRefused(`${name} is the organization’s, not a sandbox’s, to change`);
+  }
+  if (guard.kind === 'subject') {
+    const arg = call.args[guard.arg];
+    if (!serves(isPlainObject(arg) ? arg.subject : arg)) throw outside();
+  }
+  if (guard.kind === 'owned') {
+    const arg = call.args[guard.arg];
+    const ids = Array.isArray(arg) ? arg : [arg];
+    if (!ids.every((id): id is string => typeof id === 'string')) throw outside();
+    const owners = await guard.owners(store, ids);
+    if (!owners.every(serves)) throw outside();
+  }
+  const answer = await method(...call.args);
+  if (guard.kind === 'rows') {
+    return Array.isArray(answer) ? answer.filter((row) => serves(subjectOfRow(row))) : [];
+  }
+  return answer;
 }
 
 /**

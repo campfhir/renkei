@@ -60,5 +60,12 @@ export function memorySandboxServices(tables: MemoryTables): SandboxServiceStore
         row.container_id === null ? [] : [row.container_id]
       );
     },
+    async subjectsOf(ids) {
+      const wanted = new Set(ids);
+      const subjects = new Set(
+        tables.select('sandbox_services', (r) => wanted.has(r.id)).map((row) => row.subject)
+      );
+      return [...subjects].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    },
   };
 }

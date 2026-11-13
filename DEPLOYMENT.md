@@ -765,14 +765,15 @@ each is started with are stored sealed in the database, not in `.env`,
 and the orchestrator picks a change up without a restart. A sandbox has
 no database access and is created with no secret but its own key: its
 worker makes its data store calls through the orchestrator and is handed
-its secrets sealed under that key. The
+its secrets sealed under that key; each of those calls is held to the
+people that sandbox serves. The
 orchestrator is the only container holding the engine's socket; no
 sandbox does. Code project services run inside each sandbox on an engine
 of its own (Podman) — on Azure as they are, on this host's Docker only
 with “Run sandboxes privileged” (a developer's machine).
 `docs/sandbox-orchestrator-design.md` has the page's fields, the Azure
 setup, and the list of what still runs the old way. Run `migrate` first
-(migrations 180 and 181).
+(migrations 180 to 182).
 
 **More than one sandbox replica:** fine on one host, because Compose
 replicas of a service share its named volumes — and the sandbox worker

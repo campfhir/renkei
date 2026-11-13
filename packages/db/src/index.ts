@@ -46,9 +46,10 @@ export {
   dispatchStoreCall,
   encodeWire,
   RemoteStoreError,
-  SANDBOX_STORE_ALLOW_LIST,
+  SANDBOX_STORE_POLICY,
   StoreCallRefused,
-  type StoreAllowList,
+  type StoreCaller,
+  type StorePolicy,
   type StoreCall,
   type StoreTransport,
 } from './store/remote';

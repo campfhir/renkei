@@ -8,10 +8,12 @@
  *                       last sandbox to come up said it can do, in the
  *                       shape the sandbox worker's own /health has, so
  *                       the client's feature check reads either alike.
- *   POST /v1/ensure     `{ key, verify? }` → `{ sandboxId, url, key, headers }`:
+ *   POST /v1/ensure     `{ key, subject?, verify? }` → `{ sandboxId, url, key, headers }`:
  *                       the scope's sandbox, running — made, resumed or
  *                       waited for as needed — and the bearer key its
- *                       worker takes. Marks the scope active.
+ *                       worker takes. Marks the scope active. `subject` is
+ *                       whom the call is for: that sandbox's own data
+ *                       store calls are scoped to the subjects named so.
  *   POST /v1/list       → `{ sandboxes: [...] }`: every sandbox that is
  *                       not deleted; a running one with its url and key.
  *   POST /v1/remove     `{ key }` → `{ removed }`: remove a scope's
@@ -43,8 +45,9 @@
  *                       sandbox's key. Never in its environment.
  *   POST /sandbox/v1/store      `{ domain, method, args }` → `{ ok, result }`:
  *                       one data store call, run here. A sandbox holds no
- *                       database connection; it may make the calls the
- *                       sandbox database role was granted and no others
+ *                       database connection; it may make the calls of
+ *                       the sandbox's own repositories, each held to
+ *                       the subjects that sandbox serves
  *                       (@renkei/db store/remote.ts).
  *
  * Bearer-authenticated (SANDBOX_ORCHESTRATOR_API_KEY). The answer to
@@ -55,7 +58,7 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import {
-  SANDBOX_STORE_ALLOW_LIST,
+  SANDBOX_STORE_POLICY,
   StoreCallRefused,
   decodeWire,
   dispatchStoreCall,
@@ -66,8 +69,8 @@ import {
 } from '@renkei/db';
 import { isRecord } from '@renkei/guards';
 import {
+  Orchestrator,
   OrchestratorError,
-  type Orchestrator,
   type OrchestratorErrorType,
 } from '@renkei/sandbox-orchestrator';
 import { matchApiKey, readBody, sendJson } from '@renkei/worker-kit';
@@ -174,11 +177,13 @@ export function createOrchestratorServer(deps: OrchestratorServerDeps): Server {
       }
       const args = decodeWire(body.args);
       try {
-        const result = await dispatchStoreCall(deps.dataStore(), SANDBOX_STORE_ALLOW_LIST, {
-          domain: body.domain,
-          method: body.method,
-          args: Array.isArray(args) ? args : [],
-        });
+        const result = await dispatchStoreCall(
+          deps.dataStore(),
+          SANDBOX_STORE_POLICY,
+          { domain: body.domain, method: body.method, args: Array.isArray(args) ? args : [] },
+          // Held to this sandbox's own scope: the subjects it serves.
+          { kind: sandbox.kind, subjects: Orchestrator.servedBy(sandbox) }
+        );
         return sendJson(response, 200, { ok: true, result: encodeWire(result) });
       } catch (error) {
         if (error instanceof StoreCallRefused) {
@@ -272,7 +277,11 @@ export function createOrchestratorServer(deps: OrchestratorServerDeps): Server {
     if (url.pathname === '/v1/ensure') {
       if (typeof body.key !== 'string')
         return sendError(response, 'bad_request', 'key is required');
-      const endpoint = await orchestrator.ensure(body.key, { verify: body.verify === true });
+      const endpoint = await orchestrator.ensure(body.key, {
+        verify: body.verify === true,
+        // Whom the call is for; the sandbox's own store calls are scoped to those named here.
+        subject: typeof body.subject === 'string' && body.subject ? body.subject : null,
+      });
       return sendJson(response, 200, endpoint);
     }
     if (url.pathname === '/v1/remove') {

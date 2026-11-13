@@ -1593,6 +1593,7 @@ export interface Sandboxes {
   state: string;
   state_changed_at: Timestamp;
   verified_at: Timestamp;
+  subjects: Generated<string[]>;
 }
 
 export interface SandboxWorkspaces {

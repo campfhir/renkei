@@ -124,4 +124,15 @@ export const sandboxServiceScenarios: Scenario<DataStore>[] = [
     fixture,
     run: async (store) => store.sandboxServices.listClaimedContainerIds(),
   },
+  {
+    method: 'sandboxServices.subjectsOf',
+    name: 'the distinct subjects of the rows named, in order; an id with no row counts for nothing',
+    fixture,
+    run: async (store) => [
+      await store.sandboxServices.subjectsOf([id(4), id(1), id(2), id(99)]),
+      await store.sandboxServices.subjectsOf([id(1)]),
+      await store.sandboxServices.subjectsOf([id(99)]),
+      await store.sandboxServices.subjectsOf([]),
+    ],
+  },
 ];

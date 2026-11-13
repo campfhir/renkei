@@ -54,5 +54,12 @@ export function memorySandboxEnvSecrets(tables: MemoryTables): SandboxEnvSecretS
       );
       return row ? { id: row.id, name: row.name } : null;
     },
+    async subjectsOf(ids) {
+      const wanted = new Set(ids);
+      const subjects = new Set(
+        tables.select('sandbox_env_secrets', (r) => wanted.has(r.id)).map((row) => row.subject)
+      );
+      return [...subjects].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    },
   };
 }

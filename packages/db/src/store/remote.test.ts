@@ -1,30 +1,54 @@
 import { createMemoryDataStore } from './memory';
 import {
-  SANDBOX_STORE_ALLOW_LIST,
+  SANDBOX_STORE_POLICY,
   StoreCallRefused,
   createRemoteDataStore,
   decodeWire,
   dispatchStoreCall,
   encodeWire,
   type StoreCall,
+  type StoreCaller,
 } from './remote';
 
-/** A sandbox's store wired straight to a store with rows: every call through the wire's JSON and the allow-list. */
-function wired() {
+const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+const ANN: StoreCaller = { kind: 'user', subjects: ['ann'] };
+const PROJECT: StoreCaller = { kind: 'project', subjects: ['code-project:p1', 'ann', 'bob'] };
+const SYSTEM: StoreCaller = { kind: 'system', subjects: [] };
+
+/** A store with rows, and the store a sandbox sees of it: every call through the wire's JSON and the policy. */
+function wired(caller: StoreCaller = ANN) {
   const real = createMemoryDataStore();
   const sent: StoreCall[] = [];
-  const remote = createRemoteDataStore(async (call) => {
-    sent.push(call);
-    const overTheWire: unknown = JSON.parse(JSON.stringify(encodeWire(call.args)));
-    const args = decodeWire(overTheWire);
-    const answer = await dispatchStoreCall(real, SANDBOX_STORE_ALLOW_LIST, {
-      ...call,
-      args: Array.isArray(args) ? args : [],
+  const as = (who: StoreCaller) =>
+    createRemoteDataStore(async (call) => {
+      sent.push(call);
+      const overTheWire: unknown = JSON.parse(JSON.stringify(encodeWire(call.args)));
+      const args = decodeWire(overTheWire);
+      const answer = await dispatchStoreCall(
+        real,
+        SANDBOX_STORE_POLICY,
+        { ...call, args: Array.isArray(args) ? args : [] },
+        who
+      );
+      return decodeWire(JSON.parse(JSON.stringify(encodeWire(answer))));
     });
-    return decodeWire(JSON.parse(JSON.stringify(encodeWire(answer))));
-  });
-  return { real, remote, sent };
+  return { real, remote: as(caller), as, sent };
 }
+
+const file = (n: number, subject: string, expires = new Date(Date.UTC(2026, 0, 2))) => ({
+  id: id(n),
+  subject,
+  scope: '',
+  filename: `file-${n}.txt`,
+  contentType: 'text/plain',
+  sizeBytes: 12,
+  storageKey: `k${n}`,
+  source: 'test',
+  batchId: null,
+  expiresAt: expires,
+});
+
+const REFUSED = /scope this sandbox does not serve/;
 
 describe('the wire', () => {
   it('carries dates, bytes and bigints through JSON and back as they were', () => {
@@ -56,37 +80,110 @@ describe('the wire', () => {
 });
 
 describe('a sandbox’s store', () => {
-  it('reads and writes its own tables through the process that has the database', async () => {
+  it('reads and writes the rows of the person it serves, through the process that has the database', async () => {
     const { real, remote } = wired();
-    const expiresAt = new Date(Date.UTC(2026, 0, 2));
-    const inserted = await remote.sandboxFiles.insert({
-      id: '00000000-0000-4000-8000-000000000001',
-      subject: 'ann',
-      scope: '',
-      filename: 'notes.txt',
-      contentType: 'text/plain',
-      sizeBytes: 12,
-      storageKey: 'k',
-      source: 'test',
-      batchId: null,
-      expiresAt,
-    });
-    expect(inserted.filename).toBe('notes.txt');
-    // It is in the real store, and reads back through the remote one with its dates as dates.
+    const inserted = await remote.sandboxFiles.insert(file(1, 'ann'));
+    expect(inserted.filename).toBe('file-1.txt');
     const listed = await remote.sandboxFiles.list('ann', '');
     expect(listed).toHaveLength(1);
-    expect(listed[0]?.expiresAt).toEqual(expiresAt);
+    expect(listed[0]?.expiresAt).toEqual(new Date(Date.UTC(2026, 0, 2)));
     expect(await real.sandboxFiles.list('ann', '')).toHaveLength(1);
   });
 
-  it('reads the organization’s settings but cannot change them', async () => {
+  it('cannot read, write, count or delete another person’s rows, by subject', async () => {
+    const { real, remote } = wired();
+    await real.sandboxFiles.insert(file(2, 'bob'));
+    await expect(remote.sandboxFiles.list('bob', '')).rejects.toThrow(REFUSED);
+    await expect(remote.sandboxFiles.get('bob', '', id(2))).rejects.toThrow(REFUSED);
+    await expect(remote.sandboxFiles.countForSubject('bob')).rejects.toThrow(REFUSED);
+    await expect(remote.sandboxFiles.delete('bob', '', id(2))).rejects.toThrow(REFUSED);
+    // Nor write a row in another's name.
+    await expect(remote.sandboxFiles.insert(file(3, 'bob'))).rejects.toThrow(REFUSED);
+    await expect(remote.sandboxEnvSecrets.listSealed('bob')).rejects.toThrow(REFUSED);
+    await expect(remote.sandboxWorkspaces.list('bob')).rejects.toThrow(REFUSED);
+    expect(await real.sandboxFiles.list('bob', '')).toHaveLength(1);
+  });
+
+  it('cannot act on another person’s row by its id either: whose it is is looked up first', async () => {
+    const { real, remote } = wired();
+    await real.sandboxFiles.insert(file(1, 'ann'));
+    await real.sandboxFiles.insert(file(2, 'bob'));
+    await expect(remote.sandboxFiles.deleteById(id(2))).rejects.toThrow(REFUSED);
+    expect(await real.sandboxFiles.list('bob', '')).toHaveLength(1);
+    // Its own goes; an id nobody holds is nobody's, and finds nothing.
+    await remote.sandboxFiles.deleteById(id(1));
+    await remote.sandboxFiles.deleteById(id(99));
+    expect(await real.sandboxFiles.list('ann', '')).toHaveLength(0);
+  });
+
+  it('refuses a batch of ids when any one of them is another’s', async () => {
+    const { real, remote } = wired();
+    const secret = (n: number, subject: string) => ({
+      id: id(n),
+      subject,
+      name: `S${n}`,
+      sealed: 'env1.x',
+      updatedAt: new Date(0),
+    });
+    await real.sandboxEnvSecrets.upsert(secret(1, 'ann'));
+    await real.sandboxEnvSecrets.upsert(secret(2, 'bob'));
+    await expect(remote.sandboxEnvSecrets.touchUsed([id(1), id(2)], new Date(1))).rejects.toThrow(
+      REFUSED
+    );
+    await remote.sandboxEnvSecrets.touchUsed([id(1)], new Date(1));
+  });
+
+  it('sweeping what has expired sees only its own: another sandbox’s rows are not its to remove', async () => {
+    const { real, remote } = wired();
+    const past = new Date(Date.UTC(2025, 0, 1));
+    await real.sandboxFiles.insert(file(1, 'ann', past));
+    await real.sandboxFiles.insert(file(2, 'bob', past));
+    const expired = await remote.sandboxFiles.listExpired(new Date(Date.UTC(2026, 0, 1)), 100);
+    expect(expired.map((row) => row.subject)).toEqual(['ann']);
+  });
+
+  it('a project’s sandbox serves the project’s checkout and each member who has worked in it — and nobody else', async () => {
+    const { real, as } = wired();
+    const project = as(PROJECT);
+    await project.sandboxFiles.insert(file(1, 'ann'));
+    await project.sandboxFiles.insert(file(2, 'bob'));
+    expect(await project.sandboxFiles.list('bob', '')).toHaveLength(1);
+    await project.sandboxWorkspaces.list('code-project:p1');
+    await expect(project.sandboxFiles.list('cy', '')).rejects.toThrow(REFUSED);
+    await expect(project.sandboxWorkspaces.list('code-project:p2')).rejects.toThrow(REFUSED);
+    expect(await real.sandboxFiles.list('ann', '')).toHaveLength(1);
+  });
+
+  it('reads the organization’s settings and image allow-list, and changes neither', async () => {
     const { real, remote } = wired();
     await real.settings.set('log_level', 'debug');
     expect(await remote.settings.get('log_level')).toBe('debug');
     await expect(remote.settings.set('log_level', 'error')).rejects.toThrow(
       /settings.set is not a call a sandbox may make/
     );
-    expect(await real.settings.get('log_level')).toBe('debug');
+    expect(await remote.codeServiceImageRules.listForMatching()).toEqual([]);
+    await expect(
+      remote.codeServiceImageRules.insert({
+        pattern: 'docker.io/evil/*',
+        note: null,
+        registryUsername: null,
+        registrySealed: null,
+      })
+    ).rejects.toThrow(/the organization’s, not a sandbox’s, to change/);
+    expect(await real.codeServiceImageRules.count()).toBe(0);
+  });
+
+  it('the system sandbox keeps the image allow-list for the organization, and serves no person', async () => {
+    const { real, as } = wired();
+    const system = as(SYSTEM);
+    await system.codeServiceImageRules.insert({
+      pattern: 'docker.io/library/postgres',
+      note: null,
+      registryUsername: null,
+      registrySealed: null,
+    });
+    expect(await real.codeServiceImageRules.count()).toBe(1);
+    await expect(system.sandboxFiles.list('ann', '')).rejects.toThrow(REFUSED);
   });
 
   it.each([
@@ -102,7 +199,7 @@ describe('a sandbox’s store', () => {
     async (domain, method) => {
       const { real } = wired();
       await expect(
-        dispatchStoreCall(real, SANDBOX_STORE_ALLOW_LIST, { domain, method, args: ['x'] })
+        dispatchStoreCall(real, SANDBOX_STORE_POLICY, { domain, method, args: ['ann'] }, ANN)
       ).rejects.toBeInstanceOf(StoreCallRefused);
     }
   );
@@ -118,11 +215,12 @@ describe('a sandbox’s store', () => {
       ['kind', 'length'],
     ]) {
       await expect(
-        dispatchStoreCall(real, SANDBOX_STORE_ALLOW_LIST, {
-          domain: domain!,
-          method: method!,
-          args: [],
-        })
+        dispatchStoreCall(
+          real,
+          SANDBOX_STORE_POLICY,
+          { domain: domain!, method: method!, args: [] },
+          ANN
+        )
       ).rejects.toBeInstanceOf(StoreCallRefused);
     }
   });
@@ -132,5 +230,41 @@ describe('a sandbox’s store', () => {
     expect(remote.kind).toBe('remote');
     expect(await Promise.resolve(remote)).toBe(remote);
     expect('seed' in remote).toBe(false);
+  });
+});
+
+describe('the sandbox policy', () => {
+  const store = createMemoryDataStore();
+
+  it('names only methods the store has', () => {
+    for (const [domain, methods] of Object.entries(SANDBOX_STORE_POLICY)) {
+      const repository: unknown = Reflect.get(store, domain);
+      expect(typeof repository).toBe('object');
+      for (const method of Object.keys(methods)) {
+        expect([`${domain}.${method}`, typeof Reflect.get(Object(repository), method)]).toEqual([
+          `${domain}.${method}`,
+          'function',
+        ]);
+      }
+    }
+  });
+
+  it('lists every method of the sandbox’s own repositories: a new one is unreachable until someone decides how it is scoped', () => {
+    for (const domain of [
+      'sandboxFiles',
+      'sandboxWorkspaces',
+      'sandboxServices',
+      'sandboxSecrets',
+      'sandboxEnvSecrets',
+      'sandboxCrawls',
+      'codeServiceImageRules',
+    ]) {
+      const repository: unknown = Reflect.get(store, domain);
+      const has = Object.keys(Object(repository)).sort();
+      expect([domain, Object.keys(SANDBOX_STORE_POLICY[domain] ?? {}).sort()]).toEqual([
+        domain,
+        has,
+      ]);
+    }
   });
 });

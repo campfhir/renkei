@@ -205,6 +205,7 @@ export const EXPECTED_MIGRATIONS = [
   '179-sandbox-instances',
   '180-sandboxes',
   '181-sandbox-archives',
+  '182-sandbox-subjects',
 ];
 
 export interface MigrationStatus {

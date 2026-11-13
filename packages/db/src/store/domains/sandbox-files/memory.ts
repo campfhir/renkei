@@ -64,5 +64,12 @@ export function memorySandboxFiles(tables: MemoryTables): SandboxFileStore {
       const wanted = id;
       tables.delete('sandbox_files', (r) => r.id === wanted);
     },
+    async subjectsOf(ids) {
+      const wanted = new Set(ids);
+      const subjects = new Set(
+        tables.select('sandbox_files', (r) => wanted.has(r.id)).map((row) => row.subject)
+      );
+      return [...subjects].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    },
   };
 }

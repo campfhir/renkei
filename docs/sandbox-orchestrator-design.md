@@ -178,13 +178,10 @@ work with.
   as every process does, but the store registered there is a _remote_
   one (`packages/db` `store/remote.ts`): each repository call is sent to
   the orchestrator (`POST /sandbox/v1/store`, as that sandbox), which
-  runs it on its own store if it is on the sandbox's allow-list — the
-  repositories the sandbox database role used to be granted (its files,
-  checkouts, services, secrets and crawls; the organization's settings
-  and a checkout's approved size to read) and nothing about people,
-  chats, agents, grants, keys or other sandboxes. A database URL is
-  refused as a variable name in the setup, and dropped by the worker if
-  one ever reached it.
+  runs it on its own store only if the sandbox's policy admits it and
+  it is within that sandbox's own scope (next section). A database URL
+  is refused as a variable name in the setup, and dropped by the worker
+  if one ever reached it.
 - **Secrets arrive sealed, not in the environment.** What the worker
   needs besides — its key for the delegate, the key its workspace
   secrets are sealed with — it asks the orchestrator for at boot
@@ -202,6 +199,41 @@ work with.
 - **No sandbox has a way to the host's container engine.** The socket is
   mounted in the orchestrator alone, which is what retires the socket
   proxy.
+
+## Whose rows a sandbox may touch
+
+Every data store call a sandbox makes is held to that sandbox's own
+scope, by the orchestrator, before it runs (`packages/db`
+`store/remote.ts`, `SANDBOX_STORE_POLICY`).
+
+- **Whom a sandbox serves is recorded, not assumed.** When the web app
+  asks where a scope's sandbox is, it says whom the call is for
+  (`POST /v1/ensure { key, subject }`) — after its own check that the
+  person may work there. The orchestrator adds that subject to the
+  sandbox's list (`sandboxes.subjects`, migration 182). A person's own
+  sandbox serves that person, and a code project's the project's
+  checkout, from the start; a project's sandbox comes to serve each
+  member who works in it, as they do; an agent's serves the person it
+  acts as. The scope's next sandbox, after an eviction, starts its list
+  again.
+- **Every method is listed, and each is scoped in one of a few ways.**
+  A call that names a subject must name one the sandbox serves. A call
+  that names only a row's id has that row's owner looked up first, and
+  is refused if it is someone else's — a batch of ids, if any one is. A
+  read across subjects (what has expired) answers only the rows of the
+  subjects the sandbox serves, so one sandbox's sweep never removes the
+  record of files on another's disk. The organization's settings and
+  image allow-list are read by any sandbox and changed only by the
+  system sandbox. A method that is not listed is refused, and a test
+  fails when a repository gains one nobody has decided how to scope.
+- **Nothing else is reachable**: nothing about people, chats, agents,
+  grants, keys, other sandboxes or the stored setup.
+- A refusal says the same thing whether the row is someone else's or
+  does not exist, and the orchestrator logs it.
+
+Two calls reach across subjects by design and answer only a number: the
+crawls' housekeeping, which marks abandoned crawls failed and removes
+expired ones.
 
 ## Services inside the sandbox
 
@@ -385,13 +417,6 @@ and memory-mode suspend. Expect to adjust those on first contact.
 
 ## What is not done yet
 
-- **A sandbox's store calls are not scoped to its own scope.** The
-  allow-list is by repository, as the database role was by table: a
-  sandbox's worker (root in the sandbox, which no caller's command can
-  become) could ask for another scope's file metadata or sealed
-  workspace secrets — not the bytes, which are on that scope's own disk,
-  and not their values, which are sealed. Scoping each call to the
-  calling sandbox's own subjects is the next tightening.
 - **The sandbox's own key is still in its environment.** It has to
   start with something. Whoever reads a sandbox's environment at the
   platform can ask the orchestrator for that sandbox's sealed secrets

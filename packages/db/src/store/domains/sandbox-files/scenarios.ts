@@ -175,4 +175,15 @@ export const sandboxFileScenarios: Scenario<DataStore>[] = [
       ];
     },
   },
+  {
+    method: 'sandboxFiles.subjectsOf',
+    name: 'the distinct subjects of the rows named, in order; an id with no row counts for nothing',
+    fixture,
+    run: async (store) => [
+      await store.sandboxFiles.subjectsOf([id(5), id(1), id(2), id(99)]),
+      await store.sandboxFiles.subjectsOf([id(1)]),
+      await store.sandboxFiles.subjectsOf([id(99)]),
+      await store.sandboxFiles.subjectsOf([]),
+    ],
+  },
 ];

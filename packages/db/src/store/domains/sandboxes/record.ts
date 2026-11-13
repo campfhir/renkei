@@ -34,5 +34,6 @@ export function sandboxRecordOf(row: Selectable<Sandboxes>): SandboxRecord {
     lastActiveAt: row.last_active_at,
     stateChangedAt: row.state_changed_at,
     verifiedAt: row.verified_at,
+    subjects: [...row.subjects],
   };
 }

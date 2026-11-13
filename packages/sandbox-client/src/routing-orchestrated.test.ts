@@ -109,6 +109,28 @@ describe('with an orchestrator', () => {
     expect(asked.map(keyOf)).toEqual(['ann', 'agent:a1', 'code-project:p1']);
   });
 
+  it('the orchestrator is told whom the call is for, so the sandbox’s own data calls can be held to them', async () => {
+    await sandboxEndpointFor('code-project:p1', T0, 'ann');
+    expect(asked[0]?.body).toEqual({ key: 'code-project:p1', subject: 'ann' });
+    // Another member in the same project is asked for separately: each is named once.
+    await sandboxEndpointFor('code-project:p1', T0, 'bob');
+    await sandboxEndpointFor('code-project:p1', T0 + 1_000, 'ann');
+    expect(asked.map((request) => request.body)).toEqual([
+      { key: 'code-project:p1', subject: 'ann' },
+      { key: 'code-project:p1', subject: 'bob' },
+    ]);
+  });
+
+  it('a call that did not connect forgets the scope’s sandbox whoever it was asked for', async () => {
+    await sandboxEndpointFor('code-project:p1', T0, 'ann');
+    await sandboxEndpointFor('code-project:p1', T0, 'bob');
+    forgetSandboxEndpoint('code-project:p1');
+    await sandboxEndpointFor('code-project:p1', T0 + 1_000, 'ann');
+    await sandboxEndpointFor('code-project:p1', T0 + 1_000, 'bob');
+    expect(asked).toHaveLength(4);
+    expect(asked[2]?.body).toEqual({ key: 'code-project:p1', subject: 'ann', verify: true });
+  });
+
   it('a call made for no caller goes to the system sandbox', async () => {
     expect((await sandboxEndpointFor(null, T0))?.url).toBe('http://system.sandbox:8092');
   });

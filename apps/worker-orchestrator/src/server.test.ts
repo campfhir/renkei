@@ -270,6 +270,57 @@ describe('what a sandbox itself may ask of the orchestrator', () => {
     expect(await running.data.sandboxFiles.list('ann', '')).toHaveLength(1);
   });
 
+  it('is only the rows of the people it serves: another person’s are refused, by subject and by id', async () => {
+    const annStore = createRemoteDataStore(
+      createHttpStoreTransport({ url: running.base, sandboxId: ann.sandboxId, sandboxKey: ann.key })
+    );
+    const bobStore = createRemoteDataStore(
+      createHttpStoreTransport({ url: running.base, sandboxId: bob.sandboxId, sandboxKey: bob.key })
+    );
+    const file = (n: number, subject: string) => ({
+      id: `00000000-0000-4000-8000-00000000000${n}`,
+      subject,
+      scope: '',
+      filename: `f${n}`,
+      contentType: 'text/plain',
+      sizeBytes: 1,
+      storageKey: `k${n}`,
+      source: 'test',
+      batchId: null,
+      expiresAt: new Date(Date.UTC(2025, 0, 1)),
+    });
+    await bobStore.sandboxFiles.insert(file(2, 'bob'));
+    const outside = /scope this sandbox does not serve/;
+    await expect(annStore.sandboxFiles.list('bob', '')).rejects.toThrow(outside);
+    await expect(annStore.sandboxFiles.insert(file(3, 'bob'))).rejects.toThrow(outside);
+    await expect(
+      annStore.sandboxFiles.deleteById('00000000-0000-4000-8000-000000000002')
+    ).rejects.toThrow(outside);
+    // Its sweep of what has expired sees none of bob's.
+    expect(await annStore.sandboxFiles.listExpired(new Date(), 100)).toEqual([]);
+    expect(await bobStore.sandboxFiles.listExpired(new Date(), 100)).toHaveLength(1);
+    expect(await running.data.sandboxFiles.list('bob', '')).toHaveLength(1);
+  });
+
+  it('serves, in a project’s sandbox, each member a caller named — and no member it was not asked to', async () => {
+    const project = await record(
+      await running.post('/v1/ensure', { key: 'code-project:p1', subject: 'ann' })
+    );
+    const store = createRemoteDataStore(
+      createHttpStoreTransport({
+        url: running.base,
+        sandboxId: String(project.sandboxId),
+        sandboxKey: String(project.key),
+      })
+    );
+    expect(await store.sandboxFiles.list('ann', '')).toEqual([]);
+    expect(await store.sandboxWorkspaces.list('code-project:p1')).toEqual([]);
+    await expect(store.sandboxFiles.list('bob', '')).rejects.toThrow(/does not serve/);
+    // Once the web app, having checked bob may work in the project, asks on his behalf:
+    await running.post('/v1/ensure', { key: 'code-project:p1', subject: 'bob' });
+    expect(await store.sandboxFiles.list('bob', '')).toEqual([]);
+  });
+
   it('is refused everything else in the store: people, chats, other sandboxes, the stored setup', async () => {
     const store = createRemoteDataStore(
       createHttpStoreTransport({ url: running.base, sandboxId: ann.sandboxId, sandboxKey: ann.key })
