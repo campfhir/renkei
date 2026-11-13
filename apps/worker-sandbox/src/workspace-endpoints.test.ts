@@ -1095,3 +1095,182 @@ describe('notebook kernels over the wire', () => {
     expect(kernels.count()).toBe(0);
   });
 });
+
+describe('notebook kernels across replicas', () => {
+  // Two replicas behind one address, as `scale: N` gives: each its own
+  // kernels in memory, one shared data directory between them.
+  const { spawn: spawnChild } =
+    jest.requireActual<typeof import('node:child_process')>('node:child_process');
+  const { KernelSessions, kernelKey } =
+    jest.requireActual<typeof import('./kernel-sessions')>('./kernel-sessions');
+  const { KernelRouting } =
+    jest.requireActual<typeof import('./kernel-routing')>('./kernel-routing');
+  const { mkdtempSync, rmSync } = jest.requireActual<typeof import('node:fs')>('node:fs');
+  const { tmpdir } = jest.requireActual<typeof import('node:os')>('node:os');
+  // A host that remembers: each cell's answer is every cell it has run.
+  const HOST = `
+    console.log(JSON.stringify({ ready: true, engine: 'builtin', python: '3.11.2' }));
+    const seen = [];
+    require('readline').createInterface({ input: process.stdin }).on('line', (line) => {
+      const { id, code } = JSON.parse(line);
+      seen.push(code);
+      console.log(JSON.stringify({ id, execution_count: seen.length, ok: true, outputs: [
+        { output_type: 'stream', name: 'stdout', text: seen.join(',') },
+      ] }));
+    });`;
+  type Replica = {
+    server: Server;
+    base: string;
+    kernels: InstanceType<typeof KernelSessions>;
+    routing: InstanceType<typeof KernelRouting>;
+  };
+  let shared: string;
+  let replicas: Replica[] = [];
+
+  async function replica(name: string): Promise<Replica> {
+    let address = '';
+    const routing = new KernelRouting(shared, name, () => address);
+    const kernels = new KernelSessions({
+      spawnKernel: () =>
+        spawnChild(process.execPath, ['-e', HOST], {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          detached: true,
+        }),
+      onEnded: (key) => void routing.release(key),
+    });
+    const server = createSandboxServer({
+      apiKeys: [API_KEY],
+      workspaces: true,
+      kernels,
+      kernelRouting: routing,
+      orgFeatures: async () => ALL_ORG_FEATURES,
+    });
+    address = await listen(server);
+    const made = { server, base: address, kernels, routing };
+    replicas.push(made);
+    return made;
+  }
+
+  async function down(target: Replica): Promise<void> {
+    target.kernels.closeAll();
+    target.server.closeAllConnections();
+    await new Promise((resolve) => target.server.close(resolve));
+    replicas = replicas.filter((entry) => entry !== target);
+  }
+
+  beforeEach(() => {
+    shared = mkdtempSync(join(tmpdir(), 'kernel-routing-'));
+    envStore.listSealedEnv.mockResolvedValue([]);
+  });
+  afterEach(async () => {
+    for (const entry of [...replicas]) await down(entry);
+    rmSync(shared, { recursive: true, force: true });
+  });
+
+  const NOTEBOOK = { ...TARGET, id: 'ws-1', path: 'notebooks/revenue.ipynb' };
+  /** The kernel's exit is noticed a beat after it is asked to end: wait for the claim to go. */
+  async function released(of: Replica): Promise<void> {
+    const key = kernelKey({ owner: TARGET, workspaceId: 'ws-1', path: NOTEBOOK.path });
+    for (let tries = 0; tries < 100; tries += 1) {
+      if ((await of.routing.holder(key)) === null) return;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error('the claim was never released');
+  }
+  const cell = (to: Replica, code: string) =>
+    post(to.base, 'workspaces/kernel/execute', { ...NOTEBOOK, code });
+
+  it('a cell that lands on another replica runs in the kernel the first one started', async () => {
+    const a = await replica('a');
+    const b = await replica('b');
+    const c = await replica('c');
+    const first = await cell(a, 'import sys');
+    expect(first.json).toMatchObject({ started: true, executionCount: 1 });
+    // The next cells land elsewhere: same kernel, earlier cells still there.
+    const second = await cell(b, 'sys.executable');
+    expect(second.status).toBe(200);
+    expect(second.json).toMatchObject({ started: false, executionCount: 2 });
+    expect(second.json.outputs[0].text).toBe('import sys,sys.executable');
+    const third = await cell(c, 'more');
+    expect(third.json).toMatchObject({ started: false, executionCount: 3 });
+    // One kernel in all, on the replica that started it.
+    expect([a.kernels.count(), b.kernels.count(), c.kernels.count()]).toEqual([1, 0, 0]);
+  });
+
+  it('status, interrupt and close reach the kernel from any replica', async () => {
+    const a = await replica('a');
+    const b = await replica('b');
+    await cell(a, 'x = 1');
+    expect((await post(b.base, 'workspaces/kernel/status', NOTEBOOK)).json).toMatchObject({
+      running: true,
+      kernel: { engine: 'builtin' },
+    });
+    expect((await post(b.base, 'workspaces/kernel/interrupt', NOTEBOOK)).json).toEqual({
+      interrupted: true,
+    });
+    expect((await post(b.base, 'workspaces/kernel/close', NOTEBOOK)).json).toEqual({
+      closed: true,
+    });
+    expect(a.kernels.count()).toBe(0);
+    // Closed everywhere: no replica thinks there is one, and the claim is gone.
+    expect((await post(b.base, 'workspaces/kernel/status', NOTEBOOK)).json.running).toBe(false);
+    await released(a);
+  });
+
+  it('a notebook with no kernel anywhere has none, whichever replica is asked', async () => {
+    const a = await replica('a');
+    const b = await replica('b');
+    expect((await post(a.base, 'workspaces/kernel/status', NOTEBOOK)).json.running).toBe(false);
+    expect((await post(b.base, 'workspaces/kernel/interrupt', NOTEBOOK)).json).toEqual({
+      interrupted: false,
+    });
+  });
+
+  it('two replicas asked at once for a notebook’s first cell settle on one kernel', async () => {
+    const a = await replica('a');
+    const b = await replica('b');
+    const [one, two] = await Promise.all([cell(a, 'first'), cell(b, 'second')]);
+    expect([one.status, two.status]).toEqual([200, 200]);
+    expect(a.kernels.count() + b.kernels.count()).toBe(1);
+    expect([one.json.executionCount, two.json.executionCount].sort()).toEqual([1, 2]);
+  });
+
+  it('a replica that is gone takes its kernels with it: the next cell starts one where it lands', async () => {
+    const a = await replica('a');
+    const b = await replica('b');
+    const c = await replica('c');
+    await cell(a, 'x = 1');
+    await down(a);
+    const next = await cell(b, 'x');
+    expect(next.status).toBe(200);
+    expect(next.json).toMatchObject({ started: true, executionCount: 1, previous: null });
+    // And from now on that one is where the others send its cells.
+    expect((await cell(c, 'y')).json).toMatchObject({ started: false, executionCount: 2 });
+    expect([b.kernels.count(), c.kernels.count()]).toEqual([1, 0]);
+  });
+
+  it('a kernel that died is started again on the replica its claim names, not a third', async () => {
+    const a = await replica('a');
+    const b = await replica('b');
+    await cell(a, 'x = 1');
+    a.kernels.close({ owner: TARGET, workspaceId: 'ws-1', path: NOTEBOOK.path });
+    await released(a);
+    // The claim went with the kernel: whoever is asked next starts it.
+    const next = await cell(b, 'x');
+    expect(next.json).toMatchObject({ started: true, executionCount: 1 });
+    expect([a.kernels.count(), b.kernels.count()]).toEqual([0, 1]);
+  });
+
+  it('each notebook is routed on its own', async () => {
+    const a = await replica('a');
+    const b = await replica('b');
+    await cell(a, 'x = 1');
+    const other = await post(b.base, 'workspaces/kernel/execute', {
+      ...NOTEBOOK,
+      path: 'notebooks/other.ipynb',
+      code: 'y',
+    });
+    expect(other.json).toMatchObject({ started: true, executionCount: 1 });
+    expect([a.kernels.count(), b.kernels.count()]).toEqual([1, 1]);
+  });
+});

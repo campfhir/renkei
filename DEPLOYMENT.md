@@ -771,15 +771,21 @@ and the worker says so at boot. Each replica's sweep removes
 only bytes it can see and leaves the rest a day past expiry, so replicas
 on separate disks (several hosts) never delete each other's rows early.
 
-One thing does live in a replica's memory: the processes it keeps running
-for the code pane — a notebook's kernel and an editor's language servers.
-A call that lands on another replica finds none and starts its own, so
-with more than one replica behind one address a notebook loses what its
-earlier cells defined from one run to the next (the pane says the kernel
-"is not on the sandbox worker that answered" each time). Run the sandbox as a
-single replica where notebooks are used, or route each caller to one
-replica consistently. A restart or redeploy of the worker ends its
-kernels in the same way, once.
+A notebook's kernel is a process in one replica's memory, and Compose's
+DNS sends each call to whichever replica it likes, so the replicas route
+kernel calls among themselves: the one that starts a kernel records it
+under `/data/kernels/` (one small file, the replica's address on the
+replicas' network), and a replica asked about a kernel it does not hold
+passes the call to the one that does. This needs the shared `/data`
+above and the replicas able to reach each other on the worker's port,
+which replicas of one Compose service are; a replica advertises its
+first non-loopback IPv4, or `SANDBOX_WORKER_ADVERTISE_URL` when that is
+not the address its peers should use. A replica that restarts or is
+scaled away takes its kernels with it: the next cell starts a new one
+where it lands, and the pane says so. An editor's language servers are
+still per replica and are not routed: with more than one replica the
+editor's language intelligence comes and goes with which replica a call
+reaches.
 
 **Horizontal scale:** either process may run as N instances. Claims take
 row locks (`FOR UPDATE SKIP LOCKED`), and messages sharing an ordering key

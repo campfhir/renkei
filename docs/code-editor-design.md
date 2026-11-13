@@ -351,6 +351,12 @@ disk would silently leave them out.
      run that finds no kernel starts one and says so, which is the one
      signal the page needs to tell the person state was lost (a worker
      restart, the idle reaper).
+   - The sandbox runs as several replicas with no session affinity, and
+     a kernel is one replica's process. The first deployment lost the
+     kernel on nearly every run. So replicas claim kernels on the shared
+     data volume and relay kernel calls to the claimant
+     (`kernel-routing.ts`); a claim is an exclusive create made before
+     the kernel starts, so a race for a first cell settles on one.
    - A cell's run is one request and one answer, not a stream: simple,
      and it survives a reload badly only in that the answer is lost, not
      the kernel's state.

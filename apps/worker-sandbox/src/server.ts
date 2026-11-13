@@ -83,6 +83,7 @@ import { orgSandboxFeatures, type OrgFeaturesLookup, type SandboxCapabilities } 
 import type { NetworkIsolation } from './workspaces';
 import type { LspSessions } from './lsp-sessions';
 import type { KernelSessions } from './kernel-sessions';
+import { KERNEL_RELAYED_HEADER, type KernelRouting } from './kernel-routing';
 import { logger } from './logger';
 import { logErrorResponse, withRequestScope } from './request-log';
 import { isRecord } from '@renkei/guards';
@@ -152,6 +153,8 @@ export interface SandboxServerDeps {
   lsp?: LspSessions;
   /** The notebook kernels behind `workspaces/kernel/*`; made here when not given. */
   kernels?: KernelSessions;
+  /** Which replica holds which kernel (kernel-routing.ts); none, and every kernel call is answered here. */
+  kernelRouting?: KernelRouting;
   /**
    * The runner that copies a caller's files into a throwaway directory and
    * runs their Python there as their own uid (scripts.ts), or null when
@@ -357,6 +360,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     ...(deps.services ? { serviceEnv: (target) => deps.services!.environmentFor(target) } : {}),
     lsp: deps.lsp,
     kernels: deps.kernels,
+    kernelRouting: deps.kernelRouting,
     previews: previewManager,
   });
   // Previews: a checkout's own server, under the workspaces switch (no
@@ -1072,7 +1076,12 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     const dispatch = async (): Promise<void> => {
       if (browserOp !== null) return handleBrowser(browserOp, body, response);
       if (secretsOp !== null) return handleSecrets(secretsOp, body, response);
-      if (workspacesOp !== null) return workspaces.handleWorkspaces(workspacesOp, body, response);
+      if (workspacesOp !== null) {
+        return workspaces.handleWorkspaces(workspacesOp, body, response, {
+          authorization: request.headers.authorization ?? '',
+          relayed: request.headers[KERNEL_RELAYED_HEADER] === '1',
+        });
+      }
       if (envOp !== null) return workspaces.handleEnv(envOp, body, response);
       if (servicesOp !== null) return services.handleServices(servicesOp, body, response);
       if (previewsOp !== null) return previews.handlePreviews(previewsOp, body, response);

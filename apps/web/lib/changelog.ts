@@ -49,10 +49,10 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-13',
     entries: [
       {
-        kind: 'changed',
-        title: 'Notebooks offer the way back when the kernel was lost',
+        kind: 'fixed',
+        title: 'Notebook cells keep what earlier cells defined',
         detail:
-          "When a notebook cell runs and its kernel had to be started again, so earlier cells' results are gone, the notice now says why (unused for half an hour, the sandbox restarted, or the run reached a different sandbox worker) and has one press that runs the cells above and then that cell.",
+          "Running a notebook's cells one after another could fail with a name not defined, because each run could reach a different sandbox worker with its own kernel. Runs now always reach the notebook's own kernel. When a kernel really is gone (unused for half an hour, or the sandbox restarted), the notice says why and has one press that runs the cells above and then that cell.",
       },
       {
         kind: 'added',

@@ -562,7 +562,9 @@ services:
   # layer, and a clone on one replica is "gone" on the next (Docker's DNS
   # has no session affinity). Browser sessions and unlocked secret keys
   # are live process state and stay per replica; run one replica if the
-  # sandbox_browser_* tools matter. DEPLOYMENT.md, "More than one sandbox
+  # sandbox_browser_* tools matter. Notebook kernels are per replica too,
+  # but the replicas pass kernel calls to the one that holds the kernel
+  # (a record under /data/kernels), so those work at any scale. DEPLOYMENT.md, "More than one sandbox
   # replica".
   worker-sandbox:
     image: scotteremiaroden/renkei-sandbox:latest

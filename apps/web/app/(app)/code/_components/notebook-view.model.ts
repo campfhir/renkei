@@ -140,7 +140,8 @@ function ago(ms: number): string {
  * Why a run found no kernel where there had been one, as far as the
  * sandbox can say: it reaped it, it ended, the worker itself restarted
  * since — or the worker that answered never had it, which on every run
- * means there is more than one worker and each keeps its own kernels.
+ * means the replicas are not routing kernel calls among themselves
+ * (apps/worker-sandbox/src/kernel-routing.ts).
  */
 export function lostKernelText(run: Pick<CellRun, 'previous' | 'workerUptimeMs'>): string {
   if (run.previous === 'idle') {
@@ -152,7 +153,7 @@ export function lostKernelText(run: Pick<CellRun, 'previous' | 'workerUptimeMs'>
   if (run.workerUptimeMs < 60 * 60_000) {
     return `The sandbox restarted ${ago(run.workerUptimeMs)} ago, which ended the kernel, and a new one was started. ${GONE}`;
   }
-  return `The kernel that ran the earlier cells is not on the sandbox worker that answered (up ${ago(run.workerUptimeMs)}), so a new one was started. ${GONE} If this happens on every run, the sandbox is running more than one replica, and each keeps its own kernels.`;
+  return `The kernel that ran the earlier cells is not on the sandbox worker that answered (up ${ago(run.workerUptimeMs)}), so a new one was started. ${GONE} If this happens on every run, the sandbox’s replicas are not passing kernel calls to each other: they need the shared data volume and to reach one another.`;
 }
 
 /** The error a cell's outputs end in, as "NameError: name 'x' is not defined". */

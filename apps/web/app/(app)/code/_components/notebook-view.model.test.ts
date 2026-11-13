@@ -287,7 +287,7 @@ describe('a kernel that was lost', () => {
   it('offers the way back: the cells above the one that found it gone, then that one', () => {
     const state = lostAtFour();
     expect(state.notice?.text).toBe(
-      "The cell raised NameError: name 'sys' is not defined. The kernel that ran the earlier cells is not on the sandbox worker that answered (up 5 hours), so a new one was started. What earlier cells defined is gone. If this happens on every run, the sandbox is running more than one replica, and each keeps its own kernels."
+      "The cell raised NameError: name 'sys' is not defined. The kernel that ran the earlier cells is not on the sandbox worker that answered (up 5 hours), so a new one was started. What earlier cells defined is gone. If this happens on every run, the sandbox’s replicas are not passing kernel calls to each other: they need the shared data volume and to reach one another."
     );
     // Not the empty cell, not the cells below.
     expect(cellsToRecover(state, CELLS)).toEqual([1, 3, 4]);
@@ -321,7 +321,7 @@ describe('a kernel that was lost', () => {
     );
     // No memory of it, and up for days: it was never on this worker.
     expect(lostKernelText({ previous: null, workerUptimeMs: 72 * hour })).toBe(
-      'The kernel that ran the earlier cells is not on the sandbox worker that answered (up 3 days), so a new one was started. What earlier cells defined is gone. If this happens on every run, the sandbox is running more than one replica, and each keeps its own kernels.'
+      'The kernel that ran the earlier cells is not on the sandbox worker that answered (up 3 days), so a new one was started. What earlier cells defined is gone. If this happens on every run, the sandbox’s replicas are not passing kernel calls to each other: they need the shared data volume and to reach one another.'
     );
   });
 

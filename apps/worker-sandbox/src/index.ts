@@ -74,7 +74,10 @@
  */
 
 import { checkDataStore, closeDataStore } from '@renkei/db';
+import { hostname } from 'node:os';
+import { join } from 'node:path';
 import { ensureDataRoot, getDataRoot } from './disk';
+import { KernelRouting, advertisedAddress } from './kernel-routing';
 import { createBrowserStateStore } from './browser-state';
 import { createSecretKeyStore } from './secret-key-store';
 import {
@@ -518,6 +521,13 @@ async function main(): Promise<void> {
     scriptsNetworkIsolation: isolation.mode,
     uidIsolation,
     capabilityProblems: problems,
+    // Replicas share /data: each writes down the notebook kernels it holds
+    // there, so a kernel call that lands on another replica is passed on.
+    kernelRouting: new KernelRouting(
+      join(getDataRoot(), 'kernels'),
+      `${hostname()}-${process.pid}-${Date.now()}`,
+      () => advertisedAddress(port)
+    ),
   });
   server.listen(port, '0.0.0.0', () => {
     logger.info(
