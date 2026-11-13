@@ -160,7 +160,6 @@ async function main(): Promise<void> {
     apiKeys,
     orchestrator,
     store,
-    masterKey,
     providerName: provider.name,
   });
   server.listen(port, '0.0.0.0', () => {

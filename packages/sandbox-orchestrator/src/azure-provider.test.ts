@@ -37,7 +37,10 @@ function group() {
           id: `az-${made}`,
           state: 'Running',
           labels: body.labels,
-          ports: [{ port: 8092, url: `https://az-${made}-8092.example.azure/` }],
+          ports: body.ports.map((port) => ({
+            ...port,
+            url: `https://az-${made}-${port.port}.example.azure/`,
+          })),
           createdAt: '2026-01-01T00:00:00Z',
         };
         sandboxes.set(sandbox.id, sandbox);
@@ -47,6 +50,18 @@ function group() {
     delete: async (id) => {
       need(id);
       sandboxes.delete(id);
+    },
+    updatePorts: async (id, ports) => {
+      const sandbox = need(id);
+      sandbox.ports = ports.map((port) => ({
+        ...port,
+        url: `https://${id}-${port.port}.example.azure/`,
+      }));
+      return sandbox.ports;
+    },
+    removePort: async (id, port) => {
+      const sandbox = need(id);
+      sandbox.ports = (sandbox.ports ?? []).filter((open) => open.port !== port);
     },
     beginStop: (id) => ({
       pollUntilDone: async () => {
@@ -63,6 +78,7 @@ function group() {
 }
 
 const base = {
+  portAuth: 'anonymous' as const,
   diskImage: 'renkei-sandbox',
   cpu: '2000m',
   memory: '4096Mi',
@@ -165,5 +181,85 @@ describe('the Azure provider', () => {
     expect(azureState('Deleting')).toBeNull();
     expect(azureState('Disabled')).toBe('failed');
     expect(azureState(undefined)).toBe('failed');
+  });
+
+  describe('with Entra on its ports', () => {
+    const entra = {
+      ...base,
+      portAuth: 'entra' as const,
+      entraAllowed: ['orchestrator@contoso.com'],
+    };
+
+    it('guards the worker’s port with Entra, open to the service identity alone', async () => {
+      const { client, created } = group();
+      const provider = new AzureSandboxProvider({
+        ...entra,
+        client,
+        ingressToken: async () => ({ token: 't', expiresOnTimestamp: Date.now() + 3_600_000 }),
+      });
+      await provider.create(spec);
+      expect(created[0]?.ports[0]?.auth).toEqual({
+        entraId: { enabled: true, emails: ['orchestrator@contoso.com'] },
+      });
+    });
+
+    it('hands callers an ingress token as itself, fetched once and again only when it is about to expire', async () => {
+      const { client } = group();
+      let asked = 0;
+      let expires = Date.now() + 3_600_000;
+      const provider = new AzureSandboxProvider({
+        ...entra,
+        client,
+        ingressToken: async () => ({ token: `token-${(asked += 1)}`, expiresOnTimestamp: expires }),
+      });
+      expect(await provider.callerHeaders()).toEqual({ authorization: 'Bearer token-1' });
+      expect(await provider.callerHeaders()).toEqual({ authorization: 'Bearer token-1' });
+      expires = Date.now() + 60_000;
+      // The remembered one is still good for an hour.
+      expect(await provider.callerHeaders()).toEqual({ authorization: 'Bearer token-1' });
+      expect(asked).toBe(1);
+    });
+
+    it('replaces a token that is within five minutes of expiring', async () => {
+      const { client } = group();
+      let asked = 0;
+      const provider = new AzureSandboxProvider({
+        ...entra,
+        client,
+        ingressToken: async () => ({
+          token: `token-${(asked += 1)}`,
+          expiresOnTimestamp: Date.now() + 60_000,
+        }),
+      });
+      await provider.callerHeaders();
+      expect(await provider.callerHeaders()).toEqual({ authorization: 'Bearer token-2' });
+    });
+
+    it('opens a preview port to the named people, leaving the worker’s port as it was', async () => {
+      const { client, sandboxes } = group();
+      const provider = new AzureSandboxProvider({
+        ...entra,
+        client,
+        ingressToken: async () => ({ token: 't', expiresOnTimestamp: Date.now() + 3_600_000 }),
+      });
+      await provider.create(spec);
+      const opened = await provider.exposePort('az-1', 5173, {
+        emails: ['ada@contoso.com', 'bob@contoso.com'],
+      });
+      expect(opened).toEqual({ url: 'https://az-1-5173.example.azure' });
+      const ports = sandboxes.get('az-1')?.ports ?? [];
+      expect(ports.map((port) => [port.port, port.auth?.entraId?.emails])).toEqual([
+        [8092, ['orchestrator@contoso.com']],
+        [5173, ['ada@contoso.com', 'bob@contoso.com']],
+      ]);
+
+      await provider.unexposePort('az-1', 5173);
+      expect((sandboxes.get('az-1')?.ports ?? []).map((port) => port.port)).toEqual([8092]);
+    });
+
+    it('needs no ingress token when the worker’s port is left to its own key', async () => {
+      const { client } = group();
+      expect(await new AzureSandboxProvider({ ...base, client }).callerHeaders()).toEqual({});
+    });
   });
 });

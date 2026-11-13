@@ -30,6 +30,14 @@ export class FakeSandboxProvider implements SandboxProvider {
   failNext: Partial<
     Record<'create' | 'suspend' | 'resume' | 'destroy' | 'inspect' | 'list', string>
   > = {};
+  /** Tests assign these to stand in a provider with an ingress of its own, or a way to open ports. */
+  callerHeaders?: () => Promise<Record<string, string>>;
+  exposePort?: (
+    providerId: string,
+    port: number,
+    access: { emails: string[] }
+  ) => Promise<{ url: string }>;
+  unexposePort?: (providerId: string, port: number) => Promise<void>;
   private made = 0;
 
   constructor(private readonly now: () => number = Date.now) {}

@@ -26,12 +26,28 @@
  *    auto-delete is OFF: a sandbox is removed only by the orchestrator,
  *    once what it holds is archived.
  *
- * The worker's port is exposed with the platform's HTTPS ingress and
- * anonymous access: the worker's own per-sandbox bearer key (keys.ts) is
- * what authenticates a call, as it does on Docker. A deployment that
- * wants the port unreachable from the internet restricts it by source
- * address (`allowedCidrs`) or puts a private endpoint in front of the
- * group.
+ * Who may call a sandbox is Microsoft Entra's to say, enforced by the
+ * platform's ingress outside the sandbox (`portAuth: 'entra'`, the
+ * default):
+ *
+ *  - The WORKER's port takes a bearer token for the ingress
+ *    (`https://auth.adcproxy.io`) from the identities allowed on it
+ *    (`entraAllowed`: the orchestrator's and the web app's service
+ *    identity). The orchestrator gets that token as itself and hands it
+ *    to callers with the sandbox's address (`callerHeaders`). The ingress
+ *    strips `authorization` before the request reaches the sandbox, so
+ *    the worker's own per-sandbox key — still checked, as a second lock
+ *    — rides `x-sandbox-key`.
+ *  - A PREVIEW port (`exposePort`) is opened to named people, who sign
+ *    in to it in their own browsers as themselves.
+ *
+ * `portAuth: 'anonymous'` leaves the worker's port to the per-sandbox key
+ * alone, optionally narrowed by source address (`allowedCidrs`).
+ *
+ * Preview-SDK limits as of 1.0.0-beta.1, to check on first contact: the
+ * SDK sets allowed EMAILS (UPNs) only — a port's tenant id and allowed
+ * object ids are set in the portal — and Microsoft's documentation
+ * describes allowing users, not service principals.
  */
 
 import {
@@ -47,12 +63,35 @@ export const AZURE_MANAGED_LABEL = 'renkei-orchestrator';
 const LABEL_ID = 'renkei-sandbox-id';
 const LABEL_KIND = 'renkei-kind';
 
+/** A port's guard, as the SDK reads and writes it. */
+export interface AzurePortAuth {
+  anonymous?: boolean;
+  entraId?: { enabled: boolean; emails: string[] };
+}
+
+/** A port as the SDK answers it; everything but `url` is sent back when the ports are set. */
+export interface AzurePort {
+  port: number;
+  url?: string;
+  auth?: AzurePortAuth;
+  protocol?: 'Http' | 'Http2';
+  ipAccessControl?: {
+    defaultAction: 'Allow' | 'Deny';
+    rules: Array<{
+      name: string;
+      action: 'Allow' | 'Deny';
+      priority: number;
+      sourceCidrs: string[];
+    }>;
+  };
+}
+
 /** The sandbox as the SDK answers it — only what is read here. */
 export interface AzureSandbox {
   id: string;
   state?: string;
   labels?: Record<string, string>;
-  ports?: Array<{ port: number; url?: string }>;
+  ports?: AzurePort[];
   createdAt?: string;
 }
 
@@ -68,7 +107,7 @@ export interface AzureCreateRequest {
   environment: Record<string, string>;
   ports: Array<{
     port: number;
-    auth: { anonymous: boolean };
+    auth: { anonymous: boolean } | { entraId: { enabled: boolean; emails: string[] } };
     protocol: 'Http';
     ipAccessControl?: {
       defaultAction: 'Deny';
@@ -88,6 +127,9 @@ export interface AzureSandboxClient {
   list(options?: { labels?: Record<string, string> }): AsyncIterable<AzureSandbox>;
   beginCreate(body: AzureCreateRequest): Poller<AzureSandbox>;
   delete(sandboxId: string): Promise<void>;
+  /** Set the sandbox's ports to exactly these (the SDK's bulk update replaces them all). */
+  updatePorts(sandboxId: string, ports: AzurePort[]): Promise<AzurePort[]>;
+  removePort(sandboxId: string, port: number): Promise<void>;
   beginStop(sandboxId: string): Poller<unknown>;
   beginResume(sandboxId: string): Poller<unknown>;
 }
@@ -104,7 +146,16 @@ export interface AzureProviderOptions {
   suspendMode: 'Memory' | 'Disk';
   /** The group's VNet connection sandboxes use to reach private resources; none when unset. */
   vnetConnection?: string | null;
-  /** Source ranges allowed to call the worker's port; anyone (with the bearer key) when empty. */
+  /** How the worker's port is guarded by the platform; Entra unless told otherwise. */
+  portAuth?: 'entra' | 'anonymous';
+  /** With Entra: the identities (emails or UPNs) allowed to call the worker's port. */
+  entraAllowed?: string[];
+  /**
+   * With Entra: a token for the platform's ingress, as this process's
+   * own identity. Remembered until shortly before it expires.
+   */
+  ingressToken?: () => Promise<{ token: string; expiresOnTimestamp: number }>;
+  /** Source ranges allowed to call the worker's port; anyone otherwise let in when empty. */
   allowedCidrs?: string[];
   /** Names this deployment among others sharing a sandbox group. */
   deployment: string;
@@ -146,10 +197,70 @@ function wrap(error: unknown): ProviderError {
   return new ProviderError(error instanceof Error ? error.message : String(error), statusOf(error));
 }
 
+/** The audience of the token the platform's ingress takes on a port guarded by Entra. */
+export const AZURE_INGRESS_SCOPE = 'https://auth.adcproxy.io/.default';
+/** A token this close to expiring is replaced rather than handed out. */
+const TOKEN_MARGIN_MS = 5 * 60_000;
+
 export class AzureSandboxProvider implements SandboxProvider {
   readonly name = 'azure';
+  private token: { token: string; expiresOnTimestamp: number } | null = null;
 
-  constructor(private readonly options: AzureProviderOptions) {}
+  constructor(private readonly options: AzureProviderOptions) {
+    if (this.entra && !options.ingressToken) {
+      throw new Error('Entra on the worker port needs a way to get an ingress token');
+    }
+  }
+
+  private get entra(): boolean {
+    return (this.options.portAuth ?? 'entra') === 'entra';
+  }
+
+  async callerHeaders(): Promise<Record<string, string>> {
+    if (!this.entra || !this.options.ingressToken) return {};
+    if (!this.token || this.token.expiresOnTimestamp - Date.now() < TOKEN_MARGIN_MS) {
+      try {
+        this.token = await this.options.ingressToken();
+      } catch (error) {
+        throw wrap(error);
+      }
+    }
+    return { authorization: `Bearer ${this.token.token}` };
+  }
+
+  async exposePort(
+    providerId: string,
+    port: number,
+    access: { emails: string[] }
+  ): Promise<{ url: string }> {
+    try {
+      // One call can name one person; several need the bulk update, which
+      // replaces every port — so the ports there are (the worker's among
+      // them) are sent back as they stand, with this one added.
+      const current = (await this.client.get(providerId)).ports ?? [];
+      const kept = current
+        .filter((existing) => existing.port !== port)
+        .map(({ url: _url, ...rest }) => rest);
+      const ports = await this.client.updatePorts(providerId, [
+        ...kept,
+        { port, protocol: 'Http', auth: { entraId: { enabled: true, emails: access.emails } } },
+      ]);
+      const url = ports.find((opened) => opened.port === port)?.url;
+      if (!url) throw new ProviderError('the platform opened the port without an address');
+      return { url: url.replace(/\/+$/, '') };
+    } catch (error) {
+      throw wrap(error);
+    }
+  }
+
+  async unexposePort(providerId: string, port: number): Promise<void> {
+    try {
+      await this.client.removePort(providerId, port);
+    } catch (error) {
+      if (statusOf(error) === 404) return;
+      throw wrap(error);
+    }
+  }
 
   private get client(): AzureSandboxClient {
     return this.options.client;
@@ -210,7 +321,9 @@ export class AzureSandboxProvider implements SandboxProvider {
           ports: [
             {
               port: SANDBOX_WORKER_PORT,
-              auth: { anonymous: true },
+              auth: this.entra
+                ? { entraId: { enabled: true, emails: options.entraAllowed ?? [] } }
+                : { anonymous: true },
               protocol: 'Http' as const,
               ...(cidrs.length > 0
                 ? {
@@ -307,6 +420,13 @@ export interface AzureClientConfig {
  * The real client: the SDK and the identity library, loaded only here so
  * a Docker deployment never loads either.
  */
+/** A token for the platform's ingress as this process's identity (`DefaultAzureCredential`). */
+export async function azureIngressToken(): Promise<{ token: string; expiresOnTimestamp: number }> {
+  const { DefaultAzureCredential } = await import('@azure/identity');
+  const token = await new DefaultAzureCredential().getToken(AZURE_INGRESS_SCOPE);
+  return { token: token.token, expiresOnTimestamp: token.expiresOnTimestamp };
+}
+
 export async function createAzureSandboxClient(
   config: AzureClientConfig
 ): Promise<AzureSandboxClient> {
@@ -326,6 +446,8 @@ export async function createAzureSandboxClient(
     list: (options) => sandboxes.list(options),
     beginCreate: (body) => sandboxes.beginCreate(body),
     delete: (id) => sandboxes.delete(id),
+    updatePorts: (id, ports) => group.ports.update(id, ports),
+    removePort: (id, port) => group.ports.remove(id, port),
     beginStop: (id) => sandboxes.beginStop(id),
     beginResume: (id) => sandboxes.beginResume(id),
   };

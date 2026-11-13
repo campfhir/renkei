@@ -22,12 +22,18 @@ export interface ArchiveBlobs {
   delete(key: string): Promise<void>;
 }
 
+/** Where a running sandbox's worker is, and the headers that let a call in. */
+export interface ArchiveSandbox {
+  url: string;
+  headers: Record<string, string>;
+}
+
 /** A running sandbox's worker, to pull an archive from or push one into. */
 export interface ArchiveTransfer {
   /** What the sandbox holds, as a stream; throws when the sandbox refuses. */
-  download(sandbox: { url: string; key: string }): Promise<AsyncIterable<Uint8Array>>;
+  download(sandbox: ArchiveSandbox): Promise<AsyncIterable<Uint8Array>>;
   /** Unpack an archive into the sandbox; resolves once it has. */
-  upload(sandbox: { url: string; key: string }, body: ReadableStream<Uint8Array>): Promise<void>;
+  upload(sandbox: ArchiveSandbox, body: ReadableStream<Uint8Array>): Promise<void>;
 }
 
 export interface ArchiveOptions {
@@ -63,7 +69,7 @@ export const httpArchiveTransfer: ArchiveTransfer = {
   async download(sandbox) {
     const response = await fetch(`${sandbox.url}/v1/archive`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${sandbox.key}` },
+      headers: sandbox.headers,
       signal: AbortSignal.timeout(TRANSFER_TIMEOUT_MS),
     });
     if (!response.ok || !response.body) {
@@ -74,10 +80,7 @@ export const httpArchiveTransfer: ArchiveTransfer = {
   async upload(sandbox, body) {
     const response = await fetch(`${sandbox.url}/v1/restore`, {
       method: 'POST',
-      headers: {
-        authorization: `Bearer ${sandbox.key}`,
-        'content-type': ARCHIVE_CONTENT_TYPE,
-      },
+      headers: { ...sandbox.headers, 'content-type': ARCHIVE_CONTENT_TYPE },
       body,
       // A streamed request body: sent as it is read, never buffered.
       duplex: 'half',

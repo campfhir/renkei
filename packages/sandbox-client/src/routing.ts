@@ -51,6 +51,30 @@ export interface SandboxEndpoint {
   /** The instance's base address, no trailing slash. */
   url: string;
   key: string;
+  /**
+   * What a call to this endpoint carries to be let in, when it is more
+   * than the bearer key: an orchestrated sandbox behind an ingress that
+   * wants its own token (Entra, on Azure) is called with that token as
+   * `authorization` and the sandbox's key in `x-sandbox-key`. The
+   * orchestrator answers these with the address; absent, the key is the
+   * bearer.
+   */
+  headers?: Record<string, string>;
+}
+
+/** The headers that let a call in at `endpoint`. */
+export function sandboxAuthHeaders(endpoint: SandboxEndpoint): Record<string, string> {
+  return endpoint.headers ?? { authorization: `Bearer ${endpoint.key}` };
+}
+
+/** Header values from the orchestrator's answer: strings only, nothing else kept. */
+function headersOf(value: unknown): Record<string, string> | undefined {
+  if (!isRecord(value)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [name, header] of Object.entries(value)) {
+    if (typeof header === 'string') out[name.toLowerCase()] = header;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /** An instance whose heartbeat is older than this is taken for gone. */
@@ -58,7 +82,10 @@ export const SANDBOX_INSTANCE_LIVE_MS = 45_000;
 /** How long a caller's instance is remembered in this process before it is looked up again. */
 const CACHE_MS = 10_000;
 
-const cache = new Map<string, { url: string; key?: string; until: number }>();
+const cache = new Map<
+  string,
+  { url: string; key?: string; headers?: Record<string, string>; until: number }
+>();
 /** Scopes whose last call did not connect: the orchestrator is told to check before answering. */
 const suspect = new Set<string>();
 
@@ -123,7 +150,13 @@ async function orchestratedEndpoint(
 ): Promise<SandboxEndpoint> {
   const routeKey = subject || SYSTEM_ROUTE_KEY;
   const cached = cache.get(routeKey);
-  if (cached && cached.key && cached.until > now) return { url: cached.url, key: cached.key };
+  if (cached && cached.key && cached.until > now) {
+    return {
+      url: cached.url,
+      key: cached.key,
+      ...(cached.headers ? { headers: cached.headers } : {}),
+    };
+  }
   let response: Response;
   try {
     response = await fetch(`${orchestrator.url}/v1/ensure`, {
@@ -151,9 +184,10 @@ async function orchestratedEndpoint(
   const url = isRecord(body) && typeof body.url === 'string' ? body.url.replace(/\/+$/, '') : '';
   const key = isRecord(body) && typeof body.key === 'string' ? body.key : '';
   if (!url || !key) return unavailableEndpoint(orchestrator, 'provider');
+  const headers = isRecord(body) ? headersOf(body.headers) : undefined;
   suspect.delete(routeKey);
-  cache.set(routeKey, { url, key, until: now + CACHE_MS });
-  return { url, key };
+  cache.set(routeKey, { url, key, ...(headers ? { headers } : {}), until: now + CACHE_MS });
+  return { url, key, ...(headers ? { headers } : {}) };
 }
 
 /** How long an instance's reachable address is remembered, and how long "none answered" is. */
@@ -325,7 +359,12 @@ async function runningSandboxes(orchestrator: SandboxEndpoint): Promise<SandboxE
       if (!isRecord(entry) || typeof entry.url !== 'string' || typeof entry.key !== 'string') {
         continue;
       }
-      out.push({ url: entry.url.replace(/\/+$/, ''), key: entry.key });
+      const headers = headersOf(entry.headers);
+      out.push({
+        url: entry.url.replace(/\/+$/, ''),
+        key: entry.key,
+        ...(headers ? { headers } : {}),
+      });
     }
     return out;
   } catch {

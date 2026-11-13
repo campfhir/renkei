@@ -27,7 +27,6 @@ async function start() {
     apiKeys: ['caller-key'],
     orchestrator,
     store: () => data.sandboxes,
-    masterKey: 'master',
     providerName: provider.name,
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -118,6 +117,34 @@ describe('the orchestrator’s HTTP surface', () => {
     });
     expect(failed.status).toBe(502);
     expect(await failed.json()).toMatchObject({ error: { type: 'sandbox_unavailable' } });
+  });
+
+  it('answers what a call to the sandbox must carry, with its address', async () => {
+    const body = await record(await running.post('/v1/ensure', { key: 'ann' }));
+    expect(body.headers).toEqual({
+      authorization: `Bearer ${String(body.key)}`,
+      'x-sandbox-key': body.key,
+    });
+  });
+
+  it('opens a preview port to named people where the provider can, and says so where it cannot', async () => {
+    expect(
+      await record(
+        await running.post('/v1/expose', { key: 'ann', port: 5173, emails: ['ada@contoso.com'] })
+      )
+    ).toEqual({ url: null });
+    running.provider.exposePort = async (providerId, port) => ({
+      url: `https://${providerId}-${port}.example`,
+    });
+    expect(
+      await record(
+        await running.post('/v1/expose', { key: 'ann', port: 5173, emails: ['ada@contoso.com'] })
+      )
+    ).toEqual({ url: 'https://m1-5173.example' });
+    expect((await running.post('/v1/expose', { key: 'ann', port: 5173, emails: [] })).status).toBe(
+      400
+    );
+    expect((await running.post('/v1/expose', { key: 'ann' })).status).toBe(400);
   });
 
   it('removes a scope’s sandbox on request', async () => {

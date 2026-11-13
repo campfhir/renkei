@@ -8,7 +8,7 @@
  *                       last sandbox to come up said it can do, in the
  *                       shape the sandbox worker's own /health has, so
  *                       the client's feature check reads either alike.
- *   POST /v1/ensure     `{ key, verify? }` → `{ sandboxId, url, key }`:
+ *   POST /v1/ensure     `{ key, verify? }` → `{ sandboxId, url, key, headers }`:
  *                       the scope's sandbox, running — made, resumed or
  *                       waited for as needed — and the bearer key its
  *                       worker takes. Marks the scope active.
@@ -16,6 +16,12 @@
  *                       not deleted; a running one with its url and key.
  *   POST /v1/remove     `{ key }` → `{ removed }`: remove a scope's
  *                       sandbox now, with what it holds.
+ *   POST /v1/expose     `{ key, port, emails }` → `{ url }`, or
+ *                       `{ url: null }` where the provider has no such
+ *                       door: open a port of the scope's sandbox to those
+ *                       people's own browsers, signed in as themselves
+ *                       (a code project's preview). `/v1/unexpose`
+ *                       `{ key, port }` closes it.
  *   ANY  /unavailable/<why>/…   answers every request with a refusal in
  *                       the sandbox worker's error shape. Where the
  *                       client sends a call whose sandbox could not be
@@ -34,7 +40,6 @@ import type { SandboxState, SandboxStore } from '@renkei/db';
 import { isRecord } from '@renkei/guards';
 import {
   OrchestratorError,
-  sandboxApiKey,
   type Orchestrator,
   type OrchestratorErrorType,
 } from '@renkei/sandbox-orchestrator';
@@ -81,8 +86,6 @@ export interface OrchestratorServerDeps {
   apiKeys: readonly string[];
   orchestrator: Orchestrator;
   store: () => SandboxStore;
-  /** The deployment's sandbox key, for the keys `list` answers. */
-  masterKey: string;
   providerName: string;
 }
 
@@ -141,10 +144,27 @@ export function createOrchestratorServer(deps: OrchestratorServerDeps): Server {
       const removed = await orchestrator.remove(body.key, 'removed on request');
       return sendJson(response, 200, { removed });
     }
+    if (url.pathname === '/v1/expose' || url.pathname === '/v1/unexpose') {
+      if (typeof body.key !== 'string' || typeof body.port !== 'number') {
+        return sendError(response, 'bad_request', 'key and port are required');
+      }
+      if (url.pathname === '/v1/unexpose') {
+        return sendJson(response, 200, {
+          closed: await orchestrator.unexpose(body.key, body.port),
+        });
+      }
+      const emails = Array.isArray(body.emails)
+        ? body.emails.filter((email): email is string => typeof email === 'string')
+        : [];
+      const opened = await orchestrator.expose(body.key, body.port, emails);
+      return sendJson(response, 200, { url: opened?.url ?? null });
+    }
     if (url.pathname === '/v1/list') {
       const rows = await deps.store().list({ states: LISTED, limit: LIST_LIMIT });
-      return sendJson(response, 200, {
-        sandboxes: rows.map((row) => ({
+      const sandboxes = [];
+      for (const row of rows) {
+        const endpoint = await orchestrator.endpointFor(row);
+        sandboxes.push({
           id: row.id,
           routeKey: row.routeKey,
           kind: row.kind,
@@ -152,11 +172,10 @@ export function createOrchestratorServer(deps: OrchestratorServerDeps): Server {
           state: row.state,
           createdAt: row.createdAt.toISOString(),
           lastActiveAt: row.lastActiveAt.toISOString(),
-          ...(row.state === 'running' && row.address
-            ? { url: row.address, key: sandboxApiKey(deps.masterKey, row.id) }
-            : {}),
-        })),
-      });
+          ...(endpoint ? { url: endpoint.url, key: endpoint.key, headers: endpoint.headers } : {}),
+        });
+      }
+      return sendJson(response, 200, { sandboxes });
     }
     return sendError(response, 'unknown_operation');
   }

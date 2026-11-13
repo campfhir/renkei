@@ -91,7 +91,7 @@ export interface OrchestratorOptions {
    * Whether the worker at `address` answers, and what it says it can do:
    * the `/health` body, or null while it does not answer.
    */
-  probe?: (address: string) => Promise<unknown | null>;
+  probe?: (address: string, headers: Record<string, string>) => Promise<unknown | null>;
 }
 
 export const DEFAULT_IDLE_SUSPEND_MS = 15 * 60_000;
@@ -131,6 +131,13 @@ export interface SandboxEndpoint {
   sandboxId: string;
   url: string;
   key: string;
+  /**
+   * What a call to the sandbox carries to be let in: the key as the
+   * bearer and in `x-sandbox-key`; where the provider puts an ingress of
+   * its own in front (Entra, on Azure), that ingress's token is the
+   * `authorization` instead and the key rides `x-sandbox-key` alone.
+   */
+  headers: Record<string, string>;
 }
 
 export interface SweepReport {
@@ -149,9 +156,13 @@ export interface SweepReport {
   failures: number;
 }
 
-async function defaultProbe(address: string): Promise<unknown | null> {
+async function defaultProbe(
+  address: string,
+  headers: Record<string, string>
+): Promise<unknown | null> {
   try {
     const response = await fetch(`${address}/health`, {
+      headers,
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
     if (!response.ok) return null;
@@ -187,7 +198,10 @@ export class Orchestrator {
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly newId: () => string;
-  private readonly probe: (address: string) => Promise<unknown | null>;
+  private readonly probe: (
+    address: string,
+    headers: Record<string, string>
+  ) => Promise<unknown | null>;
   private readonly archives: ArchiveOptions | null;
   private readonly transfer: ArchiveTransfer;
   private readonly archiveRetentionMs: number;
@@ -241,12 +255,35 @@ export class Orchestrator {
     };
   }
 
-  private endpointOf(row: SandboxRecord, address: string): SandboxEndpoint {
+  /** What the provider wants on a call to a sandbox, besides the sandbox's key. */
+  private async providerHeaders(): Promise<Record<string, string>> {
+    try {
+      return (await this.provider.callerHeaders?.()) ?? {};
+    } catch (error) {
+      throw new OrchestratorError(
+        'provider',
+        `the provider gave no credential for calling a sandbox: ${messageOf(error)}`
+      );
+    }
+  }
+
+  private async endpointOf(row: SandboxRecord, address: string): Promise<SandboxEndpoint> {
+    const key = sandboxApiKey(this.options.masterKey, row.id);
     return {
       sandboxId: row.id,
       url: address,
-      key: sandboxApiKey(this.options.masterKey, row.id),
+      key,
+      headers: {
+        authorization: `Bearer ${key}`,
+        'x-sandbox-key': key,
+        ...(await this.providerHeaders()),
+      },
     };
+  }
+
+  /** The endpoint of a row that says it is running; null when it has no address. */
+  async endpointFor(row: SandboxRecord): Promise<SandboxEndpoint | null> {
+    return row.state === 'running' && row.address ? this.endpointOf(row, row.address) : null;
   }
 
   private specOf(row: SandboxRecord): SandboxSpec {
@@ -420,7 +457,7 @@ export class Orchestrator {
         throw new OrchestratorError('provider', 'the sandbox stopped before it answered');
       }
       if (seen.state === 'running' && seen.address) {
-        const health = await this.probe(seen.address);
+        const health = await this.probe(seen.address, await this.providerHeaders());
         if (health !== null) {
           this.lastHealth = health;
           return seen.address;
@@ -570,6 +607,42 @@ export class Orchestrator {
     return machines.find((machine) => machine.sandboxId === sandboxId)?.providerId ?? null;
   }
 
+  /**
+   * Open a port of the scope's sandbox to the named people's own
+   * browsers, each signing in as themselves; null where the provider has
+   * no such door (the worker's own preview proxy is used instead).
+   */
+  async expose(routeKey: string, port: number, emails: string[]): Promise<{ url: string } | null> {
+    if (!this.provider.exposePort) return null;
+    if (!Number.isInteger(port) || port < 1024 || port > 65_535 || port === SANDBOX_WORKER_PORT) {
+      throw new OrchestratorError('bad_request', 'not a port a preview can be served on');
+    }
+    // An empty list would mean everyone in the directory.
+    if (emails.length === 0 || emails.some((email) => !/^[^\s@]+@[^\s@]+$/.test(email))) {
+      throw new OrchestratorError('bad_request', 'name the people the port is opened to');
+    }
+    await this.ensure(routeKey);
+    const row = await this.store().live(routeKey);
+    if (!row?.providerId) throw new OrchestratorError('starting', 'the sandbox is not up yet');
+    try {
+      return await this.provider.exposePort(row.providerId, port, { emails });
+    } catch (error) {
+      throw new OrchestratorError('provider', messageOf(error));
+    }
+  }
+
+  /** Close a port opened with `expose`; false where there was nothing to close. */
+  async unexpose(routeKey: string, port: number): Promise<boolean> {
+    const row = await this.store().live(routeKey);
+    if (!this.provider.unexposePort || !row?.providerId) return false;
+    try {
+      await this.provider.unexposePort(row.providerId, port);
+    } catch (error) {
+      throw new OrchestratorError('provider', messageOf(error));
+    }
+    return true;
+  }
+
   /** Remove a scope's sandbox now, whatever it is doing; false when it has none. */
   async remove(routeKey: string, reason: string | null = null): Promise<boolean> {
     const row = await this.store().live(routeKey);
@@ -620,8 +693,8 @@ export class Orchestrator {
       );
       return;
     }
-    await this.keepingAlive(row, 'provisioning', () =>
-      this.transfer.upload(this.endpointOf(row, address), body)
+    await this.keepingAlive(row, 'provisioning', async () =>
+      this.transfer.upload(await this.endpointOf(row, address), body)
     );
     this.logger.info(
       'sandbox for {scope} was restored from its archive ({sizeBytes} bytes, taken {archivedAt})',
@@ -673,7 +746,10 @@ export class Orchestrator {
       const address = await this.waitReady(providerId);
       const blobKey = archiveBlobKey(row.routeKey, row.id);
       const { sizeBytes } = await this.keepingAlive(row, 'archiving', async () =>
-        archives.blobs.put(blobKey, await this.transfer.download(this.endpointOf(row, address)))
+        archives.blobs.put(
+          blobKey,
+          await this.transfer.download(await this.endpointOf(row, address))
+        )
       );
       const previous = await archives.store().put({
         routeKey: row.routeKey,

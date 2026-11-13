@@ -78,6 +78,27 @@ export interface SandboxProvider {
   destroy(providerId: string): Promise<void>;
   /** Every sandbox this deployment's orchestrator made, whatever its state. */
   list(): Promise<ProviderSandbox[]>;
+  /**
+   * What a call to a sandbox's worker must carry to get past whatever the
+   * provider puts in front of it, besides the worker's own key: on Azure
+   * with Entra on the port, `authorization: Bearer <an Entra token>`.
+   * Absent or empty where nothing stands in front (Docker).
+   */
+  callerHeaders?(): Promise<Record<string, string>>;
+  /**
+   * Open another port of a running sandbox straight to the browsers of
+   * the named people, each signing in as themselves (a code project's
+   * preview, opened by its members): the address it is served at.
+   * Absent where the provider has no such door — a preview is then
+   * reached through the worker's own proxy, as before.
+   */
+  exposePort?(
+    providerId: string,
+    port: number,
+    access: { emails: string[] }
+  ): Promise<{ url: string }>;
+  /** Close a port opened with `exposePort`. Already closed is fine. */
+  unexposePort?(providerId: string, port: number): Promise<void>;
 }
 
 /** A provider's refusal or failure, with the provider's own words. */

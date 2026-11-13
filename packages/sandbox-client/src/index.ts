@@ -27,6 +27,7 @@ import { isRecord } from '@renkei/guards';
 import {
   forgetSandboxEndpoint,
   sandboxConfig,
+  sandboxAuthHeaders,
   sandboxEndpointFor,
   sandboxEndpoints,
   sandboxRouteKey,
@@ -344,7 +345,7 @@ async function callOp(
     try {
       response = await fetch(`${cfg.url}/v1/${op}`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+        headers: { ...sandboxAuthHeaders(cfg), 'content-type': 'application/json' },
         body: wireBody(body),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
@@ -497,7 +498,7 @@ export async function sbWriteFile(
   try {
     response = await fetch(`${cfg.url}/v1/write?${query.toString()}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/octet-stream' },
+      headers: { ...sandboxAuthHeaders(cfg), 'content-type': 'application/octet-stream' },
       body: payload,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
@@ -1042,7 +1043,7 @@ export async function sbWorkspaceDownload(
   try {
     response = await fetch(`${cfg.url}/v1/workspaces/download`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+      headers: { ...sandboxAuthHeaders(cfg), 'content-type': 'application/json' },
       body: wireBody({ ...target, ...input }),
       signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
     });
@@ -1195,7 +1196,7 @@ export async function sbWorkspaceUpload(
   try {
     response = await fetch(`${cfg.url}/v1/workspaces/upload?${query.toString()}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/octet-stream' },
+      headers: { ...sandboxAuthHeaders(cfg), 'content-type': 'application/octet-stream' },
       body: input.bytes,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
@@ -1307,7 +1308,7 @@ export async function sbWorkspaceExec(
   try {
     response = await fetch(`${cfg.url}/v1/workspaces/exec`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+      headers: { ...sandboxAuthHeaders(cfg), 'content-type': 'application/json' },
       body: wireBody({ ...target, ...input }),
       signal: options.signal ? AbortSignal.any([timeout, options.signal]) : timeout,
     });
@@ -2095,7 +2096,7 @@ export async function sbServiceStart(
   try {
     response = await fetch(`${cfg.url}/v1/services/start`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+      headers: { ...sandboxAuthHeaders(cfg), 'content-type': 'application/json' },
       body: wireBody({ ...target, ...input }),
       signal: AbortSignal.timeout(6 * 60_000),
     });
@@ -2322,7 +2323,7 @@ export async function sbPreviewStart(
   try {
     response = await fetch(`${cfg.url}/v1/previews/start`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+      headers: { ...sandboxAuthHeaders(cfg), 'content-type': 'application/json' },
       body: wireBody({ ...target, ...input }),
       signal: AbortSignal.timeout(Math.min(10 * 60_000, (input.waitMs ?? 60_000) + 30_000)),
     });
@@ -2405,7 +2406,7 @@ async function tokenEndpoint(token: string): Promise<{ url: string; key: string 
       try {
         const response = await fetch(`${endpoint.url}/v1/previews/holds-token`, {
           method: 'POST',
-          headers: { authorization: `Bearer ${endpoint.key}`, 'content-type': 'application/json' },
+          headers: { ...sandboxAuthHeaders(endpoint), 'content-type': 'application/json' },
           body: JSON.stringify({ token }),
           signal: AbortSignal.timeout(5_000),
         });
@@ -2439,7 +2440,7 @@ export async function sbPreviewProxyTarget(
     if (!holder) return null;
     return {
       url: `${holder.url}/v1/previews/public/${encodeURIComponent(ref.token)}/${rest}`,
-      headers: { authorization: `Bearer ${holder.key}` },
+      headers: { ...sandboxAuthHeaders(holder) },
     };
   }
   const cfg = await sandboxEndpointFor(ref.subject);
@@ -2449,7 +2450,7 @@ export async function sbPreviewProxyTarget(
     : `proxy/${encodeURIComponent(ref.name)}`;
   return {
     url: `${cfg.url}/v1/previews/${where}/${rest}`,
-    headers: { authorization: `Bearer ${cfg.key}`, 'x-sandbox-subject': ref.subject },
+    headers: { ...sandboxAuthHeaders(cfg), 'x-sandbox-subject': ref.subject },
   };
 }
 
@@ -2606,7 +2607,7 @@ export async function sbRunScript(
   try {
     response = await fetch(`${cfg.url}/v1/scripts/run`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+      headers: { ...sandboxAuthHeaders(cfg), 'content-type': 'application/json' },
       body: wireBody({ ...target, ...input }),
       signal: options.signal ? AbortSignal.any([timeout, options.signal]) : timeout,
     });
@@ -2889,7 +2890,7 @@ export async function sbKernelExecute(
   try {
     response = await fetch(`${cfg.url}/v1/workspaces/kernel/execute`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+      headers: { ...sandboxAuthHeaders(cfg), 'content-type': 'application/json' },
       body: wireBody({ ...target, ...input }),
       signal: AbortSignal.timeout(wait),
     });
@@ -3053,7 +3054,7 @@ export async function sbLspEvents(
   try {
     response = await fetch(`${cfg.url}/v1/workspaces/lsp/events`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+      headers: { ...sandboxAuthHeaders(cfg), 'content-type': 'application/json' },
       body: wireBody({ ...target, ...input }),
       signal,
     });

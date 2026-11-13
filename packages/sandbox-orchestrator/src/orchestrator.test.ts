@@ -544,3 +544,65 @@ describe('a scope’s archive', () => {
     expect((await env.data.sandboxes.live('ann'))?.state).toBe('running');
   });
 });
+
+describe('what a call to a sandbox carries', () => {
+  it('is the sandbox’s key, as the bearer and in its own header', async () => {
+    const { orchestrator } = setup();
+    const endpoint = await orchestrator.ensure('ann');
+    expect(endpoint.headers).toEqual({
+      authorization: `Bearer ${endpoint.key}`,
+      'x-sandbox-key': endpoint.key,
+    });
+  });
+
+  it('is the provider’s own token as the bearer where it guards the door, with the key still in its header', async () => {
+    const env = setup();
+    env.provider.callerHeaders = async () => ({ authorization: 'Bearer entra-token' });
+    const endpoint = await env.orchestrator.ensure('ann');
+    expect(endpoint.headers).toEqual({
+      authorization: 'Bearer entra-token',
+      'x-sandbox-key': endpoint.key,
+    });
+  });
+
+  it('fails the call when the provider cannot give that token', async () => {
+    const env = setup();
+    env.provider.callerHeaders = async () => {
+      throw new Error('no identity');
+    };
+    await expect(env.orchestrator.ensure('ann')).rejects.toMatchObject({ type: 'provider' });
+  });
+});
+
+describe('a preview port opened to people’s own browsers', () => {
+  it('is not offered where the provider has no such door', async () => {
+    const { orchestrator } = setup();
+    expect(await orchestrator.expose('code-project:p1', 5173, ['ada@contoso.com'])).toBeNull();
+  });
+
+  it('is opened on the scope’s sandbox, made if need be, to the people named', async () => {
+    const env = setup();
+    const opened: unknown[] = [];
+    env.provider.exposePort = async (providerId, port, access) => {
+      opened.push([providerId, port, access.emails]);
+      return { url: `https://${providerId}-${port}.example` };
+    };
+    expect(await env.orchestrator.expose('code-project:p1', 5173, ['ada@contoso.com'])).toEqual({
+      url: 'https://m1-5173.example',
+    });
+    expect(opened).toEqual([['m1', 5173, ['ada@contoso.com']]]);
+  });
+
+  it('is refused for nobody in particular, for the worker’s own port, and for a port no preview uses', async () => {
+    const env = setup();
+    env.provider.exposePort = async () => ({ url: 'https://never' });
+    const refused = { type: 'bad_request' };
+    await expect(env.orchestrator.expose('ann', 5173, [])).rejects.toMatchObject(refused);
+    await expect(env.orchestrator.expose('ann', 5173, ['not an email'])).rejects.toMatchObject(
+      refused
+    );
+    await expect(env.orchestrator.expose('ann', 8092, ['a@b.c'])).rejects.toMatchObject(refused);
+    await expect(env.orchestrator.expose('ann', 80, ['a@b.c'])).rejects.toMatchObject(refused);
+    expect(env.provider.machines.size).toBe(0);
+  });
+});

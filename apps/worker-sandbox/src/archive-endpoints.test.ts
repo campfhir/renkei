@@ -82,6 +82,18 @@ describe('an orchestrated sandbox', () => {
     ).rejects.toBeDefined();
   });
 
+  it('takes its key from x-sandbox-key when the bearer is something else’s token', async () => {
+    const guarded = (key: string) =>
+      fetch(`${base}/v1/restore`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer an-ingress-token', 'x-sandbox-key': key },
+        body: 'not an archive',
+      });
+    // Let in (and then told the body is no archive), or not let in at all.
+    expect((await guarded(KEY)).status).toBe(500);
+    expect((await guarded('wrong')).status).toBe(401);
+  });
+
   it('hands nothing to a caller without its key', async () => {
     expect((await post(base, 'archive', undefined, 'wrong')).status).toBe(401);
     expect((await post(base, 'restore', 'x', 'wrong')).status).toBe(401);

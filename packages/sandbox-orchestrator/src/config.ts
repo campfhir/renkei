@@ -37,10 +37,20 @@
  *   SANDBOX_AZURE_CPU / _MEMORY / _DISK   default `2000m`, `4096Mi`, `40Gi`.
  *   SANDBOX_AZURE_SUSPEND_MODE    `Memory` (the default) or `Disk`.
  *   SANDBOX_AZURE_VNET_CONNECTION the group's VNet connection sandboxes use.
+ *   SANDBOX_AZURE_PORT_AUTH       `entra` (the default): the worker's port takes
+ *                                 a Microsoft Entra token from the identities in
+ *                                 SANDBOX_AZURE_ENTRA_ALLOWED. `anonymous`: the
+ *                                 sandbox's own key alone.
+ *   SANDBOX_AZURE_ENTRA_ALLOWED   comma-separated emails/UPNs allowed to call a
+ *                                 worker: this orchestrator's identity.
  *   SANDBOX_AZURE_ALLOWED_CIDRS   comma-separated ranges allowed to call a sandbox.
  */
 
-import { AzureSandboxProvider, createAzureSandboxClient } from './azure-provider';
+import {
+  AzureSandboxProvider,
+  azureIngressToken,
+  createAzureSandboxClient,
+} from './azure-provider';
 import { DockerSandboxProvider } from './docker-provider';
 import type { SandboxProvider } from './provider';
 
@@ -152,7 +162,21 @@ export async function providerFromEnv(env: Env): Promise<SandboxProvider> {
       region: required(env, 'SANDBOX_AZURE_REGION'),
       endpoint: text(env, 'SANDBOX_AZURE_ENDPOINT') || null,
     });
+    const portAuth = text(env, 'SANDBOX_AZURE_PORT_AUTH', 'entra').toLowerCase();
+    if (portAuth !== 'entra' && portAuth !== 'anonymous') {
+      throw new Error('SANDBOX_AZURE_PORT_AUTH must be entra or anonymous');
+    }
+    const entraAllowed = list(env, 'SANDBOX_AZURE_ENTRA_ALLOWED');
+    if (portAuth === 'entra' && entraAllowed.length === 0) {
+      // An empty list means everyone in the tenant, which is not what a worker's port is for.
+      throw new Error(
+        'SANDBOX_AZURE_ENTRA_ALLOWED is required with Entra on the worker port: the identity this orchestrator calls sandboxes as'
+      );
+    }
     return new AzureSandboxProvider({
+      portAuth,
+      entraAllowed,
+      ingressToken: azureIngressToken,
       diskImage: required(env, 'SANDBOX_AZURE_DISK_IMAGE'),
       cpu: text(env, 'SANDBOX_AZURE_CPU', '2000m'),
       memory: text(env, 'SANDBOX_AZURE_MEMORY', '4096Mi'),

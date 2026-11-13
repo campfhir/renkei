@@ -8,6 +8,7 @@ import {
   forgetSandboxEndpoint,
   resetSandboxRoutingForTests,
   sandboxConfig,
+  sandboxAuthHeaders,
   sandboxEndpointFor,
   sandboxEndpoints,
   sandboxRouteKey,
@@ -72,6 +73,26 @@ describe('with an orchestrator', () => {
         body: { key: 'ann' },
       },
     ]);
+  });
+
+  it('a call carries the key as its bearer, unless the orchestrator says what the sandbox’s door wants instead', async () => {
+    const plain = await sandboxEndpointFor('ann', T0);
+    expect(plain && sandboxAuthHeaders(plain)).toEqual({ authorization: 'Bearer key-ann' });
+
+    answer = () =>
+      json({
+        url: 'http://bob.sandbox:8092',
+        key: 'key-bob',
+        headers: { Authorization: 'Bearer entra-token', 'x-sandbox-key': 'key-bob', odd: 7 },
+      });
+    const guarded = await sandboxEndpointFor('bob', T0);
+    expect(guarded && sandboxAuthHeaders(guarded)).toEqual({
+      authorization: 'Bearer entra-token',
+      'x-sandbox-key': 'key-bob',
+    });
+    // Remembered with the address.
+    const again = await sandboxEndpointFor('bob', T0 + 1_000);
+    expect(again && sandboxAuthHeaders(again)).toEqual(guarded && sandboxAuthHeaders(guarded));
   });
 
   it('a person, an agent and a code project are each asked for by their own scope', async () => {

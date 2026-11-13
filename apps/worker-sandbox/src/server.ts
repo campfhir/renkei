@@ -211,9 +211,16 @@ function str(value: unknown): string {
 
 function authorized(request: IncomingMessage, keys: string[]): boolean {
   if (keys.length === 0) return false;
+  // Behind an ingress that takes `authorization` for its own token and
+  // strips it (Entra, on an Azure sandbox's port), the key rides its own
+  // header. Either is the same secret.
+  const own = request.headers['x-sandbox-key'];
   const header = request.headers.authorization?.trim() ?? '';
-  if (header.length < 8 || header.slice(0, 7).toLowerCase() !== 'bearer ') return false;
-  const presented = header.slice(7).trim();
+  const bearer =
+    header.length >= 8 && header.slice(0, 7).toLowerCase() === 'bearer '
+      ? header.slice(7).trim()
+      : '';
+  const presented = (typeof own === 'string' ? own.trim() : '') || bearer;
   if (!presented) return false;
   return keys.some((key) => {
     const bufA = Buffer.from(presented);
