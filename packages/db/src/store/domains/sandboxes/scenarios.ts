@@ -38,20 +38,48 @@ function row(
 
 const fixture = {
   sandboxes: [
-    row(ID.ann, 'ann', 'user', 'running', { created: 0, active: 30, changed: 1 }, {
-      provider_id: 'c-ann',
-      address: 'http://10.0.0.1:8092',
-    }),
-    row(ID.agent, 'agent:a1', 'agent', 'suspended', { created: 2, active: 10, changed: 25 }, {
-      provider_id: 'c-agent',
-    }),
-    row(ID.project, 'code-project:p1', 'project', 'running', { created: 3, active: 20, changed: 4 }, {
-      provider_id: 'c-project',
-      address: 'http://10.0.0.3:8092',
-    }),
-    row(ID.gone, 'ann', 'user', 'deleted', { created: 0, active: 0, changed: 5 }, {
-      error: 'the engine did not answer',
-    }),
+    row(
+      ID.ann,
+      'ann',
+      'user',
+      'running',
+      { created: 0, active: 30, changed: 1 },
+      {
+        provider_id: 'c-ann',
+        address: 'http://10.0.0.1:8092',
+      }
+    ),
+    row(
+      ID.agent,
+      'agent:a1',
+      'agent',
+      'suspended',
+      { created: 2, active: 10, changed: 25 },
+      {
+        provider_id: 'c-agent',
+      }
+    ),
+    row(
+      ID.project,
+      'code-project:p1',
+      'project',
+      'running',
+      { created: 3, active: 20, changed: 4 },
+      {
+        provider_id: 'c-project',
+        address: 'http://10.0.0.3:8092',
+      }
+    ),
+    row(
+      ID.gone,
+      'ann',
+      'user',
+      'deleted',
+      { created: 0, active: 0, changed: 5 },
+      {
+        error: 'the engine did not answer',
+      }
+    ),
     row(ID.starting, 'bob', 'user', 'provisioning', { created: 28, active: 28, changed: 28 }),
   ],
 };

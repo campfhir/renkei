@@ -1,6 +1,7 @@
 import {
   AzureSandboxProvider,
   azureState,
+  type AzureCreateRequest,
   type AzureSandbox,
   type AzureSandboxClient,
 } from './azure-provider';
@@ -12,7 +13,7 @@ function notFound(): Error {
 /** A sandbox group in memory, speaking the part of the SDK the provider calls. */
 function group() {
   const sandboxes = new Map<string, AzureSandbox>();
-  const created: Array<Record<string, unknown>> = [];
+  const created: AzureCreateRequest[] = [];
   const listed: Array<Record<string, string> | undefined> = [];
   let made = 0;
   const need = (id: string): AzureSandbox => {
@@ -35,7 +36,7 @@ function group() {
         const sandbox: AzureSandbox = {
           id: `az-${made}`,
           state: 'Running',
-          labels: body.labels as Record<string, string>,
+          labels: body.labels,
           ports: [{ port: 8092, url: `https://az-${made}-8092.example.azure/` }],
           createdAt: '2026-01-01T00:00:00Z',
         };
@@ -108,7 +109,9 @@ describe('the Azure provider', () => {
           protocol: 'Http',
           ipAccessControl: {
             defaultAction: 'Deny',
-            rules: [{ name: 'callers', action: 'Allow', priority: 100, sourceCidrs: ['10.0.0.0/8'] }],
+            rules: [
+              { name: 'callers', action: 'Allow', priority: 100, sourceCidrs: ['10.0.0.0/8'] },
+            ],
           },
         },
       ],

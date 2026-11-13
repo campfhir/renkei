@@ -222,7 +222,8 @@ export class DockerSandboxProvider implements SandboxProvider {
     }
     const networks = isRecord(settings.Networks) ? settings.Networks : {};
     const endpoint = networks[this.options.networks[0] ?? ''];
-    const ip = isRecord(endpoint) && typeof endpoint.IPAddress === 'string' ? endpoint.IPAddress : '';
+    const ip =
+      isRecord(endpoint) && typeof endpoint.IPAddress === 'string' ? endpoint.IPAddress : '';
     return ip ? `http://${ip}:${SANDBOX_WORKER_PORT}` : null;
   }
 

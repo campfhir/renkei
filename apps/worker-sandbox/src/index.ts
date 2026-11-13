@@ -67,6 +67,10 @@
  *     model there is no network.
  *   SANDBOX_RUNS_DIR — where a run's throwaway directory is made,
  *     default /runs (no volume: nothing here outlives its run).
+ *   SANDBOX_ORCHESTRATED — `1` when the sandbox orchestrator made this
+ *     worker's machine for one scope (it sets this, with a bearer key of
+ *     the sandbox's own): the worker does not register as a shared
+ *     instance and offers no code project services.
  *   SANDBOX_RUN_AS_WORKER — read by the image's entrypoint, not here:
  *     `true` starts this process as the unprivileged `worker` account
  *     (no uid isolation for anyone's commands) for a deployment where no
@@ -207,6 +211,11 @@ async function main(): Promise<void> {
   const ready = checkDataStore();
   if (!ready.ok) fatal(`database unavailable: ${String(ready.err)}`);
 
+  // Made by the sandbox orchestrator for ONE scope (a person, an agent, a
+  // project), which sets this: no shared-instance registration, no
+  // container engine.
+  const orchestrated = process.env.SANDBOX_ORCHESTRATED === '1';
+
   await ensureDataRoot();
 
   // Nothing this process creates from here on is readable by the uids a
@@ -272,6 +281,16 @@ async function main(): Promise<void> {
   let services: ServiceManager | null = null;
   if (!commandsPossible) {
     problems.services = 'commands cannot be run for a caller here (see workspaces)';
+  } else if (orchestrated) {
+    // One scope's own sandbox holds no way to a container engine, on
+    // purpose (docs/sandbox-orchestrator-design.md): services beside a
+    // checkout become the orchestrator's to make, and are not yet.
+    problems.services =
+      'this sandbox is one scope’s own, made by the orchestrator, and holds no container engine; code project services are not available on orchestrated sandboxes yet';
+    logger.info('services are unavailable on this deployment: {problem}', {
+      component: 'worker-sandbox/services',
+      problem: problems.services,
+    });
   } else {
     let engine: DockerClient;
     try {
@@ -543,7 +562,11 @@ async function main(): Promise<void> {
   let heartbeat: { stop: () => void } | null = null;
   server.listen(port, '0.0.0.0', () => {
     // Up and listening: say so, so the app sends this instance its callers.
-    heartbeat = startInstanceHeartbeat({ id: instanceId(), address: advertisedAddress(port) });
+    // Not when the orchestrator made this sandbox for one scope: it is
+    // found through the orchestrator, and must never be assigned anyone else.
+    if (!orchestrated) {
+      heartbeat = startInstanceHeartbeat({ id: instanceId(), address: advertisedAddress(port) });
+    }
     logger.info(
       'started {application} {version} on port {port} — can do: browser, charts {charts}, workspaces {workspaces}, services {services}, scripts {scripts}; each organization turns its own on in Settings',
       {

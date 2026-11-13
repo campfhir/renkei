@@ -1,23 +1,7 @@
-import type { MemoryTables, Row } from '../../memory/tables';
+import type { MemoryTables } from '../../memory/tables';
 import { orderBy } from '../../memory/order';
-import type { SandboxKind, SandboxRecord, SandboxState, SandboxStore } from './types';
-
-function recordOf(row: Row<'sandboxes'>): SandboxRecord {
-  return {
-    id: row.id,
-    routeKey: row.route_key,
-    kind: row.kind as SandboxKind,
-    provider: row.provider,
-    providerId: row.provider_id,
-    state: row.state as SandboxState,
-    address: row.address,
-    error: row.error,
-    createdAt: row.created_at,
-    lastActiveAt: row.last_active_at,
-    stateChangedAt: row.state_changed_at,
-    verifiedAt: row.verified_at,
-  };
-}
+import { sandboxRecordOf } from './record';
+import type { SandboxStore } from './types';
 
 export function memorySandboxes(tables: MemoryTables): SandboxStore {
   return {
@@ -28,7 +12,7 @@ export function memorySandboxes(tables: MemoryTables): SandboxStore {
         (r) => r.route_key === input.routeKey && r.state !== 'deleted'
       );
       if (taken) return null;
-      return recordOf(
+      return sandboxRecordOf(
         tables.insert('sandboxes', {
           id: input.id,
           route_key: input.routeKey,
@@ -50,16 +34,16 @@ export function memorySandboxes(tables: MemoryTables): SandboxStore {
         'sandboxes',
         (r) => r.route_key === routeKey && r.state !== 'deleted'
       );
-      return row ? recordOf(row) : null;
+      return row ? sandboxRecordOf(row) : null;
     },
     async get(id) {
       const row = tables.first('sandboxes', (r) => r.id === id);
-      return row ? recordOf(row) : null;
+      return row ? sandboxRecordOf(row) : null;
     },
     async transition(input) {
       const moved = tables.update(
         'sandboxes',
-        (r) => r.id === input.id && input.from.includes(r.state as SandboxState),
+        (r) => r.id === input.id && input.from.some((state) => state === r.state),
         {
           state: input.to,
           state_changed_at: input.at,
@@ -72,11 +56,9 @@ export function memorySandboxes(tables: MemoryTables): SandboxStore {
       return moved.length > 0;
     },
     async touch(id, at) {
-      tables.update(
-        'sandboxes',
-        (r) => r.id === id && r.last_active_at.getTime() < at.getTime(),
-        { last_active_at: at }
-      );
+      tables.update('sandboxes', (r) => r.id === id && r.last_active_at.getTime() < at.getTime(), {
+        last_active_at: at,
+      });
     },
     async verified(id, at) {
       tables.update('sandboxes', (r) => r.id === id, { verified_at: at });
@@ -85,7 +67,7 @@ export function memorySandboxes(tables: MemoryTables): SandboxStore {
       const rows = tables.select(
         'sandboxes',
         (r) =>
-          input.states.includes(r.state as SandboxState) &&
+          input.states.some((state) => state === r.state) &&
           (!input.lastActiveBefore ||
             r.last_active_at.getTime() < input.lastActiveBefore.getTime()) &&
           (!input.stateChangedBefore ||
@@ -93,7 +75,7 @@ export function memorySandboxes(tables: MemoryTables): SandboxStore {
       );
       return orderBy(rows, [(r) => r.last_active_at], [(r) => r.id])
         .slice(0, input.limit)
-        .map(recordOf);
+        .map(sandboxRecordOf);
     },
     async purgeDeleted(before) {
       return tables.delete(

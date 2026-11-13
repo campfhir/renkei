@@ -269,9 +269,10 @@ ls -la .next/
 ## Published Images
 
 Every push to `main` that passes CI (lint, typecheck, tests) also builds
-and publishes the nine images `docker-compose.yaml` pulls — `renkei`,
+and publishes the ten images `docker-compose.yaml` pulls — `renkei`,
 `renkei-migrate`, `renkei-worker`, `renkei-fileshares`, `renkei-onbase`,
-`renkei-mirth`, `renkei-admanager`, `renkei-delegate`, `renkei-sandbox` —
+`renkei-mirth`, `renkei-admanager`, `renkei-delegate`, `renkei-sandbox`,
+`renkei-orchestrator` —
 to Docker Hub from the `docker` job in `.github/workflows/ci.yml`. Each
 image is pushed under three tags: `latest`, the version in
 `apps/web/package.json` (the version every app in the workspace shares,
@@ -748,6 +749,20 @@ nothing, and the organization stays on the default (off). Afterwards the
 variables are unread: delete them from `.env`, and turn features on or
 off per organization under admin → Settings → Sandbox. A new organization
 starts with every sandbox feature off.
+
+**A sandbox per person, agent and project (opt-in):** instead of a shared
+sandbox worker, the sandbox orchestrator (`worker-orchestrator`, the
+`orchestrator` compose profile) makes each scope a sandbox of its own on
+first use — a container on this host's Docker engine, or a microVM in an
+Azure Container Apps sandbox group — suspends it after 15 idle minutes
+and removes it, with what it holds, after 24 idle hours. Set
+`SANDBOX_ORCHESTRATOR_URL` and `SANDBOX_ORCHESTRATOR_API_KEY` in `.env`
+and start with `--profile orchestrator --scale worker-sandbox=0`. The
+orchestrator is then the only container holding the engine's socket; no
+sandbox does, which is why code project services are not available in
+this mode yet. `docs/sandbox-orchestrator-design.md` has the variables,
+the Azure setup, and the list of what still runs the old way. Run
+`migrate` first (migration 180).
 
 **More than one sandbox replica:** fine on one host, because Compose
 replicas of a service share its named volumes — and the sandbox worker

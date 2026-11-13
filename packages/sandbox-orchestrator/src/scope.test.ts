@@ -41,10 +41,12 @@ describe('configuration', () => {
 
   it('suspends after 15 minutes and removes after 24 hours unless told otherwise', () => {
     expect(idleRules({})).toEqual({ idleSuspendMs: 900_000, idleDeleteMs: 86_400_000 });
-    expect(idleRules({ SANDBOX_IDLE_SUSPEND_MINUTES: '5', SANDBOX_IDLE_DELETE_HOURS: '2' })).toEqual(
-      { idleSuspendMs: 300_000, idleDeleteMs: 7_200_000 }
-    );
-    expect(() => idleRules({ SANDBOX_IDLE_SUSPEND_MINUTES: '120', SANDBOX_IDLE_DELETE_HOURS: '1' })).toThrow();
+    expect(
+      idleRules({ SANDBOX_IDLE_SUSPEND_MINUTES: '5', SANDBOX_IDLE_DELETE_HOURS: '2' })
+    ).toEqual({ idleSuspendMs: 300_000, idleDeleteMs: 7_200_000 });
+    expect(() =>
+      idleRules({ SANDBOX_IDLE_SUSPEND_MINUTES: '120', SANDBOX_IDLE_DELETE_HOURS: '1' })
+    ).toThrow();
     expect(() => idleRules({ SANDBOX_IDLE_SUSPEND_MINUTES: 'soon' })).toThrow();
   });
 });

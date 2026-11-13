@@ -8,13 +8,7 @@
 export type SandboxKind = 'user' | 'agent' | 'project' | 'system';
 
 export type SandboxState =
-  | 'provisioning'
-  | 'running'
-  | 'suspending'
-  | 'suspended'
-  | 'resuming'
-  | 'deleting'
-  | 'deleted';
+  'provisioning' | 'running' | 'suspending' | 'suspended' | 'resuming' | 'deleting' | 'deleted';
 
 export interface SandboxRecord {
   id: string;

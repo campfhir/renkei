@@ -1,24 +1,7 @@
-import type { Kysely, Selectable } from 'kysely';
-import type { DB, Sandboxes } from '../../../db.types';
-import type { SandboxKind, SandboxRecord, SandboxState, SandboxStore } from './types';
-
-function recordOf(row: Selectable<Sandboxes>): SandboxRecord {
-  return {
-    id: row.id,
-    routeKey: row.route_key,
-    // The table's CHECK constraints admit exactly these.
-    kind: row.kind as SandboxKind,
-    provider: row.provider,
-    providerId: row.provider_id,
-    state: row.state as SandboxState,
-    address: row.address,
-    error: row.error,
-    createdAt: row.created_at,
-    lastActiveAt: row.last_active_at,
-    stateChangedAt: row.state_changed_at,
-    verifiedAt: row.verified_at,
-  };
-}
+import type { Kysely } from 'kysely';
+import type { DB } from '../../../db.types';
+import { sandboxRecordOf } from './record';
+import type { SandboxStore } from './types';
 
 export function postgresSandboxes(db: () => Kysely<DB>): SandboxStore {
   return {
@@ -45,7 +28,7 @@ export function postgresSandboxes(db: () => Kysely<DB>): SandboxStore {
         )
         .returningAll()
         .executeTakeFirst();
-      return row ? recordOf(row) : null;
+      return row ? sandboxRecordOf(row) : null;
     },
     async live(routeKey) {
       const row = await db()
@@ -54,7 +37,7 @@ export function postgresSandboxes(db: () => Kysely<DB>): SandboxStore {
         .where('route_key', '=', routeKey)
         .where('state', '<>', 'deleted')
         .executeTakeFirst();
-      return row ? recordOf(row) : null;
+      return row ? sandboxRecordOf(row) : null;
     },
     async get(id) {
       const row = await db()
@@ -62,7 +45,7 @@ export function postgresSandboxes(db: () => Kysely<DB>): SandboxStore {
         .selectAll()
         .where('id', '=', id)
         .executeTakeFirst();
-      return row ? recordOf(row) : null;
+      return row ? sandboxRecordOf(row) : null;
     },
     async transition(input) {
       const result = await db()
@@ -105,7 +88,7 @@ export function postgresSandboxes(db: () => Kysely<DB>): SandboxStore {
         .orderBy('id', 'asc')
         .limit(input.limit)
         .execute();
-      return rows.map(recordOf);
+      return rows.map(sandboxRecordOf);
     },
     async purgeDeleted(before) {
       const result = await db()

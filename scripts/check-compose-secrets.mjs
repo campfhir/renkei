@@ -21,14 +21,15 @@ const OWNERS = {
   MIRTH_WORKER_API_KEY: ['worker-delegate', 'worker-mirth'],
   ADMANAGER_WORKER_API_KEY: ['worker-delegate', 'worker-admanager'],
   SETUP_SECRET: ['renkei'],
-  SANDBOX_ENV_SECRETS_KEY: ['migrate', 'worker-sandbox'],
+  // The orchestrator carries a sandbox's own secrets to hand to each sandbox it makes.
+  SANDBOX_ENV_SECRETS_KEY: ['migrate', 'worker-sandbox', 'worker-orchestrator'],
 };
 // Each caller's own delegate key, presented as DELEGATE_WORKER_API_KEY.
 const CALLER_KEYS = {
   DELEGATE_KEY_WEB: ['renkei'],
   DELEGATE_KEY_WORKER: ['worker', 'embeddings-worker', 'worker-batch-jobs'],
   DELEGATE_KEY_AGENTS: ['worker-agents'],
-  DELEGATE_KEY_SANDBOX: ['worker-sandbox'],
+  DELEGATE_KEY_SANDBOX: ['worker-sandbox', 'worker-orchestrator'],
 };
 // The sandbox runs untrusted code: no organisation-level encryption key.
 const NEVER_ON_SANDBOX = [
@@ -49,6 +50,8 @@ const SANDBOX_NETWORK_MEMBERS = [
   'worker-delegate',
   'worker-batch-jobs',
   'worker-sandbox',
+  // Asks each sandbox it made whether it is up; holds no organisation key (below).
+  'worker-orchestrator',
 ];
 
 const dir = mkdtempSync(join(tmpdir(), 'compose-secrets-'));
@@ -110,7 +113,7 @@ for (const [service, def] of Object.entries(config.services)) {
       problems.push(`${service}: carries ${name}`);
     }
   }
-  if (service === 'worker-sandbox') {
+  if (service === 'worker-sandbox' || service === 'worker-orchestrator') {
     for (const name of NEVER_ON_SANDBOX)
       if (holds(name)) problems.push(`${service}: carries ${name}`);
   }
@@ -204,8 +207,21 @@ for (const service of Object.keys(withRoles.services)) {
   if (service !== 'migrate' && service !== 'postgres' && env.includes(values.POSTGRES_PASSWORD)) {
     problems.push(`${service}: carries the owner's password while a runtime role is configured`);
   }
-  if (service !== 'worker-sandbox' && env.includes(SANDBOX_PASSWORD) && service !== 'migrate') {
+  // The orchestrator carries it only to hand to the sandboxes it makes.
+  const handsItOn = service === 'worker-orchestrator';
+  if (
+    service !== 'worker-sandbox' &&
+    service !== 'migrate' &&
+    !handsItOn &&
+    env.includes(SANDBOX_PASSWORD)
+  ) {
     problems.push(`${service}: carries the sandbox role's password`);
+  }
+  if (
+    handsItOn &&
+    withRoles.services[service].environment?.SANDBOX_TEMPLATE_ENV_DATABASE_URL !== sandboxUrl
+  ) {
+    problems.push(`${service}: must start sandboxes on the sandbox role`);
   }
 }
 const migrateEnv = withRoles.services.migrate?.environment ?? {};

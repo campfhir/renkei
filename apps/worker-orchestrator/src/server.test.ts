@@ -1,8 +1,14 @@
-import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { createMemoryDataStore } from '@renkei/db';
+import { isRecord } from '@renkei/guards';
 import { FakeSandboxProvider, Orchestrator, sandboxApiKey } from '@renkei/sandbox-orchestrator';
 import { createOrchestratorServer } from './server';
+
+/** A response's JSON body as a record ({} when it is not one). */
+async function record(response: Response): Promise<Record<string, unknown>> {
+  const body: unknown = await response.json();
+  return isRecord(body) ? body : {};
+}
 
 const silent = { info: () => undefined, warn: () => undefined, error: () => undefined };
 
@@ -25,7 +31,8 @@ async function start() {
     providerName: provider.name,
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const address = server.address();
+  const base = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
   const post = (path: string, body: unknown, key = 'caller-key') =>
     fetch(`${base}${path}`, {
       method: 'POST',
@@ -47,10 +54,10 @@ describe('the orchestrator’s HTTP surface', () => {
   it('answers where a scope’s sandbox is and the key it takes, making it on the first ask', async () => {
     const response = await running.post('/v1/ensure', { key: 'ann' });
     expect(response.status).toBe(200);
-    const body = (await response.json()) as { sandboxId: string; url: string; key: string };
+    const body = await record(response);
     expect(body.url).toBe('http://m1.sandbox.test:8092');
-    expect(body.key).toBe(sandboxApiKey('master', body.sandboxId));
-    const again = (await (await running.post('/v1/ensure', { key: 'ann' })).json()) as typeof body;
+    expect(body.key).toBe(sandboxApiKey('master', String(body.sandboxId)));
+    const again = await record(await running.post('/v1/ensure', { key: 'ann' }));
     expect(again).toEqual(body);
     expect(running.provider.machines.size).toBe(1);
   });
@@ -75,10 +82,10 @@ describe('the orchestrator’s HTTP surface', () => {
   });
 
   it('reports what sandboxes can do on /health once one has come up, without a key', async () => {
-    const before = (await (await fetch(`${running.base}/health`)).json()) as object;
+    const before = await record(await fetch(`${running.base}/health`));
     expect(before).toEqual({ ok: true, orchestrator: true, provider: 'fake' });
     await running.post('/v1/ensure', { key: 'ann' });
-    const after = (await (await fetch(`${running.base}/health`)).json()) as object;
+    const after = await record(await fetch(`${running.base}/health`));
     expect(after).toEqual({
       ok: true,
       orchestrator: true,
@@ -90,16 +97,27 @@ describe('the orchestrator’s HTTP surface', () => {
   it('lists the sandboxes there are, a running one with its address and key', async () => {
     await running.post('/v1/ensure', { key: 'ann' });
     await running.post('/v1/ensure', { key: 'agent:a1' });
-    const listed = (await (await running.post('/v1/list', {})).json()) as {
-      sandboxes: Array<{ routeKey: string; kind: string; state: string; url?: string; key?: string }>;
-    };
-    expect(listed.sandboxes.map((sandbox) => [sandbox.routeKey, sandbox.kind, sandbox.state])).toEqual(
+    const listed = await record(await running.post('/v1/list', {}));
+    const sandboxes = Array.isArray(listed.sandboxes) ? listed.sandboxes.filter(isRecord) : [];
+    expect(sandboxes.map((sandbox) => [sandbox.routeKey, sandbox.kind, sandbox.state])).toEqual(
       expect.arrayContaining([
         ['ann', 'user', 'running'],
         ['agent:a1', 'agent', 'running'],
       ])
     );
-    expect(listed.sandboxes.every((sandbox) => sandbox.url && sandbox.key)).toBe(true);
+    expect(sandboxes).toHaveLength(2);
+    expect(sandboxes.every((sandbox) => sandbox.url && sandbox.key)).toBe(true);
+  });
+
+  it('answers a call sent to it in place of a sandbox that could not be brought up with the reason, whatever the call was', async () => {
+    const starting = await running.post('/unavailable/starting/v1/list', { subject: 'ann' });
+    expect(starting.status).toBe(503);
+    expect(await starting.json()).toMatchObject({ error: { type: 'sandbox_starting' } });
+    const failed = await fetch(`${running.base}/unavailable/provider/v1/previews/proxy/web/`, {
+      headers: { authorization: 'Bearer caller-key' },
+    });
+    expect(failed.status).toBe(502);
+    expect(await failed.json()).toMatchObject({ error: { type: 'sandbox_unavailable' } });
   });
 
   it('removes a scope’s sandbox on request', async () => {

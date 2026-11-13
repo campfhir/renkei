@@ -27,8 +27,9 @@ export class FakeSandboxProvider implements SandboxProvider {
   /** Every call made, in order: `create:<sandboxId>`, `suspend:<providerId>`, … */
   readonly calls: string[] = [];
   /** Set to make the next call of that name fail once. */
-  failNext: Partial<Record<'create' | 'suspend' | 'resume' | 'destroy' | 'inspect' | 'list', string>> =
-    {};
+  failNext: Partial<
+    Record<'create' | 'suspend' | 'resume' | 'destroy' | 'inspect' | 'list', string>
+  > = {};
   private made = 0;
 
   constructor(private readonly now: () => number = Date.now) {}

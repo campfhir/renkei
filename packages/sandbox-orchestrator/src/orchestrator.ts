@@ -317,7 +317,8 @@ export class Orchestrator {
       throw new OrchestratorError('provider', messageOf(error));
     }
     if (!seen || seen.state === 'failed') {
-      if (seen && row.providerId) await this.provider.destroy(row.providerId).catch(() => undefined);
+      if (seen && row.providerId)
+        await this.provider.destroy(row.providerId).catch(() => undefined);
       await store.transition({
         id: row.id,
         from: ['running'],
@@ -456,7 +457,9 @@ export class Orchestrator {
     } catch (error) {
       // Gone at the provider: the next call makes a new one. Otherwise it
       // is still suspended there, and the next call tries again.
-      const seen = providerId ? await this.provider.inspect(providerId).catch(() => undefined) : null;
+      const seen = providerId
+        ? await this.provider.inspect(providerId).catch(() => undefined)
+        : null;
       const gone = seen === null || seen?.state === 'failed';
       if (gone && providerId) await this.provider.destroy(providerId).catch(() => undefined);
       await store.transition({
@@ -570,11 +573,14 @@ export class Orchestrator {
         await work();
       } catch (error) {
         report.failures += 1;
-        this.logger.warn('sandbox for {scope} could not be {what}: {error}; it is tried again on the next sweep', {
-          ...this.attrs(row),
-          what,
-          error: messageOf(error),
-        });
+        this.logger.warn(
+          'sandbox for {scope} could not be {what}: {error}; it is tried again on the next sweep',
+          {
+            ...this.attrs(row),
+            what,
+            error: messageOf(error),
+          }
+        );
       }
     };
 
@@ -601,10 +607,10 @@ export class Orchestrator {
       await guard(row, 'removed', async () => {
         if (await this.destroy(row, ['running', 'suspended'], null)) {
           report.removed += 1;
-          this.logger.info(
-            'sandbox for {scope} was removed after being idle since {idleSince}',
-            { ...this.attrs(row), idleSince: row.lastActiveAt.toISOString() }
-          );
+          this.logger.info('sandbox for {scope} was removed after being idle since {idleSince}', {
+            ...this.attrs(row),
+            idleSince: row.lastActiveAt.toISOString(),
+          });
         }
       });
     }

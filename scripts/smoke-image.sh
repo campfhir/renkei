@@ -15,7 +15,7 @@
 #   scripts/smoke-image.sh <target> <image>
 #
 # <target> is the Dockerfile stage: runtime, migrate, worker, fileshares,
-# onbase, mirth, admanager, delegate or sandbox. The database is
+# onbase, mirth, admanager, delegate, sandbox or orchestrator. The database is
 # SMOKE_DATABASE_URL (default postgres://renkei:renkei@127.0.0.1:5432/renkei),
 # reached over the host network, which is also where the image binds its
 # port — one image at a time. For every target but migrate the database
@@ -65,6 +65,8 @@ case "$target" in
   mirth) ready_url=http://127.0.0.1:8093/health ;;
   admanager) ready_url=http://127.0.0.1:8095/health ;;
   delegate) ready_url=http://127.0.0.1:8096/health ;;
+  # No engine here: the orchestrator says so in its log and still answers.
+  orchestrator) ready_url=http://127.0.0.1:8097/health ;;
   # The queue consumer listens on nothing; its boot line is the sign.
   worker) ready_url= ;;
   *)
@@ -89,6 +91,7 @@ env_args=(
   -e ADMANAGER_WORKER_API_KEY="$(key)"
   -e SANDBOX_WORKER_API_KEY="$(key)"
   -e SANDBOX_WORKER_URL=http://127.0.0.1:8092
+  -e SANDBOX_ORCHESTRATOR_API_KEY="$(key)"
   -e PUBLIC_BASE_URL=http://127.0.0.1:3000
 )
 

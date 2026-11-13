@@ -29,6 +29,7 @@ import {
   sandboxConfig,
   sandboxEndpointFor,
   sandboxEndpoints,
+  sandboxRouteKey,
 } from './routing';
 
 export {
@@ -36,6 +37,8 @@ export {
   resetSandboxRoutingForTests,
   sandboxConfig,
   sandboxEndpointFor,
+  sandboxOrchestratorConfig,
+  sandboxRouteKey,
   type SandboxEndpoint,
 } from './routing';
 
@@ -80,9 +83,9 @@ export interface SandboxTarget {
 
 const REQUEST_TIMEOUT_MS = 90_000;
 
-/** The assignment a call for `target` goes by: its route when it names one, else its subject. */
-function routeOf(target: { subject: string; route?: string }): string {
-  return target.route || target.subject;
+/** The assignment a call for `target` goes by: its route when it names one, else its subject (routing.ts). */
+function routeOf(target: { subject: string; route?: string; scope?: string }): string {
+  return sandboxRouteKey(target);
 }
 
 /** A request body as the worker gets it: without the route, which is the client's business alone. */
@@ -322,12 +325,15 @@ async function callOp(
   options: { retry?: boolean } = {}
 ): Promise<ClientResult<Response>> {
   // Whose instance: the call's route when its target names one, else its subject.
-  const subject = !isRecord(body)
-    ? null
-    : typeof body.route === 'string' && body.route
-      ? body.route
-      : typeof body.subject === 'string'
-        ? body.subject
+  const subject =
+    isRecord(body) && typeof body.subject === 'string'
+      ? sandboxRouteKey({
+          subject: body.subject,
+          route: typeof body.route === 'string' ? body.route : null,
+          scope: typeof body.scope === 'string' ? body.scope : null,
+        })
+      : isRecord(body) && typeof body.route === 'string' && body.route
+        ? body.route
         : null;
   const cfg = await sandboxEndpointFor(subject);
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
@@ -2686,6 +2692,17 @@ export function clientFailure(error: SandboxClientError): { status: number; mess
     };
   }
   switch (error.type) {
+    // The orchestrator, answering for a sandbox it could not bring up (routing.ts).
+    case 'sandbox_starting':
+      return {
+        status: 503,
+        message: error.message ?? 'The sandbox is still starting. Try again in a moment.',
+      };
+    case 'sandbox_unavailable':
+      return {
+        status: 502,
+        message: error.message ?? 'The sandbox could not be started. Try again in a moment.',
+      };
     case 'shutting_down':
       return {
         status: 503,

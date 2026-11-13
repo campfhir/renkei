@@ -55,6 +55,28 @@ export interface AzureSandbox {
   createdAt?: string;
 }
 
+/** What a sandbox is created with — the fields of the SDK's CreateSandboxRequest this provider sets. */
+export interface AzureCreateRequest {
+  sourcesRef: { diskImage: { name: string; isPublic: boolean } };
+  resources: { cpu: string; memory: string; disk: string };
+  lifecycle: {
+    autoSuspend: { enabled: boolean; interval: number; mode: 'Memory' | 'Disk' };
+    autoDelete: { enabled: boolean; deleteIntervalSeconds: number };
+  };
+  labels: Record<string, string>;
+  environment: Record<string, string>;
+  ports: Array<{
+    port: number;
+    auth: { anonymous: boolean };
+    protocol: 'Http';
+    ipAccessControl?: {
+      defaultAction: 'Deny';
+      rules: Array<{ name: string; action: 'Allow'; priority: number; sourceCidrs: string[] }>;
+    };
+  }>;
+  customerVnetConnectionName?: string;
+}
+
 interface Poller<T> {
   pollUntilDone(): Promise<T>;
 }
@@ -63,7 +85,7 @@ interface Poller<T> {
 export interface AzureSandboxClient {
   get(sandboxId: string): Promise<AzureSandbox>;
   list(options?: { labels?: Record<string, string> }): AsyncIterable<AzureSandbox>;
-  beginCreate(body: Record<string, unknown>): Poller<AzureSandbox>;
+  beginCreate(body: AzureCreateRequest): Poller<AzureSandbox>;
   delete(sandboxId: string): Promise<void>;
   beginStop(sandboxId: string): Poller<unknown>;
   beginResume(sandboxId: string): Poller<unknown>;
@@ -114,9 +136,8 @@ export function azureState(state: string | undefined): ProviderSandboxState | nu
 }
 
 function statusOf(error: unknown): number {
-  if (typeof error !== 'object' || error === null) return 0;
-  const status = (error as { statusCode?: unknown }).statusCode;
-  return typeof status === 'number' ? status : 0;
+  if (!(error instanceof Error) || !('statusCode' in error)) return 0;
+  return typeof error.statusCode === 'number' ? error.statusCode : 0;
 }
 
 function wrap(error: unknown): ProviderError {
@@ -188,22 +209,25 @@ export class AzureSandboxProvider implements SandboxProvider {
             {
               port: SANDBOX_WORKER_PORT,
               auth: { anonymous: true },
-              protocol: 'Http',
+              protocol: 'Http' as const,
               ...(cidrs.length > 0
                 ? {
                     ipAccessControl: {
-                      defaultAction: 'Deny',
+                      defaultAction: 'Deny' as const,
                       rules: [
-                        { name: 'callers', action: 'Allow', priority: 100, sourceCidrs: cidrs },
+                        {
+                          name: 'callers',
+                          action: 'Allow' as const,
+                          priority: 100,
+                          sourceCidrs: cidrs,
+                        },
                       ],
                     },
                   }
                 : {}),
             },
           ],
-          ...(options.vnetConnection
-            ? { customerVnetConnectionName: options.vnetConnection }
-            : {}),
+          ...(options.vnetConnection ? { customerVnetConnectionName: options.vnetConnection } : {}),
         })
         .pollUntilDone();
       return { providerId: sandbox.id };
@@ -284,8 +308,9 @@ export interface AzureClientConfig {
 export async function createAzureSandboxClient(
   config: AzureClientConfig
 ): Promise<AzureSandboxClient> {
-  const [{ SandboxGroupClient, endpointForRegion }, { DefaultAzureCredential }] =
-    await Promise.all([import('@azure/containerapps-sandbox'), import('@azure/identity')]);
+  const [{ SandboxGroupClient, endpointForRegion }, { DefaultAzureCredential }] = await Promise.all(
+    [import('@azure/containerapps-sandbox'), import('@azure/identity')]
+  );
   const group = new SandboxGroupClient(
     new DefaultAzureCredential(),
     config.endpoint || endpointForRegion(config.region),
@@ -297,8 +322,7 @@ export async function createAzureSandboxClient(
   return {
     get: (id) => sandboxes.get(id),
     list: (options) => sandboxes.list(options),
-    // The body is built in this file against the SDK's CreateSandboxRequest.
-    beginCreate: (body) => sandboxes.beginCreate(body as Parameters<typeof sandboxes.beginCreate>[0]),
+    beginCreate: (body) => sandboxes.beginCreate(body),
     delete: (id) => sandboxes.delete(id),
     beginStop: (id) => sandboxes.beginStop(id),
     beginResume: (id) => sandboxes.beginResume(id),

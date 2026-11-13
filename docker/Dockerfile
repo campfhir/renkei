@@ -449,6 +449,49 @@ ENTRYPOINT ["dumb-init", "--"]
 WORKDIR /app/apps/worker-delegate
 CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/index.ts"]
 
+# Orchestrator stage - the process that makes, suspends, resumes and removes
+# sandboxes (docs/sandbox-orchestrator-design.md). Its own image because it
+# is the one container given the means to do that — the Docker engine's
+# socket on a single host, the sandbox group's role on Azure — and it runs
+# nobody's code, so nothing a sandbox runs is ever beside that means.
+FROM node:24-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85 AS orchestrator
+ARG PNPM_VERSION
+
+WORKDIR /app
+
+ARG DISTRO_REFRESH
+RUN apk upgrade --no-cache && apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
+
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S worker -u 1001
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
+COPY --parents apps/*/package.json packages/*/package.json ./
+RUN pnpm install --frozen-lockfile --prod --no-optional \
+      --filter @renkei/worker-orchestrator... && \
+    rm -rf /root/.pnpm-store /root/.npm && \
+    rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/pnpm /usr/local/bin/pnpx
+
+COPY --chown=worker:nodejs --parents packages/*/src ./
+COPY --chown=worker:nodejs apps/worker-orchestrator/src ./apps/worker-orchestrator/src
+COPY --chown=worker:nodejs apps/worker-orchestrator/package.json apps/worker-orchestrator/tsconfig.json ./apps/worker-orchestrator/
+
+USER worker
+
+ARG GIT_COMMIT
+ENV NODE_ENV=production \
+    GIT_COMMIT=${GIT_COMMIT}
+
+EXPOSE 8097
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.SANDBOX_ORCHESTRATOR_PORT || 8097) + '/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+
+ENTRYPOINT ["dumb-init", "--"]
+WORKDIR /app/apps/worker-orchestrator
+CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/index.ts"]
+
 # ADManager stage - the ManageEngine ADManager Plus egress service, its own
 # image on purpose: it is the only process that dials an organization's
 # ADManager Plus servers (typically on a private network the web app's SSRF

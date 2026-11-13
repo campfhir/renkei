@@ -16,6 +16,12 @@
  *                       not deleted; a running one with its url and key.
  *   POST /v1/remove     `{ key }` → `{ removed }`: remove a scope's
  *                       sandbox now, with what it holds.
+ *   ANY  /unavailable/<why>/…   answers every request with a refusal in
+ *                       the sandbox worker's error shape. Where the
+ *                       client sends a call whose sandbox could not be
+ *                       brought up (routing.ts says why it is done this
+ *                       way): `starting` → 503 `sandbox_starting`,
+ *                       anything else → 502 `sandbox_unavailable`.
  *
  * Bearer-authenticated (SANDBOX_ORCHESTRATOR_API_KEY). The answer to
  * `ensure` carries a sandbox's key, so this surface is for the processes
@@ -97,6 +103,21 @@ export function createOrchestratorServer(deps: OrchestratorServerDeps): Server {
       });
     }
     if (!matchApiKey(request, deps.apiKeys)) return sendError(response, 'unauthorized');
+    if (url.pathname.startsWith('/unavailable/')) {
+      request.resume();
+      const starting = url.pathname.startsWith('/unavailable/starting/');
+      return sendJson(response, starting ? 503 : 502, {
+        error: starting
+          ? {
+              type: 'sandbox_starting',
+              message: 'The sandbox is still starting. Try again in a moment.',
+            }
+          : {
+              type: 'sandbox_unavailable',
+              message: 'The sandbox could not be started. Try again in a moment.',
+            },
+      });
+    }
     if (request.method !== 'POST') return sendError(response, 'method_not_allowed');
     const raw = await readBody(request, MAX_BODY_BYTES);
     if (raw === null) return sendError(response, 'too_large');
@@ -109,12 +130,14 @@ export function createOrchestratorServer(deps: OrchestratorServerDeps): Server {
     if (!isRecord(body)) return sendError(response, 'bad_request');
 
     if (url.pathname === '/v1/ensure') {
-      if (typeof body.key !== 'string') return sendError(response, 'bad_request', 'key is required');
+      if (typeof body.key !== 'string')
+        return sendError(response, 'bad_request', 'key is required');
       const endpoint = await orchestrator.ensure(body.key, { verify: body.verify === true });
       return sendJson(response, 200, endpoint);
     }
     if (url.pathname === '/v1/remove') {
-      if (typeof body.key !== 'string') return sendError(response, 'bad_request', 'key is required');
+      if (typeof body.key !== 'string')
+        return sendError(response, 'bad_request', 'key is required');
       const removed = await orchestrator.remove(body.key, 'removed on request');
       return sendJson(response, 200, { removed });
     }
@@ -146,10 +169,13 @@ export function createOrchestratorServer(deps: OrchestratorServerDeps): Server {
         else response.end();
         return;
       }
-      logger.error('a request to the orchestrator failed unexpectedly: {error}; it was not served', {
-        component: COMPONENT,
-        error: error instanceof Error ? (error.stack ?? error.message) : String(error),
-      });
+      logger.error(
+        'a request to the orchestrator failed unexpectedly: {error}; it was not served',
+        {
+          component: COMPONENT,
+          error: error instanceof Error ? (error.stack ?? error.message) : String(error),
+        }
+      );
       if (!response.headersSent) sendError(response, 'internal');
       else response.end();
     });
