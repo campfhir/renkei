@@ -8,6 +8,7 @@ export default {
     // ESM-only kysely helpers jest cannot parse; tests get a silent logger.
     '^\\./logger$': '<rootDir>/src/test-support/logger-mock.ts',
     '^@renkei/guards$': '<rootDir>/../../packages/guards/src/index.ts',
+    '^@renkei/blob-store$': '<rootDir>/../../packages/blob-store/src/index.ts',
     '^@renkei/db$': '<rootDir>/../../packages/db/src/index.ts',
     '^@renkei/worker-kit$': '<rootDir>/../../packages/worker-kit/src/index.ts',
     '^@renkei/sandbox-orchestrator$': '<rootDir>/../../packages/sandbox-orchestrator/src/index.ts',

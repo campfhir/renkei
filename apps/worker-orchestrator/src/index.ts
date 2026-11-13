@@ -19,6 +19,9 @@
  *     handed to a sandbox.
  *   DATABASE_URL                 — the shared Postgres (`sandboxes`).
  *   SANDBOX_SWEEP_SECONDS        — how often the idle rules run, default 30.
+ *   BLOB_STORE_PROVIDER and its variables — where an evicted sandbox's
+ *     archive is kept (archive-blobs.ts). Without a blob store an
+ *     eviction removes the sandbox's work with its machine.
  */
 
 import { checkDataStore, closeDataStore, getDataStore } from '@renkei/db';
@@ -31,6 +34,7 @@ import {
 } from '@renkei/sandbox-orchestrator';
 import { watchLogLevel } from '@renkei/settings';
 import { schedulePeriodicSweep } from '@renkei/worker-loop';
+import { archiveBlobStore, archiveBlobsOf, archiveRetentionMs } from './archive-blobs';
 import { createOrchestratorServer } from './server';
 import { attachPersistentLogging, logger } from './logger';
 
@@ -98,9 +102,31 @@ async function main(): Promise<void> {
   }
 
   const store = () => getDataStore().sandboxes;
+  const blobStore = archiveBlobStore(process.env);
+  let retentionMs: number;
+  try {
+    retentionMs = archiveRetentionMs(process.env);
+  } catch (error) {
+    fatal(error instanceof Error ? error.message : String(error));
+  }
+  if (!blobStore) {
+    logger.warn(
+      'no blob store is configured (BLOB_STORE_PROVIDER): a sandbox evicted after {deleteHours} idle hours is removed with everything it holds, and nothing is brought back',
+      { component: COMPONENT, deleteHours: rules.idleDeleteMs / 3_600_000 }
+    );
+  }
   const orchestrator = new Orchestrator({
     provider,
     store,
+    ...(blobStore
+      ? {
+          archives: {
+            store: () => getDataStore().sandboxArchives,
+            blobs: archiveBlobsOf(blobStore),
+            retentionMs,
+          },
+        }
+      : {}),
     masterKey,
     env: templateEnv(process.env),
     logger,
@@ -115,10 +141,15 @@ async function main(): Promise<void> {
     async () => {
       const report = await orchestrator.sweep();
       const acted =
-        report.suspended + report.removed + report.recovered + report.orphans + report.failures;
+        report.suspended +
+        report.removed +
+        report.recovered +
+        report.orphans +
+        report.archivesExpired +
+        report.failures;
       if (acted > 0) {
         logger.info(
-          'sandbox sweep: {suspended} suspended, {removed} removed, {recovered} recovered, {orphans} machines without a record removed, {failures} failed',
+          'sandbox sweep: {suspended} suspended, {removed} evicted ({archived} archived first), {recovered} recovered, {orphans} machines without a record removed, {archivesExpired} old archives dropped, {failures} failed',
           { component: `${COMPONENT}/sweep`, ...report }
         );
       }
@@ -134,8 +165,9 @@ async function main(): Promise<void> {
   });
   server.listen(port, '0.0.0.0', () => {
     logger.info(
-      'started {application} {version}, listening on port {port}; sandboxes are made by {provider}, suspended after {suspendMinutes} idle minutes and removed after {deleteHours} idle hours',
+      'started {application} {version}, listening on port {port}; sandboxes are made by {provider}, suspended after {suspendMinutes} idle minutes and evicted after {deleteHours} idle hours, archived to {archives}',
       {
+        archives: blobStore ? `the ${blobStore.provider} blob store` : 'nowhere (no blob store)',
         component: `${COMPONENT}/server`,
         port,
         provider: provider.name,

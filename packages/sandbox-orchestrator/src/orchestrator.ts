@@ -4,8 +4,12 @@
  *
  * A sandbox is made the first time a call is made for its scope
  * (`ensure`), suspended when nothing has called it for a while, resumed
- * on the next call, and removed once it has been idle for a day
- * (`sweep`). The provider (provider.ts) does the making; the `sandboxes`
+ * on the next call, and evicted once it has been idle for a day
+ * (`sweep`): what it holds is archived to the blob store, compressed,
+ * its machine is removed, and the next call for the scope makes a new
+ * machine and unpacks the archive there before anyone is served. So an
+ * eviction frees the machine, never the work — and a sandbox is only
+ * removed once its archive is written. The provider (provider.ts) does the making; the `sandboxes`
  * table is the record; this is the only thing that decides.
  *
  * Several orchestrators may run at once, and one may die half way
@@ -29,6 +33,13 @@
 
 import { randomUUID } from 'node:crypto';
 import type { SandboxRecord, SandboxState, SandboxStore } from '@renkei/db';
+import {
+  DEFAULT_ARCHIVE_RETENTION_MS,
+  archiveBlobKey,
+  httpArchiveTransfer,
+  type ArchiveOptions,
+  type ArchiveTransfer,
+} from './archive';
 import { sandboxApiKey } from './keys';
 import {
   SANDBOX_WORKER_PORT,
@@ -52,9 +63,16 @@ export interface OrchestratorOptions {
   /** What every sandbox's worker is started with, besides what the orchestrator sets itself. */
   env: Record<string, string>;
   logger: OrchestratorLogger;
+  /**
+   * Where an evicted sandbox's contents are kept, and brought back from.
+   * Without it an eviction removes the sandbox and what it held.
+   */
+  archives?: ArchiveOptions;
+  /** How long after a failed eviction the same sandbox is tried again. */
+  evictRetryMs?: number;
   /** Suspend a sandbox nothing has called for this long. */
   idleSuspendMs?: number;
-  /** Remove a sandbox nothing has called for this long. */
+  /** Evict a sandbox nothing has called for this long. */
   idleDeleteMs?: number;
   /** How long a sandbox gets to answer after it is made or resumed. */
   readyTimeoutMs?: number;
@@ -83,6 +101,9 @@ const DEFAULT_STALE_TRANSITION_MS = 10 * 60_000;
 const DEFAULT_VERIFY_AFTER_MS = 30_000;
 const DEFAULT_KEEP_DELETED_MS = 7 * 24 * 60 * 60_000;
 const DEFAULT_SWEEP_BATCH = 100;
+const DEFAULT_EVICT_RETRY_MS = 15 * 60_000;
+/** How often a long transfer says it is still at it, so nobody takes it for abandoned. */
+const KEEP_ALIVE_MS = 60_000;
 const POLL_MS = 500;
 const PROBE_TIMEOUT_MS = 2_000;
 const COMPONENT = 'sandbox-orchestrator';
@@ -114,7 +135,12 @@ export interface SandboxEndpoint {
 
 export interface SweepReport {
   suspended: number;
+  /** Sandboxes evicted: their machines removed (after an archive, where archives are kept). */
   removed: number;
+  /** How many of those evictions wrote an archive first. */
+  archived: number;
+  /** Archives nobody came back for, dropped. */
+  archivesExpired: number;
   /** Abandoned transitions put right. */
   recovered: number;
   /** Machines with no row, removed. */
@@ -139,7 +165,13 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-const TRANSITIONAL: SandboxState[] = ['provisioning', 'resuming', 'suspending', 'deleting'];
+const TRANSITIONAL: SandboxState[] = [
+  'provisioning',
+  'resuming',
+  'suspending',
+  'archiving',
+  'deleting',
+];
 
 export class Orchestrator {
   private readonly provider: SandboxProvider;
@@ -156,6 +188,10 @@ export class Orchestrator {
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly newId: () => string;
   private readonly probe: (address: string) => Promise<unknown | null>;
+  private readonly archives: ArchiveOptions | null;
+  private readonly transfer: ArchiveTransfer;
+  private readonly archiveRetentionMs: number;
+  private readonly evictRetryMs: number;
   /** One `ensure` at a time per scope in this process; the row settles it between processes. */
   private readonly inflight = new Map<string, Promise<SandboxEndpoint>>();
   private lastHealth: unknown | null = null;
@@ -175,6 +211,15 @@ export class Orchestrator {
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.newId = options.newId ?? randomUUID;
     this.probe = options.probe ?? defaultProbe;
+    this.archives = options.archives ?? null;
+    this.transfer = options.archives?.transfer ?? httpArchiveTransfer;
+    this.archiveRetentionMs = options.archives?.retentionMs ?? DEFAULT_ARCHIVE_RETENTION_MS;
+    // Never longer than the time between the two idle rules: a sandbox
+    // suspended for being idle must be due the moment its day is up.
+    this.evictRetryMs = Math.min(
+      options.evictRetryMs ?? DEFAULT_EVICT_RETRY_MS,
+      Math.max(0, this.idleDeleteMs - this.idleSuspendMs)
+    );
   }
 
   /** What the last sandbox to come up said on `/health`: its capabilities, for the callers' feature checks. */
@@ -217,7 +262,6 @@ export class Orchestrator {
         SANDBOX_INSTANCE_ID: row.id,
       },
       idleSuspendSeconds: Math.round(this.idleSuspendMs / 1000),
-      idleDeleteSeconds: Math.round(this.idleDeleteMs / 1000),
     };
   }
 
@@ -406,6 +450,8 @@ export class Orchestrator {
         providerId,
       });
       const address = await this.waitReady(providerId);
+      // What the scope's last sandbox held, before anyone is served.
+      await this.restore(row, address);
       const mine = await store.transition({
         id: row.id,
         from: ['provisioning'],
@@ -489,7 +535,7 @@ export class Orchestrator {
     const store = this.store();
     const from: SandboxState[] = [row.state];
     const providerId = row.providerId ?? (await this.findMachine(row.id));
-    if (row.state === 'suspending' || row.state === 'resuming') {
+    if (row.state === 'suspending' || row.state === 'resuming' || row.state === 'archiving') {
       const seen = providerId ? await this.provider.inspect(providerId) : null;
       if (seen?.state === 'running' && seen.address) {
         await store.transition({
@@ -527,8 +573,153 @@ export class Orchestrator {
   /** Remove a scope's sandbox now, whatever it is doing; false when it has none. */
   async remove(routeKey: string, reason: string | null = null): Promise<boolean> {
     const row = await this.store().live(routeKey);
-    if (!row) return false;
-    return this.destroy(row, [row.state], reason);
+    const removed = row ? await this.destroy(row, [row.state], reason) : false;
+    // Removed on request means its work too: nothing is left to bring back.
+    const archive = this.archives ? await this.archives.store().remove(routeKey) : null;
+    if (archive && this.archives) await this.archives.blobs.delete(archive.blobKey);
+    return removed || archive !== null;
+  }
+
+  /**
+   * While `work` runs, keep saying the sandbox is still in `state`: a
+   * transfer can outlast the time after which a transition is taken for
+   * abandoned, and another orchestrator must not step in half way.
+   */
+  private async keepingAlive<T>(
+    row: SandboxRecord,
+    state: SandboxState,
+    work: () => Promise<T>
+  ): Promise<T> {
+    const timer = setInterval(() => {
+      void this.store()
+        .transition({ id: row.id, from: [state], to: state, at: this.at() })
+        .catch(() => undefined);
+    }, KEEP_ALIVE_MS);
+    timer.unref?.();
+    try {
+      return await work();
+    } finally {
+      clearInterval(timer);
+    }
+  }
+
+  /** Unpack the scope's archive, if it has one, into its new sandbox. Throws when it cannot. */
+  private async restore(row: SandboxRecord, address: string): Promise<void> {
+    const archives = this.archives;
+    if (!archives) return;
+    const archive = await archives.store().get(row.routeKey);
+    if (!archive) return;
+    const body = await archives.blobs.get(archive.blobKey);
+    if (!body) {
+      // The record outlived its object (the store's own retention, an
+      // operator). Nothing can be brought back; the scope starts empty.
+      await archives.store().remove(row.routeKey);
+      this.logger.warn(
+        'the archive of the sandbox for {scope} is no longer in the blob store; the new sandbox starts empty',
+        this.attrs(row)
+      );
+      return;
+    }
+    await this.keepingAlive(row, 'provisioning', () =>
+      this.transfer.upload(this.endpointOf(row, address), body)
+    );
+    this.logger.info(
+      'sandbox for {scope} was restored from its archive ({sizeBytes} bytes, taken {archivedAt})',
+      {
+        ...this.attrs(row),
+        sizeBytes: archive.sizeBytes,
+        archivedAt: archive.createdAt.toISOString(),
+      }
+    );
+  }
+
+  /**
+   * Evict an idle sandbox: archive what it holds, then remove its
+   * machine. The machine is only removed once the archive is written and
+   * recorded; if anything fails before that the sandbox is put back,
+   * suspended, to be tried again later. True when this call evicted it.
+   */
+  private async evict(row: SandboxRecord): Promise<'evicted' | 'archived' | 'skipped'> {
+    const archives = this.archives;
+    if (!archives) {
+      return (await this.destroy(row, ['running', 'suspended'], null)) ? 'evicted' : 'skipped';
+    }
+    const store = this.store();
+    const mine = await store.transition({
+      id: row.id,
+      from: ['running', 'suspended'],
+      to: 'archiving',
+      at: this.at(),
+    });
+    if (!mine) return 'skipped';
+    const providerId = row.providerId;
+    try {
+      const seen = providerId ? await this.provider.inspect(providerId) : null;
+      if (!providerId || !seen || seen.state === 'failed') {
+        // Nothing left to archive: the machine went by itself.
+        if (providerId && seen) await this.provider.destroy(providerId);
+        await store.transition({
+          id: row.id,
+          from: ['archiving'],
+          to: 'deleted',
+          at: this.at(),
+          address: null,
+          error: 'the provider no longer had it when it came to be archived',
+        });
+        return 'evicted';
+      }
+      // Only a running sandbox can hand over what it holds.
+      if (seen.state !== 'running') await this.provider.resume(providerId);
+      const address = await this.waitReady(providerId);
+      const blobKey = archiveBlobKey(row.routeKey, row.id);
+      const { sizeBytes } = await this.keepingAlive(row, 'archiving', async () =>
+        archives.blobs.put(blobKey, await this.transfer.download(this.endpointOf(row, address)))
+      );
+      const previous = await archives.store().put({
+        routeKey: row.routeKey,
+        sandboxId: row.id,
+        blobKey,
+        sizeBytes,
+        createdAt: this.at(),
+      });
+      if (previous && previous.blobKey !== blobKey) {
+        await archives.blobs.delete(previous.blobKey).catch(() => undefined);
+      }
+      this.logger.info('sandbox for {scope} was archived ({sizeBytes} bytes) before eviction', {
+        ...this.attrs(row),
+        sizeBytes,
+      });
+    } catch (error) {
+      // Back as it was, suspended; the sweep comes back to it later.
+      if (providerId) await this.provider.suspend(providerId).catch(() => undefined);
+      await store.transition({
+        id: row.id,
+        from: ['archiving'],
+        to: 'suspended',
+        at: this.at(),
+        address: null,
+        error: `could not be archived: ${messageOf(error)}`,
+      });
+      throw error;
+    }
+    // Archived and recorded: now the machine may go. If another
+    // orchestrator took the row for abandoned meanwhile, it stays.
+    const going = await store.transition({
+      id: row.id,
+      from: ['archiving'],
+      to: 'deleting',
+      at: this.at(),
+    });
+    if (!going) return 'skipped';
+    await this.provider.destroy(providerId);
+    await store.transition({
+      id: row.id,
+      from: ['deleting'],
+      to: 'deleted',
+      at: this.at(),
+      address: null,
+    });
+    return 'archived';
   }
 
   private async destroy(
@@ -562,6 +753,8 @@ export class Orchestrator {
     const report: SweepReport = {
       suspended: 0,
       removed: 0,
+      archived: 0,
+      archivesExpired: 0,
       recovered: 0,
       orphans: 0,
       purged: 0,
@@ -597,21 +790,25 @@ export class Orchestrator {
       });
     }
 
-    // Idle for a day: gone, whether it was running or suspended.
+    // Idle for a day: evicted, whether it was running or suspended —
+    // archived first where archives are kept. One that failed is left a
+    // while before it is tried again (its state last changed when it failed).
     const expired = await store.list({
       states: ['running', 'suspended'],
       lastActiveBefore: new Date(now - this.idleDeleteMs),
+      stateChangedBefore: new Date(now - this.evictRetryMs),
       limit: this.sweepBatch,
     });
     for (const row of expired) {
-      await guard(row, 'removed', async () => {
-        if (await this.destroy(row, ['running', 'suspended'], null)) {
-          report.removed += 1;
-          this.logger.info('sandbox for {scope} was removed after being idle since {idleSince}', {
-            ...this.attrs(row),
-            idleSince: row.lastActiveAt.toISOString(),
-          });
-        }
+      await guard(row, 'evicted', async () => {
+        const outcome = await this.evict(row);
+        if (outcome === 'skipped') return;
+        report.removed += 1;
+        if (outcome === 'archived') report.archived += 1;
+        this.logger.info('sandbox for {scope} was evicted after being idle since {idleSince}', {
+          ...this.attrs(row),
+          idleSince: row.lastActiveAt.toISOString(),
+        });
       });
     }
 
@@ -652,6 +849,27 @@ export class Orchestrator {
         'the provider could not be asked for its sandboxes: {error}; machines with no record are left until the next sweep',
         { component: COMPONENT, provider: this.provider.name, error: messageOf(error) }
       );
+    }
+
+    // Archives nobody came back for.
+    if (this.archives) {
+      const archives = this.archives;
+      try {
+        const stale = await archives
+          .store()
+          .listOlderThan(new Date(now - this.archiveRetentionMs), this.sweepBatch);
+        for (const archive of stale) {
+          await archives.store().remove(archive.routeKey);
+          await archives.blobs.delete(archive.blobKey);
+          report.archivesExpired += 1;
+        }
+      } catch (error) {
+        report.failures += 1;
+        this.logger.warn(
+          'expired sandbox archives could not be dropped: {error}; they are tried again on the next sweep',
+          { component: COMPONENT, error: messageOf(error) }
+        );
+      }
     }
 
     report.purged = await store.purgeDeleted(new Date(now - this.keepDeletedMs));

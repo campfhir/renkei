@@ -690,7 +690,11 @@ services:
     container_name: renkei-worker-orchestrator
     profiles: ['orchestrator']
     environment:
-      <<: [*runtime-database-urls, *logging-env]
+      # The blob store is where an evicted sandbox's archive is kept
+      # (compressed), to be unpacked into the scope's next sandbox.
+      <<: [*runtime-database-urls, *logging-env, *blob-store]
+      SANDBOX_ARCHIVE_CONTAINER:
+      SANDBOX_ARCHIVE_RETENTION_DAYS:
       SANDBOX_ORCHESTRATOR_API_KEY: ${SANDBOX_ORCHESTRATOR_API_KEY:-}
       SANDBOX_WORKER_API_KEY:
       SANDBOX_PROVIDER: ${SANDBOX_PROVIDER:-docker}

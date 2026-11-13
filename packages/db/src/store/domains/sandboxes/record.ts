@@ -9,6 +9,7 @@ const STATES: readonly SandboxState[] = [
   'suspending',
   'suspended',
   'resuming',
+  'archiving',
   'deleting',
   'deleted',
 ];

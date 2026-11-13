@@ -545,6 +545,7 @@ async function main(): Promise<void> {
 
   const server = createSandboxServer({
     apiKeys,
+    orchestrated,
     browser,
     previews,
     crawler,

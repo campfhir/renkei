@@ -76,7 +76,6 @@ const spec = {
   kind: 'agent' as const,
   env: { A: '1' },
   idleSuspendSeconds: 900,
-  idleDeleteSeconds: 86_400,
 };
 
 describe('the Azure provider', () => {
@@ -94,7 +93,7 @@ describe('the Azure provider', () => {
       resources: { cpu: '2000m', memory: '4096Mi', disk: '40Gi' },
       lifecycle: {
         autoSuspend: { enabled: true, interval: 1800, mode: 'Memory' },
-        autoDelete: { enabled: true, deleteIntervalSeconds: 172_800 },
+        autoDelete: { enabled: false },
       },
       labels: {
         'renkei-orchestrator': 'prod',

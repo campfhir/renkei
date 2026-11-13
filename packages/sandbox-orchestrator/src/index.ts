@@ -26,5 +26,14 @@ export {
 } from './azure-provider';
 export { FakeSandboxProvider } from './fake-provider';
 export { idleRules, providerFromEnv, templateEnv, type IdleRules } from './config';
+export {
+  ARCHIVE_CONTENT_TYPE,
+  DEFAULT_ARCHIVE_RETENTION_MS,
+  archiveBlobKey,
+  httpArchiveTransfer,
+  type ArchiveBlobs,
+  type ArchiveOptions,
+  type ArchiveTransfer,
+} from './archive';
 export { sandboxApiKey } from './keys';
 export { SYSTEM_ROUTE_KEY, isRouteKey, sandboxKindOf } from './scope';

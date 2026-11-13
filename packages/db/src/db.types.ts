@@ -1572,6 +1572,14 @@ export interface SandboxAssignments {
   subject: string;
 }
 
+export interface SandboxArchives {
+  blob_key: string;
+  created_at: Timestamp;
+  route_key: string;
+  sandbox_id: string;
+  size_bytes: Int8;
+}
+
 export interface Sandboxes {
   address: string | null;
   created_at: Timestamp;
@@ -1875,6 +1883,7 @@ export interface DB {
   sandbox_instances: SandboxInstances;
   sandbox_assignments: SandboxAssignments;
   sandboxes: Sandboxes;
+  sandbox_archives: SandboxArchives;
   schedule_calendars: ScheduleCalendars;
   sessions: Sessions;
   jira_sites: JiraSites;

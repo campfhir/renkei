@@ -6,14 +6,79 @@ import { Orchestrator, OrchestratorError } from './orchestrator';
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 
-function setup(overrides: { probe?: (address: string) => Promise<unknown | null> } = {}) {
+/** A blob store in memory, and sandboxes whose whole contents are one string each. */
+function archiveFakes(provider: FakeSandboxProvider) {
+  const blobs = new Map<string, Uint8Array>();
+  /** What each machine holds, by its address. */
+  const contents = new Map<string, string>();
+  const failNext: { put?: string; download?: string; upload?: string } = {};
+  const fail = (name: 'put' | 'download' | 'upload') => {
+    const message = failNext[name];
+    if (message === undefined) return;
+    delete failNext[name];
+    throw new Error(message);
+  };
+  const holdOf = (providerId: string) => contents.get(provider.addressOf(providerId));
+  return {
+    blobs,
+    contents,
+    failNext,
+    holdOf,
+    write: (providerId: string, text: string) =>
+      void contents.set(provider.addressOf(providerId), text),
+    archiveBlobs: {
+      async put(key: string, body: AsyncIterable<Uint8Array>) {
+        const parts: Uint8Array[] = [];
+        for await (const part of body) parts.push(part);
+        fail('put');
+        const bytes = Buffer.concat(parts);
+        blobs.set(key, bytes);
+        return { sizeBytes: bytes.byteLength };
+      },
+      async get(key: string) {
+        const bytes = blobs.get(key);
+        return bytes ? new Response(bytes).body : null;
+      },
+      async delete(key: string) {
+        blobs.delete(key);
+      },
+    },
+    transfer: {
+      async download(sandbox: { url: string }) {
+        fail('download');
+        const text = contents.get(sandbox.url) ?? '';
+        return (async function* () {
+          yield new TextEncoder().encode(text);
+        })();
+      },
+      async upload(sandbox: { url: string }, body: ReadableStream<Uint8Array>) {
+        fail('upload');
+        contents.set(sandbox.url, await new Response(body).text());
+      },
+    },
+  };
+}
+
+function setup(
+  overrides: { probe?: (address: string) => Promise<unknown | null>; archives?: boolean } = {}
+) {
   const clock = { now: Date.UTC(2026, 0, 1) };
   const data = createMemoryDataStore();
   const provider = new FakeSandboxProvider(() => clock.now);
   const logs: string[] = [];
   const log = (level: string) => (message: string) => void logs.push(`${level}: ${message}`);
   let ids = 0;
+  const fakes = archiveFakes(provider);
   const orchestrator = new Orchestrator({
+    ...(overrides.archives
+      ? {
+          archives: {
+            store: () => data.sandboxArchives,
+            blobs: fakes.archiveBlobs,
+            transfer: fakes.transfer,
+          },
+        }
+      : {}),
     provider,
     store: () => data.sandboxes,
     masterKey: 'master',
@@ -26,7 +91,7 @@ function setup(overrides: { probe?: (address: string) => Promise<unknown | null>
     newId: () => `00000000-0000-4000-8000-${String((ids += 1)).padStart(12, '0')}`,
     probe: overrides.probe ?? (async () => ({ ok: true, capabilities: { browser: true } })),
   });
-  return { clock, data, provider, orchestrator, logs };
+  return { clock, data, provider, orchestrator, logs, fakes };
 }
 
 describe('a call for a scope', () => {
@@ -278,7 +343,6 @@ describe('housekeeping', () => {
       kind: 'user',
       env: {},
       idleSuspendSeconds: 900,
-      idleDeleteSeconds: 86_400,
     });
     clock.now += 11 * MINUTE;
     expect((await orchestrator.sweep()).recovered).toBe(1);
@@ -293,7 +357,6 @@ describe('housekeeping', () => {
       kind: 'user',
       env: {},
       idleSuspendSeconds: 900,
-      idleDeleteSeconds: 86_400,
     });
     expect((await orchestrator.sweep()).orphans).toBe(0);
     clock.now += 11 * MINUTE;
@@ -307,5 +370,177 @@ describe('housekeeping', () => {
     expect(await orchestrator.remove('ann')).toBe(true);
     expect(provider.machines.size).toBe(0);
     expect(await orchestrator.remove('ann')).toBe(false);
+  });
+});
+
+/** Let a sandbox go idle past the eviction rule: suspended on the way, then swept. */
+async function idleForADay(env: ReturnType<typeof setup>) {
+  env.clock.now += 16 * MINUTE;
+  await env.orchestrator.sweep();
+  env.clock.now += 24 * HOUR;
+  return env.orchestrator.sweep();
+}
+
+describe('a sandbox evicted where archives are kept', () => {
+  it('is archived to the blob store before its machine is removed', async () => {
+    const env = setup({ archives: true });
+    const first = await env.orchestrator.ensure('ann');
+    env.fakes.write('m1', 'ann’s checkout');
+
+    expect(await idleForADay(env)).toMatchObject({ removed: 1, archived: 1, failures: 0 });
+    expect(env.provider.machines.size).toBe(0);
+    const archive = await env.data.sandboxArchives.get('ann');
+    expect(archive).toMatchObject({ sandboxId: first.sandboxId, sizeBytes: 16 });
+    expect(new TextDecoder().decode(env.fakes.blobs.get(archive!.blobKey))).toBe('ann’s checkout');
+    // Resumed to hand its contents over, archived, and only then removed.
+    expect(env.provider.calls.slice(-3)).toEqual(['suspend:m1', 'resume:m1', 'destroy:m1']);
+  });
+
+  it('comes back with what it held: the next call makes a new machine and unpacks the archive into it first', async () => {
+    const env = setup({ archives: true });
+    const first = await env.orchestrator.ensure('ann');
+    env.fakes.write('m1', 'ann’s checkout');
+    await idleForADay(env);
+
+    const second = await env.orchestrator.ensure('ann');
+    expect(second.sandboxId).not.toBe(first.sandboxId);
+    expect(env.fakes.holdOf('m2')).toBe('ann’s checkout');
+  });
+
+  it('gives each scope its own archive: one person’s work never lands in another’s sandbox', async () => {
+    const env = setup({ archives: true });
+    await env.orchestrator.ensure('ann');
+    await env.orchestrator.ensure('bob');
+    env.fakes.write('m1', 'ann’s');
+    env.fakes.write('m2', 'bob’s');
+    await idleForADay(env);
+
+    await env.orchestrator.ensure('bob');
+    await env.orchestrator.ensure('ann');
+    expect(env.fakes.holdOf('m3')).toBe('bob’s');
+    expect(env.fakes.holdOf('m4')).toBe('ann’s');
+  });
+
+  it('keeps one archive per scope: the next eviction replaces it and its object', async () => {
+    const env = setup({ archives: true });
+    await env.orchestrator.ensure('ann');
+    env.fakes.write('m1', 'monday');
+    await idleForADay(env);
+    await env.orchestrator.ensure('ann');
+    env.fakes.write('m2', 'tuesday');
+    await idleForADay(env);
+
+    expect(env.fakes.blobs.size).toBe(1);
+    await env.orchestrator.ensure('ann');
+    expect(env.fakes.holdOf('m3')).toBe('tuesday');
+  });
+
+  it('is NOT removed when the archive cannot be written: it is put back suspended, and tried again later', async () => {
+    const env = setup({ archives: true });
+    await env.orchestrator.ensure('ann');
+    env.fakes.write('m1', 'ann’s checkout');
+    env.fakes.failNext.put = 'the blob store is away';
+
+    expect(await idleForADay(env)).toMatchObject({ removed: 0, archived: 0, failures: 1 });
+    expect(env.provider.machines.get('m1')?.state).toBe('suspended');
+    expect(await env.data.sandboxes.live('ann')).toMatchObject({
+      state: 'suspended',
+      error: 'could not be archived: the blob store is away',
+    });
+    expect(await env.data.sandboxArchives.get('ann')).toBeNull();
+
+    // Not at once: a failed eviction is left a quarter of an hour.
+    env.clock.now += 5 * MINUTE;
+    expect((await env.orchestrator.sweep()).removed).toBe(0);
+    env.clock.now += 11 * MINUTE;
+    expect(await env.orchestrator.sweep()).toMatchObject({ removed: 1, archived: 1 });
+    expect(env.provider.machines.size).toBe(0);
+  });
+
+  it('is not removed when the sandbox will not hand its contents over either', async () => {
+    const env = setup({ archives: true });
+    await env.orchestrator.ensure('ann');
+    env.fakes.failNext.download = 'tar could not pack the sandbox';
+    expect(await idleForADay(env)).toMatchObject({ removed: 0, failures: 1 });
+    expect(env.provider.machines.size).toBe(1);
+  });
+
+  it('is still served while suspended after a failed eviction: a call resumes it with its work in place', async () => {
+    const env = setup({ archives: true });
+    const first = await env.orchestrator.ensure('ann');
+    env.fakes.write('m1', 'ann’s checkout');
+    env.fakes.failNext.put = 'the blob store is away';
+    await idleForADay(env);
+
+    expect(await env.orchestrator.ensure('ann')).toEqual(first);
+    expect(env.fakes.holdOf('m1')).toBe('ann’s checkout');
+  });
+});
+
+describe('a scope’s archive', () => {
+  it('fails the call, and is kept, when it cannot be unpacked: nobody is served an empty sandbox in its place', async () => {
+    const env = setup({ archives: true });
+    await env.orchestrator.ensure('ann');
+    env.fakes.write('m1', 'ann’s checkout');
+    await idleForADay(env);
+
+    env.fakes.failNext.upload = 'the archive could not be read';
+    await expect(env.orchestrator.ensure('ann')).rejects.toMatchObject({ type: 'provider' });
+    expect(env.provider.machines.size).toBe(0);
+    expect(await env.data.sandboxArchives.get('ann')).not.toBeNull();
+
+    await env.orchestrator.ensure('ann');
+    expect(env.fakes.holdOf('m3')).toBe('ann’s checkout');
+  });
+
+  it('whose object is gone from the blob store is forgotten, and the scope starts empty, with a warning', async () => {
+    const env = setup({ archives: true });
+    await env.orchestrator.ensure('ann');
+    await idleForADay(env);
+    env.fakes.blobs.clear();
+
+    await env.orchestrator.ensure('ann');
+    expect(env.fakes.holdOf('m2')).toBeUndefined();
+    expect(await env.data.sandboxArchives.get('ann')).toBeNull();
+    expect(env.logs.some((line) => line.startsWith('warn:') && line.includes('archive'))).toBe(
+      true
+    );
+  });
+
+  it('is dropped, object and all, when nobody has come back for it in ninety days', async () => {
+    const env = setup({ archives: true });
+    await env.orchestrator.ensure('ann');
+    await idleForADay(env);
+    env.clock.now += 89 * 24 * HOUR;
+    expect((await env.orchestrator.sweep()).archivesExpired).toBe(0);
+    env.clock.now += 2 * 24 * HOUR;
+    expect((await env.orchestrator.sweep()).archivesExpired).toBe(1);
+    expect(env.fakes.blobs.size).toBe(0);
+    expect(await env.data.sandboxArchives.get('ann')).toBeNull();
+  });
+
+  it('goes with the sandbox when the scope’s sandbox is removed on request', async () => {
+    const env = setup({ archives: true });
+    await env.orchestrator.ensure('ann');
+    await idleForADay(env);
+    expect(await env.orchestrator.remove('ann')).toBe(true);
+    expect(env.fakes.blobs.size).toBe(0);
+    await env.orchestrator.ensure('ann');
+    expect(env.fakes.holdOf('m2')).toBeUndefined();
+  });
+
+  it('is left alone when an eviction is abandoned half way: the sandbox is put back as the provider has it', async () => {
+    const env = setup({ archives: true });
+    const first = await env.orchestrator.ensure('ann');
+    await env.data.sandboxes.transition({
+      id: first.sandboxId,
+      from: ['running'],
+      to: 'archiving',
+      at: new Date(env.clock.now),
+    });
+    env.clock.now += 11 * MINUTE;
+    expect((await env.orchestrator.sweep()).recovered).toBe(1);
+    expect(env.provider.machines.size).toBe(1);
+    expect((await env.data.sandboxes.live('ann'))?.state).toBe('running');
   });
 });

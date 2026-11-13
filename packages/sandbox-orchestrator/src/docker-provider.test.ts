@@ -39,7 +39,6 @@ const spec = {
   kind: 'user' as const,
   env: { A: '1' },
   idleSuspendSeconds: 900,
-  idleDeleteSeconds: 86_400,
 };
 
 describe('the Docker provider', () => {

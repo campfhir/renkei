@@ -28,12 +28,13 @@ export interface SandboxSpec {
   /** The worker's whole environment. */
   env: Record<string, string>;
   /**
-   * The orchestrator's own idle rules, for a provider that can also
-   * enforce them itself (Azure's lifecycle policy) as a backstop behind
-   * an orchestrator that is down.
+   * The orchestrator's own idle rule for suspending, for a provider that
+   * can also enforce it itself (Azure's lifecycle policy) as a backstop
+   * behind an orchestrator that is down. There is no such backstop for
+   * removal: a sandbox is only ever removed by the orchestrator, after
+   * what it holds has been archived.
    */
   idleSuspendSeconds: number;
-  idleDeleteSeconds: number;
 }
 
 /**

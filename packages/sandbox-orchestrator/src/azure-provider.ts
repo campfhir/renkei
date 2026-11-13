@@ -17,13 +17,14 @@
  *  - the group's egress proxy and VNet connection decide what a sandbox
  *    reaches (`vnetConnection`: the database and the delegate, on a
  *    private network);
- *  - the lifecycle policy enforces the idle rules by itself. It is set
- *    as a BACKSTOP, at twice the orchestrator's own intervals: the
- *    orchestrator suspends and deletes on its schedule and records it;
- *    the platform only acts if the orchestrator is away. Either way a
- *    sandbox the platform stopped or removed is noticed on the next call
- *    (the orchestrator asks before trusting a row it has not checked
- *    lately).
+ *  - the lifecycle policy suspends an idle sandbox by itself. It is set
+ *    as a BACKSTOP, at twice the orchestrator's own interval: the
+ *    orchestrator suspends on its schedule and records it; the platform
+ *    only acts if the orchestrator is away. A sandbox the platform
+ *    stopped is noticed on the next call (the orchestrator asks before
+ *    trusting a row it has not checked lately). The platform's
+ *    auto-delete is OFF: a sandbox is removed only by the orchestrator,
+ *    once what it holds is archived.
  *
  * The worker's port is exposed with the platform's HTTPS ingress and
  * anonymous access: the worker's own per-sandbox bearer key (keys.ts) is
@@ -61,7 +62,7 @@ export interface AzureCreateRequest {
   resources: { cpu: string; memory: string; disk: string };
   lifecycle: {
     autoSuspend: { enabled: boolean; interval: number; mode: 'Memory' | 'Disk' };
-    autoDelete: { enabled: boolean; deleteIntervalSeconds: number };
+    autoDelete: { enabled: boolean };
   };
   labels: Record<string, string>;
   environment: Record<string, string>;
@@ -197,7 +198,8 @@ export class AzureSandboxProvider implements SandboxProvider {
               interval: spec.idleSuspendSeconds * 2,
               mode: options.suspendMode,
             },
-            autoDelete: { enabled: true, deleteIntervalSeconds: spec.idleDeleteSeconds * 2 },
+            // Never by the platform: removal is the orchestrator's, after an archive.
+            autoDelete: { enabled: false },
           },
           labels: {
             [AZURE_MANAGED_LABEL]: options.deployment,

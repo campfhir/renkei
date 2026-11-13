@@ -24,10 +24,12 @@ machine of its own, made the first time it is needed:
 A sandbox is a Linux machine running the same sandbox image as before —
 the sandbox worker, serving one scope. It is **suspended** when nothing
 has called it for 15 minutes, **resumed** by the next call, and
-**removed, with everything it holds, once it has been idle for 24
-hours**. The next call after that starts from a fresh machine: a
-repository is cloned again, a kernel starts again — the same thing that
-already happened when an instance was replaced.
+**evicted once it has been idle for 24 hours**: what it holds is
+archived, compressed, to the blob store, and its machine is removed. The
+next call for the scope makes a new machine and unpacks the archive into
+it before anyone is served — checkouts, uncommitted work and staged
+files are where they were; what was running (a kernel, a dev server)
+starts again.
 
 The isolation boundary moves from "a uid inside a shared container" to
 "a machine of your own": in production a hardware-isolated microVM
@@ -64,6 +66,8 @@ web app / queue worker ──ensure(scope)──▶ worker-orchestrator ──�
 - **`sandboxes`** (migration 180, `store/domains/sandboxes`) — one row per
   sandbox: scope, provider, the provider's name for the machine, state,
   address, last activity.
+- **`sandbox_archives`** (migration 181) — where a scope's archive is in
+  the blob store: at most one per scope.
 - **`packages/sandbox-client` `routing.ts`** — with
   `SANDBOX_ORCHESTRATOR_URL` set, "which instance is this caller assigned
   to" becomes "ask the orchestrator where this scope's sandbox is". None
@@ -72,14 +76,13 @@ web app / queue worker ──ensure(scope)──▶ worker-orchestrator ──�
 ## Lifecycle
 
 ```
-            claim                    ready                idle 15 min
- (no row) ────────▶ provisioning ───────────▶ running ───────────────▶ suspending ──▶ suspended
-                         │                     ▲   │                                      │
-                         │ failed              │   │ idle 24 h              next call     │ idle 24 h
-                         ▼                     │   ▼                                      ▼
-                      deleted ◀── deleting ◀───┼───┴──────────────────── resuming ◀───────┤
-                                      ▲        └──────────────────────────────┘           │
-                                      └───────────────────────────────────────────────────┘
+          claim              ready (archive unpacked)        idle 15 min
+ (no row) ─────▶ provisioning ─────────────────────▶ running ───────────▶ suspending ─▶ suspended
+                      │                               ▲   │                               │  │
+                      │ failed                        │   │                   next call   │  │
+                      ▼                               │   │              resuming ◀───────┘  │
+                   deleted ◀── deleting ◀── archiving ◀───┴──────────────────────────────────┘
+                                  (archive written)        idle 24 h
 ```
 
 - **Every change of state is a compare-and-set on the row.** Whoever moves
@@ -94,13 +97,55 @@ web app / queue worker ──ensure(scope)──▶ worker-orchestrator ──�
   its last call did not connect — the provider is asked first. That is how
   a sandbox the platform suspended or removed by itself is noticed.
 - **The sweep** (every 30 s) suspends what has been idle 15 minutes,
-  removes what has been idle 24 hours, puts right any transition
+  evicts what has been idle 24 hours, puts right any transition
   abandoned for 10 minutes (from what the provider says), removes any
   machine whose row is gone (found by the sandbox id every machine is
-  labelled with), and purges `deleted` rows after a week.
-- On Azure the platform's own lifecycle policy is set as a **backstop** at
-  twice the orchestrator's intervals, so sandboxes still stop costing
-  money if every orchestrator is down.
+  labelled with), drops archives nobody has come back for in 90 days,
+  and purges `deleted` rows after a week.
+- On Azure the platform's own auto-suspend is set as a **backstop** at
+  twice the orchestrator's interval, so sandboxes still stop costing
+  compute if every orchestrator is down. The platform's auto-delete is
+  off: only the orchestrator removes a sandbox, after its archive.
+
+## Eviction, archive and restore
+
+1. **Evict.** The sandbox moves to `archiving`. It is resumed if it was
+   suspended (only a running sandbox can hand over what it holds), and
+   the orchestrator asks its worker for an archive
+   (`POST /v1/archive`): a `tar` of the two disks — staged files and
+   checkouts, with every owner, mode and link — compressed with
+   Zstandard as it streams.
+2. **Keep.** The orchestrator relays the stream into the blob store
+   (`sandbox-archives/<hash of scope>/<sandbox id>.tar.zst`) a block at a
+   time; it is never held whole or unpacked outside a sandbox. The
+   archive is recorded in `sandbox_archives`, replacing the scope's
+   previous one.
+3. **Remove.** Only now is the machine removed.
+4. **Restore.** The next call for the scope makes a new machine; once its
+   worker answers, the orchestrator streams the archive into it
+   (`POST /v1/restore`), which unpacks it at the same paths, and only
+   then is the sandbox `running`.
+
+The rule throughout is **no archive, no removal**. If the sandbox will
+not hand its contents over, or the blob store refuses them, the sandbox
+is put back — suspended, with its disk — and the eviction is tried again
+a quarter of an hour later. If an archive cannot be unpacked, the call
+fails and the archive stays: nobody is served an empty sandbox standing
+in for their work. An orchestrator that dies mid-archive leaves a
+sandbox that is put back as it was.
+
+Compression is Zstandard because source trees and dependency
+directories shrink to a fraction at a speed that does not hold an
+eviction up (in the end-to-end run, 11 MB of text became 1.2 KB).
+
+Archives go to the deployment's blob store (`BLOB_STORE_PROVIDER`), in
+their own container on Azure (`SANDBOX_ARCHIVE_CONTAINER`, default
+`renkei-sandbox-archives`). An archive is kept until the scope's next
+eviction replaces it, or `SANDBOX_ARCHIVE_RETENTION_DAYS` (default 90)
+pass with nobody coming back. Removing a scope's sandbox on request
+(`/v1/remove`) removes its archive too. **Without a blob store
+configured, an eviction removes the work with the machine**; the
+orchestrator says so at boot.
 
 Both intervals are configuration (`SANDBOX_IDLE_SUSPEND_MINUTES`,
 `SANDBOX_IDLE_DELETE_HOURS`).
@@ -193,10 +238,10 @@ variables reach a process started from the image's entrypoint.
   build started by one call and never polled is suspended with its
   sandbox. On Azure (memory mode) it continues on resume; on Docker
   (`stop`) it is lost.
-- **Data at removal.** Removal after 24 idle hours takes the checkout
-  with it, uncommitted work included. Staged files already had a 24-hour
-  life; checkouts did not. A warning before removal, or a volume that
-  outlives the machine, is the follow-up.
+- **Archive size.** An archive is everything on the two disks,
+  dependency directories and build output included. Nothing is excluded
+  and nothing is capped; a project with a very large checkout takes that
+  long to evict and to come back.
 - **The old path is still there.** Without `SANDBOX_ORCHESTRATOR_URL`
   everything works as before (shared instances, `sandbox_instances`,
   the worker's own Docker client). Removing it — and with it the socket
