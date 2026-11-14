@@ -46,17 +46,16 @@ test('knowledge panel: selection, purge, and no overflow', async ({
   }
 
   await page.goto(`/agents/${agentId}`);
-  // CollapsibleSection is a native <details> on desktop, shut by default.
-  // A click before hydration can be undone by it: open it until it stays open.
-  await expect(async () => {
-    const section = page.locator('details', {
-      has: page.locator('summary', { hasText: 'Knowledge' }),
-    });
-    if ((await section.getAttribute('open')) === null) {
-      await section.locator('summary').click();
-    }
-    await expect(page.getByText('Short note')).toBeVisible({ timeout: 2_000 });
-  }).toPass({ timeout: 20_000 });
+  // CollapsibleSection is a native <details> on desktop, shut by default. A
+  // tap before it hydrates is undone when React takes it over: open it once
+  // it carries its hydrated mark.
+  const section = page.locator('details', {
+    has: page.locator('summary', { hasText: 'Knowledge' }),
+  });
+  await expect(section).toHaveAttribute('data-hydrated', 'section');
+  await section.locator('summary').click();
+  await expect(section).toHaveAttribute('open', '');
+  await expect(page.getByText('Short note')).toBeVisible();
 
   // The selection toolbar and the purge affordance both exist.
   await expect(page.getByText('Select all')).toBeVisible();

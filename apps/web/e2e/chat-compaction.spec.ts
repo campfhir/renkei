@@ -28,6 +28,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { APIRequestContext, Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { hydrated } from './support/settle';
 import {
   addStubModel,
   toolStep,
@@ -216,14 +217,12 @@ test.describe('chat compaction', () => {
       const box = page.getByRole('textbox', { name: 'Message' });
       // Typing swaps Stop out of the send slot for the blue queue button:
       // the one place a thumb goes to send must never stop the reply
-      // instead. Stop returns once the box is empty again. (Typed again
-      // until it takes: text filled before the page hydrates is lost.)
+      // instead. Stop returns once the box is empty again. (Typed once the
+      // thread has hydrated: text filled into the server's HTML is lost.)
       const queueButton = page.getByRole('button', { name: 'Queue this message' });
-      await expect(async () => {
-        await box.fill('');
-        await box.fill('Left this for when it is free.');
-        await expect(queueButton).toBeVisible({ timeout: 1_000 });
-      }).toPass({ timeout: 15_000 });
+      await hydrated(page, 'chat-thread');
+      await box.fill('Left this for when it is free.');
+      await expect(queueButton).toBeVisible();
       await expect(page.getByRole('button', { name: 'Stop' })).toBeHidden();
       await expect(queueButton).toHaveClass(/bg-blue-600/);
       await shot(page, testInfo, 'chat-queue-draft-swaps-stop');

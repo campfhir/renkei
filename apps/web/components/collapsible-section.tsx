@@ -20,6 +20,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { Icon, ICONS } from '@/components/icons';
+import { useHydrated } from '@/components/hydration-mark';
 
 const SECTION_FRAME = 'mb-3 rounded-lg border border-gray-200 dark:border-gray-800';
 const SUMMARY_TEXT = 'text-sm font-medium';
@@ -37,6 +38,8 @@ export default function CollapsibleSection({
   children: ReactNode;
 }) {
   const isMobile = useMediaQuery('(max-width: 1023.98px)');
+  const hydrated = useHydrated();
+  const mark = hydrated ? 'section' : undefined;
   const [modalOpen, setModalOpen] = useState(false);
 
   useEffect(() => {
@@ -50,7 +53,7 @@ export default function CollapsibleSection({
 
   if (!isMobile) {
     return (
-      <details className={`${SECTION_FRAME} p-3`} open={defaultOpen}>
+      <details className={`${SECTION_FRAME} p-3`} open={defaultOpen} data-hydrated={mark}>
         <summary className={`cursor-pointer ${SUMMARY_TEXT}`}>
           {title}
           {hint ? <span className="ml-2 font-normal text-gray-500">{hint}</span> : null}
@@ -61,7 +64,7 @@ export default function CollapsibleSection({
   }
 
   return (
-    <div className={SECTION_FRAME}>
+    <div className={SECTION_FRAME} data-hydrated={mark}>
       <button
         type="button"
         onClick={() => setModalOpen(true)}

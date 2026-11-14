@@ -130,7 +130,7 @@ test('setup: the Voice section under Preferences', async ({ page }, testInfo) =>
 test('chat: the speaker menu, a reply read aloud, and a voice conversation', async ({
   page,
 }, testInfo) => {
-  await mockVendor(page);
+  const vendor = await mockVendor(page);
   await page.goto(`/chat/${voice.chatId}`);
   await expect(page.getByRole('heading', { level: 1, name: CHAT_TITLE })).toBeVisible();
 
@@ -142,7 +142,9 @@ test('chat: the speaker menu, a reply read aloud, and a voice conversation', asy
   await page.keyboard.press('Escape');
 
   // Listen under the reply: the assistant speaks, the composer's speaker
-  // becomes a wave, the button becomes Stop.
+  // becomes a wave, the button becomes Stop. The reply is read as a minute
+  // of speech, so it is still being read when the test looks, and Stop ends it.
+  vendor.holdSpeech(true);
   const reply = page.getByText('Two issues slipped out of the sprint:');
   await reply.hover();
   await expectComposerStillWhileReading(page);
@@ -152,6 +154,7 @@ test('chat: the speaker menu, a reply read aloud, and a voice conversation', asy
   );
   await shot(page, testInfo, 'voice-06-reply-read-aloud', false);
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  vendor.holdSpeech(false);
 
   // Dictation: the microphone beside the box; the fake microphone speaks
   // at three seconds and the words land in the box, to edit and send.

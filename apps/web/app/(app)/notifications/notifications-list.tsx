@@ -55,6 +55,7 @@ import {
   visibleRows,
   type NotificationCard,
 } from './notifications-list.model';
+import { useHydrated } from '@/components/hydration-mark';
 
 export type { NotificationCard } from './notifications-list.model';
 
@@ -74,6 +75,7 @@ export default function NotificationsList({
   /** Whether the server page's own query was cut off at PAGE_SIZE. */
   initialHasMore: boolean;
 }) {
+  const hydrated = useHydrated();
   const router = useRouter();
   const { refresh } = useNotifications();
   // Everything the feed decides lives in notifications-list.model.ts.
@@ -273,7 +275,7 @@ export default function NotificationsList({
   const banner = markAllBanner(state, rows, unreadCount);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-hydrated={hydrated ? 'notifications' : undefined}>
       {banner ? (
         <div className="flex items-center justify-between gap-3">
           <span className="text-xs text-gray-500 dark:text-gray-400">{banner}</span>

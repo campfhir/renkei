@@ -32,7 +32,7 @@ import { randomUUID } from 'node:crypto';
 import type { APIRequestContext, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { COACH_MARK_TOURS } from '../lib/coach-marks/tours';
-import { createAgent, runAgent } from './support/agents';
+import { createAgent, runAgent, runSettled } from './support/agents';
 import { addStubModel, removeModel } from './support/stub-model';
 import { holdShared, type Release } from './support/org-lock';
 import { settled } from './support/settle';
@@ -83,13 +83,8 @@ async function stageAgent(page: Page): Promise<string> {
     instructions: '## Goal\n\nTriage yesterday into tickets.',
     llmModelId: modelId,
   });
-  await runAgent(page.request, agentId);
-  await expect(async () => {
-    await page.goto(`/agents/${agentId}/runs`);
-    await expect(page.getByText('Succeeded', { exact: true }).first()).toBeVisible({
-      timeout: 2_000,
-    });
-  }).toPass({ timeout: 45_000 });
+  const runId = await runAgent(page.request, agentId);
+  expect(await runSettled(page.request, agentId, runId)).toBe('succeeded');
   return agentId;
 }
 

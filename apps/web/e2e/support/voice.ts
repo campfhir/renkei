@@ -49,8 +49,8 @@ export function wav(samples: Float32Array, sampleRate: number): Buffer {
  * low tone swelling and fading like speech, so the wave and its glow have
  * an output level to follow in the shots.
  */
-function spokenSamples(rate: number): Float32Array {
-  const samples = new Float32Array(rate * 4);
+function spokenSamples(rate: number, seconds = 4): Float32Array {
+  const samples = new Float32Array(rate * seconds);
   for (let index = 0; index < samples.length; index += 1) {
     const t = index / rate;
     const syllables = 0.55 + 0.45 * Math.sin(2 * Math.PI * 3.1 * t);
@@ -65,6 +65,30 @@ export const SPOKEN_PIECE = wav(spokenSamples(16_000), 16_000);
  * WAV's data chunk without its header.
  */
 export const SPOKEN_PIECE_PCM = wav(spokenSamples(24_000), 24_000).subarray(44);
+
+/**
+ * A minute of the same, for a test that looks at the "reading aloud" state:
+ * four seconds is over before a starved CPU gets round to looking, and the
+ * state goes with it (`VendorMock.holdSpeech`). Made on first use.
+ */
+let longPieces: { wav: Buffer; pcm: Buffer } | null = null;
+function longSpokenPieces(): { wav: Buffer; pcm: Buffer } {
+  longPieces ??= {
+    wav: wav(spokenSamples(16_000, 60), 16_000),
+    pcm: wav(spokenSamples(24_000, 60), 24_000).subarray(44),
+  };
+  return longPieces;
+}
+
+/** What `mockVendor` hands back: switches over the mocked vendor while the test runs. */
+export interface VendorMock {
+  /**
+   * Answer speech with a minute-long clip until switched off again, so a
+   * reply being read aloud stays read aloud while the test looks at it
+   * (and presses Stop).
+   */
+  holdSpeech(on: boolean): void;
+}
 
 /** The ids of the turn an utterance becomes: the mocked turn's, never stored. */
 export const NEW_TURN_ID = '78787878-7878-4787-8787-787878787874';
@@ -411,7 +435,13 @@ export async function mockVendor(
      */
     heard?: { locale: string; text: string };
   } = {}
-): Promise<void> {
+): Promise<VendorMock> {
+  let holding = false;
+  const control: VendorMock = {
+    holdSpeech(on) {
+      holding = on;
+    },
+  };
   await page.route(/\/api\/voice$/, (route) =>
     route.fulfill({
       json: {
@@ -427,9 +457,10 @@ export async function mockVendor(
   await page.route(/\/api\/voice\/speech$/, (route) => {
     const body: unknown = route.request().postDataJSON();
     const pcm = typeof body === 'object' && body !== null && Reflect.get(body, 'format') === 'pcm';
+    const pieces = holding ? longSpokenPieces() : { wav: SPOKEN_PIECE, pcm: SPOKEN_PIECE_PCM };
     return pcm
-      ? route.fulfill({ status: 200, contentType: 'audio/pcm', body: SPOKEN_PIECE_PCM })
-      : route.fulfill({ status: 200, contentType: 'audio/wav', body: SPOKEN_PIECE });
+      ? route.fulfill({ status: 200, contentType: 'audio/pcm', body: pieces.pcm })
+      : route.fulfill({ status: 200, contentType: 'audio/wav', body: pieces.wav });
   });
   await page.route(/\/api\/voice\/transcribe/, async (route) => {
     const detecting = route.request().url().includes('detect=1');
@@ -480,7 +511,7 @@ export async function mockVendor(
         body: replyStream(),
       });
     });
-    return;
+    return control;
   }
   const asking = askingStream();
   let decided = false;
@@ -513,6 +544,7 @@ export async function mockVendor(
       body,
     });
   });
+  return control;
 }
 
 export async function shot(

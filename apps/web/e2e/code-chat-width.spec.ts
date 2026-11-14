@@ -17,6 +17,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { hydrated } from './support/settle';
 import { addStubModel, removeModel } from './support/stub-model';
 import {
   askAndWait,
@@ -51,12 +52,9 @@ test.beforeEach(async ({ page, request, person: _person }, testInfo) => {
     },
   });
   expect(voice.ok(), await voice.text()).toBe(true);
-  // What the composer reads, through the voice route's own cache.
-  await expect
-    .poll(async () => (await (await page.request.get('/api/voice')).json()).configured, {
-      timeout: 70_000,
-    })
-    .toBe(true);
+  // What the composer reads (the suite runs with the config cache off,
+  // RENKEI_CONFIG_CACHE_TTL_MS=0, so the save shows at once).
+  expect((await (await page.request.get('/api/voice')).json()).configured).toBe(true);
   // A model with a window and one measured reply, so the context ring shows.
   modelId = await addStubModel(page.request, tag, { contextWindow: 200_000 });
   const { chatIds } = await stageCodeProject(page.request, {
@@ -91,8 +89,8 @@ for (const width of [1024, 1280, 1440, 1920]) {
     await expect(page.getByLabel('Message').filter({ visible: true })).toBeVisible();
     await expect(page.getByTestId('context-meter').filter({ visible: true })).toBeVisible();
     // The server-rendered page assumes a split; the real layout lands once the
-    // client has measured the frame.
-    await page.waitForLoadState('networkidle');
+    // client has measured the frame, which it does as it hydrates.
+    await hydrated(page, 'chat-thread');
 
     const measure = () =>
       page.evaluate(() => {
@@ -130,16 +128,7 @@ for (const width of [1024, 1280, 1440, 1920]) {
     expect(layout.sideways).toBeLessThanOrEqual(0);
     // In a column this narrow the tools are the one folded menu, not three buttons.
     if (layout.composerWidth < 480) {
-      // The page reads the speech setup through its own cache: a page served
-      // just before the org's voice landed there shows it on the next load.
-      await expect(async () => {
-        if (!(await page.getByRole('button', { name: 'Prompts and voice' }).isVisible())) {
-          await page.reload();
-        }
-        await expect(page.getByRole('button', { name: 'Prompts and voice' })).toBeVisible({
-          timeout: 3_000,
-        });
-      }).toPass({ timeout: 90_000 });
+      await expect(page.getByRole('button', { name: 'Prompts and voice' })).toBeVisible();
       await expect(page.getByRole('button', { name: 'Insert a prompt' })).toBeHidden();
     }
     await expect(page.getByRole('button', { name: /Auto/ })).toBeVisible();

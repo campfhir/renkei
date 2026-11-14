@@ -12,6 +12,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { test, expect } from './fixtures';
+import { hydrated } from './support/settle';
 import { addStubModel, removeModel } from './support/stub-model';
 import { createChat, send } from './support/chat';
 
@@ -66,13 +67,12 @@ test('a row menu opens above its row when there is no room below', async ({
       height: Math.ceil(button.y + button.height) + 40,
     });
 
-    // The click can land before the page has hydrated and attached its
-    // handlers, so it is retried until the menu is open.
+    // Pressed once the sidebar's list has hydrated: before that the button
+    // is the server's HTML, with no handler to open the menu.
     const rename = page.getByRole('button', { name: 'Rename', exact: true });
-    await expect(async () => {
-      await actions.click();
-      await expect(rename).toBeVisible({ timeout: 1_000 });
-    }).toPass({ timeout: 15_000 });
+    await hydrated(page, 'chat-list');
+    await actions.click();
+    await expect(rename).toBeVisible();
     const panel = rename.locator('..');
 
     const viewport = page.viewportSize();

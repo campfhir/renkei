@@ -17,6 +17,7 @@
 
 import path from 'node:path';
 import { test, expect } from './fixtures';
+import { hydrated } from './support/settle';
 import { shareAgentsWith } from './support/share-agents';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
@@ -48,20 +49,15 @@ test('the feed renders, and Mark all as read sticks', async ({
     fullPage: true,
   });
 
-  // On a cold dev server the first click can land before hydration; retry
-  // until the request has gone through — and the route, compiling on its
-  // first hit, answered it (the button hides on any answer).
-  await expect(async () => {
-    const button = page.getByRole('button', { name: 'Mark all as read' });
-    if ((await button.count()) === 0) await page.reload();
-    const marked = page.waitForResponse(
-      (response) =>
-        response.url().endsWith('/api/notifications') && response.request().method() === 'POST',
-      { timeout: 5_000 }
-    );
-    await button.click({ timeout: 2_000 });
-    expect((await marked).ok()).toBe(true);
-  }).toPass({ timeout: 30_000 });
+  // Pressed once the list has hydrated (a press on the server's HTML does
+  // nothing), and the reload waits for the write behind it.
+  await hydrated(page, 'notifications');
+  const marked = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/api/notifications') && response.request().method() === 'POST'
+  );
+  await page.getByRole('button', { name: 'Mark all as read' }).click();
+  expect((await marked).ok()).toBe(true);
   await page.reload();
   await expect(unread('2 unread')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Mark all as read' })).toHaveCount(0);
