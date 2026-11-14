@@ -58,6 +58,7 @@ export type AuditAction =
   | 'llm_model.deleted'
   /** An operator pointed chat attachment storage somewhere (details: account, container, endpoint — never the key). */
   | 'storage.configured'
+  | 'sandboxes.configured'
   /** An operator replaced the identity provider (details: issuer). */
   | 'oidc.provider_replaced'
   /** An operator changed the token limits: the weekly or monthly limit, the weekly reset, a model's limit (details: changed). */
@@ -153,6 +154,7 @@ export type AuditAction =
   /** A preview (the project's own server, served through the app) started or stopped from a code project's routes. */
   | 'code.previews.started'
   | 'code.previews.stopped'
+  | 'code.previews.opened'
   | 'code.files.uploaded'
   /** A file or folder of a checkout, or the whole checkout, downloaded as the person's offline copy. */
   | 'code.files.downloaded'

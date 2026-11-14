@@ -75,5 +75,15 @@ export function postgresSandboxEnvSecrets(db: () => Kysely<DB>): SandboxEnvSecre
         .executeTakeFirst();
       return row ? { id: row.id, name: row.name } : null;
     },
+    async subjectsOf(ids) {
+      if (ids.length === 0) return [];
+      const rows = await db()
+        .selectFrom('sandbox_env_secrets')
+        .select('subject')
+        .distinct()
+        .where('id', 'in', ids)
+        .execute();
+      return rows.map((row) => row.subject).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    },
   };
 }

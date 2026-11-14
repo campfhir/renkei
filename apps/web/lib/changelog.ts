@@ -46,6 +46,23 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-14',
+    entries: [
+      {
+        kind: 'added',
+        title: 'How long sandbox archives are kept',
+        detail:
+          'Admin → Settings → Sandbox has a retention setting for the archives of evicted sandboxes: 90 days unless changed.',
+      },
+      {
+        kind: 'added',
+        title: 'Sandboxes of their own for each person, agent and project',
+        detail:
+          "An organization can now run a sandbox orchestrator: instead of one shared sandbox, each person, agent and project gets its own, made on first use, suspended when idle, and archived to the organization's storage after a day unused so the work is there again next time. Operators set it up under Organization → Sandboxes, where the Azure sandbox group or Docker engine, the idle rules and each sandbox's secrets are kept sealed.",
+      },
+    ],
+  },
+  {
     date: '2026-11-13',
     entries: [
       {

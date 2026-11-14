@@ -33,4 +33,10 @@ export interface SandboxEnvSecretStore {
   touchUsed(ids: string[], at: Date): Promise<void>;
   /** Delete one of the subject's variables by name; its id and name, or null. */
   delete(subject: string, name: string): Promise<{ id: string; name: string } | null>;
+  /**
+   * Whose rows these are: the distinct subjects of the rows with these
+   * ids, in order; ids with no row count for nothing. For a caller that
+   * holds only an id and must know whose it is before acting on it.
+   */
+  subjectsOf(ids: string[]): Promise<string[]>;
 }

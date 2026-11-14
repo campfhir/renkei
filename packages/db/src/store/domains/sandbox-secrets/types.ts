@@ -34,4 +34,10 @@ export interface SandboxSecretStore {
   /** Ids of secrets expiring before `before`, soonest first (ties by id), at most `limit`. */
   listExpiredIds(before: Date, limit: number): Promise<string[]>;
   deleteById(id: string): Promise<void>;
+  /**
+   * Whose rows these are: the distinct subjects of the rows with these
+   * ids, in order; ids with no row count for nothing. For a caller that
+   * holds only an id and must know whose it is before acting on it.
+   */
+  subjectsOf(ids: string[]): Promise<string[]>;
 }

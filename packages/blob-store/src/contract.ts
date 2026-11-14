@@ -1,11 +1,13 @@
 /**
  * The object-store contract the chat's attachments live behind.
  *
- * Deliberately four verbs and a container check: every byte that enters
- * the store is a whole file already in memory (uploads are capped by the
- * org's attachment limit before they are read), every read either wants
- * the whole file (text extraction, staging into the sandbox) or a stream
- * to forward to a browser, and deletion is what retention does. Signed
+ * Deliberately few verbs and a container check: a chat upload is a whole
+ * file already in memory (capped by the org's attachment limit before it
+ * is read), every read either wants the whole file (text extraction,
+ * staging into the sandbox) or a stream to forward to a browser, and
+ * deletion is what retention does. The one streamed write is for what is
+ * never held whole: a sandbox's archive (docs/sandbox-orchestrator-design.md),
+ * which is as large as what the sandbox held. Signed
  * URLs are absent on purpose — downloads always go through the app under
  * a session check, so a link can never outlive the access that minted it.
  *
@@ -33,6 +35,17 @@ export interface BlobStore {
   /** Which backend this is, for logs and the health page. */
   readonly provider: string;
   putObject(key: string, bytes: Uint8Array, contentType: string): Promise<Result<void, BlobError>>;
+  /**
+   * Write an object of unknown length from a stream, never holding more
+   * than a block of it in memory; answers how many bytes were written.
+   * The object appears whole or not at all: a stream that fails half way
+   * leaves nothing under the key (and whatever was there before stays).
+   */
+  putObjectStream(
+    key: string,
+    body: AsyncIterable<Uint8Array>,
+    contentType: string
+  ): Promise<Result<{ sizeBytes: number }, BlobError>>;
   getObject(key: string): Promise<Result<BlobObject, BlobError>>;
   getObjectStream(key: string): Promise<Result<BlobObjectStream, BlobError>>;
   /** Idempotent: a missing object is `NOT_FOUND`, never a thrown error. */

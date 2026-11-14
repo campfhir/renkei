@@ -54,4 +54,10 @@ export interface SandboxServiceStore {
   listExpired(before: Date, limit: number): Promise<SandboxServiceRecord[]>;
   /** Every container id a row still claims, sorted. */
   listClaimedContainerIds(): Promise<string[]>;
+  /**
+   * Whose rows these are: the distinct subjects of the rows with these
+   * ids, in order; ids with no row count for nothing. For a caller that
+   * holds only an id and must know whose it is before acting on it.
+   */
+  subjectsOf(ids: string[]): Promise<string[]>;
 }

@@ -8,7 +8,12 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { validatePreviewName } from '@renkei/connector-sandbox';
-import { clientFailure, sbPreviewLogs, sbPreviewStop } from '@renkei/sandbox-client';
+import {
+  clientFailure,
+  sbPreviewLogs,
+  sbPreviewStop,
+  unexposeSandboxPort,
+} from '@renkei/sandbox-client';
 import { jsonError } from '@/lib/chat/route-support';
 import { codeProjectContext } from '@/lib/code/route-access';
 import { codeProjectTarget } from '@/lib/code/scope';
@@ -77,6 +82,13 @@ export async function DELETE(
     }
     return jsonError(failure.status, 'sandbox', failure.message);
   }
+  // A port opened straight to members' browsers (open/ beside this) closes
+  // with its preview, and whoever was let in is let in no more.
+  await Promise.all(
+    stopped.val.ports.map((port) =>
+      unexposeSandboxPort(codeProjectTarget(projectId).subject, port.port)
+    )
+  );
   recordAuditEvent({
     actorSubject: ready.context.session.subject,
     action: 'code.previews.stopped',

@@ -27,8 +27,11 @@ import { isRecord } from '@renkei/guards';
 import {
   forgetSandboxEndpoint,
   sandboxConfig,
+  sandboxAuthHeaders,
   sandboxEndpointFor,
   sandboxEndpoints,
+  sandboxRouteKey,
+  type SandboxEndpoint,
 } from './routing';
 
 export {
@@ -36,8 +39,33 @@ export {
   resetSandboxRoutingForTests,
   sandboxConfig,
   sandboxEndpointFor,
+  checkSandboxOrchestrator,
+  exposeSandboxPort,
+  sandboxOrchestratorConfig,
+  sandboxOrchestratorStatus,
+  sandboxRouteKey,
+  unexposeSandboxPort,
   type SandboxEndpoint,
+  type SandboxOrchestratorStatus,
 } from './routing';
+
+export {
+  AZURE_CLIENT_SECRET_KEY,
+  DEFAULT_ORCHESTRATOR_SETTINGS,
+  SANDBOX_ORCHESTRATOR_CONNECTOR,
+  envSecretKey,
+  mergeOrchestratorSecrets,
+  orchestratorSettingsOfRow,
+  orchestratorTemplateEnv,
+  orchestratorViewOfRow,
+  parseOrchestratorInput,
+  type AzureSandboxSettings,
+  type DockerSandboxSettings,
+  type OrchestratorInput,
+  type OrchestratorView,
+  type SandboxOrchestratorSettings,
+  type SandboxProviderKind,
+} from './orchestrator-config';
 
 export interface WireSandboxFile {
   id: string;
@@ -80,9 +108,18 @@ export interface SandboxTarget {
 
 const REQUEST_TIMEOUT_MS = 90_000;
 
-/** The assignment a call for `target` goes by: its route when it names one, else its subject. */
-function routeOf(target: { subject: string; route?: string }): string {
-  return target.route || target.subject;
+/** The assignment a call for `target` goes by: its route when it names one, else its subject (routing.ts). */
+function routeOf(target: { subject: string; route?: string; scope?: string }): Promise<string> {
+  return sandboxRouteKey(target);
+}
+
+/** Where a call for `target` goes, asked for on behalf of the person it is for. */
+async function endpointFor(target: {
+  subject: string;
+  route?: string;
+  scope?: string;
+}): Promise<SandboxEndpoint | null> {
+  return sandboxEndpointFor(await routeOf(target), undefined, target.subject);
 }
 
 /** A request body as the worker gets it: without the route, which is the client's business alone. */
@@ -322,14 +359,21 @@ async function callOp(
   options: { retry?: boolean } = {}
 ): Promise<ClientResult<Response>> {
   // Whose instance: the call's route when its target names one, else its subject.
-  const subject = !isRecord(body)
-    ? null
-    : typeof body.route === 'string' && body.route
-      ? body.route
-      : typeof body.subject === 'string'
-        ? body.subject
+  const subject =
+    isRecord(body) && typeof body.subject === 'string'
+      ? await sandboxRouteKey({
+          subject: body.subject,
+          route: typeof body.route === 'string' ? body.route : null,
+          scope: typeof body.scope === 'string' ? body.scope : null,
+        })
+      : isRecord(body) && typeof body.route === 'string' && body.route
+        ? body.route
         : null;
-  const cfg = await sandboxEndpointFor(subject);
+  const cfg = await sandboxEndpointFor(
+    subject,
+    undefined,
+    isRecord(body) && typeof body.subject === 'string' ? body.subject : null
+  );
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   for (let attempt = 0; ; attempt += 1) {
     const delay = RETRY_DELAYS_MS[attempt];
@@ -338,7 +382,7 @@ async function callOp(
     try {
       response = await fetch(`${cfg.url}/v1/${op}`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+        headers: { ...sandboxAuthHeaders(cfg), 'content-type': 'application/json' },
         body: wireBody(body),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
@@ -473,7 +517,7 @@ export async function sbWriteFile(
   input: { filename: string; contentType?: string; source?: string; batchId?: string },
   bytes: Uint8Array
 ): Promise<ClientResult<WireSandboxFile>> {
-  const cfg = await sandboxEndpointFor(routeOf(target));
+  const cfg = await endpointFor(target);
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   const query = new URLSearchParams({
     subject: target.subject,
@@ -491,7 +535,7 @@ export async function sbWriteFile(
   try {
     response = await fetch(`${cfg.url}/v1/write?${query.toString()}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/octet-stream' },
+      headers: { ...sandboxAuthHeaders(cfg), 'content-type': 'application/octet-stream' },
       body: payload,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
@@ -1030,13 +1074,13 @@ export async function sbWorkspaceDownload(
   target: SandboxTarget,
   input: { id: string; path: string }
 ): Promise<ClientResult<WireWorkspaceDownload>> {
-  const cfg = await sandboxEndpointFor(routeOf(target));
+  const cfg = await endpointFor(target);
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   let response: Response;
   try {
     response = await fetch(`${cfg.url}/v1/workspaces/download`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+      headers: { ...sandboxAuthHeaders(cfg), 'content-type': 'application/json' },
       body: wireBody({ ...target, ...input }),
       signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
     });
@@ -1178,7 +1222,7 @@ export async function sbWorkspaceUpload(
   target: SandboxTarget,
   input: { id: string; path: string; bytes: Uint8Array<ArrayBuffer> }
 ): Promise<ClientResult<{ path: string; created: boolean; sizeBytes: number }>> {
-  const cfg = await sandboxEndpointFor(routeOf(target));
+  const cfg = await endpointFor(target);
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   const query = new URLSearchParams({
     subject: target.subject,
@@ -1189,7 +1233,7 @@ export async function sbWorkspaceUpload(
   try {
     response = await fetch(`${cfg.url}/v1/workspaces/upload?${query.toString()}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/octet-stream' },
+      headers: { ...sandboxAuthHeaders(cfg), 'content-type': 'application/octet-stream' },
       body: input.bytes,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
@@ -1291,7 +1335,7 @@ export async function sbWorkspaceExec(
     signal?: AbortSignal;
   } = {}
 ): Promise<ClientResult<WireExecResult>> {
-  const cfg = await sandboxEndpointFor(routeOf(target));
+  const cfg = await endpointFor(target);
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   // The client waits a little beyond the command's own limit: the worker
   // kills the process at timeoutMs and still has to answer.
@@ -1301,7 +1345,7 @@ export async function sbWorkspaceExec(
   try {
     response = await fetch(`${cfg.url}/v1/workspaces/exec`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+      headers: { ...sandboxAuthHeaders(cfg), 'content-type': 'application/json' },
       body: wireBody({ ...target, ...input }),
       signal: options.signal ? AbortSignal.any([timeout, options.signal]) : timeout,
     });
@@ -2083,13 +2127,13 @@ export async function sbServiceStart(
     exports?: Record<string, string>;
   }
 ): Promise<ClientResult<WireService>> {
-  const cfg = await sandboxEndpointFor(routeOf(target));
+  const cfg = await endpointFor(target);
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   let response: Response;
   try {
     response = await fetch(`${cfg.url}/v1/services/start`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+      headers: { ...sandboxAuthHeaders(cfg), 'content-type': 'application/json' },
       body: wireBody({ ...target, ...input }),
       signal: AbortSignal.timeout(6 * 60_000),
     });
@@ -2310,13 +2354,13 @@ export async function sbPreviewStart(
     waitMs?: number;
   }
 ): Promise<ClientResult<{ preview: WirePreview; listening: string[]; logs: string }>> {
-  const cfg = await sandboxEndpointFor(routeOf(target));
+  const cfg = await endpointFor(target);
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   let response: Response;
   try {
     response = await fetch(`${cfg.url}/v1/previews/start`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+      headers: { ...sandboxAuthHeaders(cfg), 'content-type': 'application/json' },
       body: wireBody({ ...target, ...input }),
       signal: AbortSignal.timeout(Math.min(10 * 60_000, (input.waitMs ?? 60_000) + 30_000)),
     });
@@ -2399,7 +2443,7 @@ async function tokenEndpoint(token: string): Promise<{ url: string; key: string 
       try {
         const response = await fetch(`${endpoint.url}/v1/previews/holds-token`, {
           method: 'POST',
-          headers: { authorization: `Bearer ${endpoint.key}`, 'content-type': 'application/json' },
+          headers: { ...sandboxAuthHeaders(endpoint), 'content-type': 'application/json' },
           body: JSON.stringify({ token }),
           signal: AbortSignal.timeout(5_000),
         });
@@ -2433,17 +2477,17 @@ export async function sbPreviewProxyTarget(
     if (!holder) return null;
     return {
       url: `${holder.url}/v1/previews/public/${encodeURIComponent(ref.token)}/${rest}`,
-      headers: { authorization: `Bearer ${holder.key}` },
+      headers: { ...sandboxAuthHeaders(holder) },
     };
   }
-  const cfg = await sandboxEndpointFor(ref.subject);
+  const cfg = await sandboxEndpointFor(ref.subject, undefined, ref.subject);
   if (!cfg) return null;
   const where = ref.port
     ? `port/${encodeURIComponent(ref.name)}/${encodeURIComponent(ref.port)}`
     : `proxy/${encodeURIComponent(ref.name)}`;
   return {
     url: `${cfg.url}/v1/previews/${where}/${rest}`,
-    headers: { authorization: `Bearer ${cfg.key}`, 'x-sandbox-subject': ref.subject },
+    headers: { ...sandboxAuthHeaders(cfg), 'x-sandbox-subject': ref.subject },
   };
 }
 
@@ -2590,7 +2634,7 @@ export async function sbRunScript(
     signal?: AbortSignal;
   } = {}
 ): Promise<ClientResult<WireScriptResult>> {
-  const cfg = await sandboxEndpointFor(routeOf(target));
+  const cfg = await endpointFor(target);
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   // The client waits a little beyond the script's own limit: the worker
   // kills the process at timeoutMs, stages what it wrote, and answers.
@@ -2600,7 +2644,7 @@ export async function sbRunScript(
   try {
     response = await fetch(`${cfg.url}/v1/scripts/run`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+      headers: { ...sandboxAuthHeaders(cfg), 'content-type': 'application/json' },
       body: wireBody({ ...target, ...input }),
       signal: options.signal ? AbortSignal.any([timeout, options.signal]) : timeout,
     });
@@ -2686,6 +2730,17 @@ export function clientFailure(error: SandboxClientError): { status: number; mess
     };
   }
   switch (error.type) {
+    // The orchestrator, answering for a sandbox it could not bring up (routing.ts).
+    case 'sandbox_starting':
+      return {
+        status: 503,
+        message: error.message ?? 'The sandbox is still starting. Try again in a moment.',
+      };
+    case 'sandbox_unavailable':
+      return {
+        status: 502,
+        message: error.message ?? 'The sandbox could not be started. Try again in a moment.',
+      };
     case 'shutting_down':
       return {
         status: 503,
@@ -2864,7 +2919,7 @@ export async function sbKernelExecute(
   target: SandboxTarget,
   input: { id: string; path: string; code: string; timeoutMs?: number }
 ): Promise<ClientResult<WireKernelRun>> {
-  const cfg = await sandboxEndpointFor(routeOf(target));
+  const cfg = await endpointFor(target);
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   // The cell's own limit, the interrupt's grace, and a first start's time on top.
   const wait = (input.timeoutMs ?? 10 * 60_000) + 150_000;
@@ -2872,7 +2927,7 @@ export async function sbKernelExecute(
   try {
     response = await fetch(`${cfg.url}/v1/workspaces/kernel/execute`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+      headers: { ...sandboxAuthHeaders(cfg), 'content-type': 'application/json' },
       body: wireBody({ ...target, ...input }),
       signal: AbortSignal.timeout(wait),
     });
@@ -3030,13 +3085,13 @@ export async function sbLspEvents(
   input: { session: string },
   signal: AbortSignal
 ): Promise<ClientResult<ReadableStream<Uint8Array>>> {
-  const cfg = await sandboxEndpointFor(routeOf(target));
+  const cfg = await endpointFor(target);
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   let response: Response;
   try {
     response = await fetch(`${cfg.url}/v1/workspaces/lsp/events`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+      headers: { ...sandboxAuthHeaders(cfg), 'content-type': 'application/json' },
       body: wireBody({ ...target, ...input }),
       signal,
     });

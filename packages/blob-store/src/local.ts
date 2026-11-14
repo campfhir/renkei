@@ -11,8 +11,11 @@
  * refused as NOT_FOUND rather than resolved.
  */
 
-import { createReadStream } from 'node:fs';
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
@@ -68,6 +71,31 @@ export function createLocalBlobStore(config: LocalBlobConfig): BlobStore {
         await writeFile(metaOf(file), JSON.stringify({ contentType }));
         return ok(undefined);
       } catch (error) {
+        return failure(error);
+      }
+    },
+
+    async putObjectStream(key, body, contentType) {
+      const file = pathOf(key);
+      if (!file) return err('NOT_FOUND' as const);
+      // Written beside it and moved into place, so a stream that fails
+      // half way leaves the key as it was.
+      const partial = `${file}.${randomUUID()}.partial`;
+      try {
+        await mkdir(path.dirname(file), { recursive: true });
+        let sizeBytes = 0;
+        const counted = async function* (): AsyncGenerator<Uint8Array> {
+          for await (const chunk of body) {
+            sizeBytes += chunk.byteLength;
+            yield chunk;
+          }
+        };
+        await pipeline(Readable.from(counted()), createWriteStream(partial));
+        await rename(partial, file);
+        await writeFile(metaOf(file), JSON.stringify({ contentType }));
+        return ok({ sizeBytes });
+      } catch (error) {
+        await rm(partial, { force: true }).catch(() => undefined);
         return failure(error);
       }
     },

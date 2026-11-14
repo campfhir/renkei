@@ -396,3 +396,4 @@ export {
   type CrawlRegion,
   type InferredCrawlPattern,
 } from './crawl';
+export { openSandboxEnv, sealSandboxEnv } from './sealed-env';

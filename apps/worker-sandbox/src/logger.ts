@@ -41,6 +41,17 @@ export async function attachPersistentLogging(): Promise<void> {
     return;
   }
 
+  // A sandbox made for one scope has no database to write its log to: it
+  // ships it (LOG_SHIP_ENDPOINT, handed over sealed with the rest of its
+  // environment) or, without that, logs to its console alone.
+  if (process.env.SANDBOX_ORCHESTRATED === '1') {
+    logger.info(
+      'this sandbox has no database and no LOG_SHIP_ENDPOINT, so its log goes to the console only',
+      { component: 'worker-sandbox/logging' }
+    );
+    return;
+  }
+
   const ready = checkDataStore();
   if (!ready.ok) {
     logger.error(

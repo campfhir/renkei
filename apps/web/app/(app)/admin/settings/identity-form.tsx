@@ -22,7 +22,10 @@ const inputClass =
 const labelClass = 'block text-sm font-medium mb-1';
 const hintClass = 'mt-1 text-xs text-gray-500 dark:text-gray-400';
 
-export default function IdentityForm({ initial, observedGroups }: {
+export default function IdentityForm({
+  initial,
+  observedGroups,
+}: {
   initial: IdentityClaimsValues;
   /** How many distinct group values sign-ins have recorded so far. */
   observedGroups: number;
@@ -96,8 +99,8 @@ export default function IdentityForm({ initial, observedGroups }: {
           <p className={hintClass}>
             Recorded at sign-in for connector audiences. {observedGroups} distinct value
             {observedGroups === 1 ? '' : 's'} seen so far. Leave it empty and nobody is in any
-            group, so a connector restricted to an audience is open to nobody. Entra omits the
-            claim for people in more than ~200 groups; they then count as in no group.
+            group, so a connector restricted to an audience is open to nobody. Entra omits the claim
+            for people in more than ~200 groups; they then count as in no group.
           </p>
         </div>
         <div>

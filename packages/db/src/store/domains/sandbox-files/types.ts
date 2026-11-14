@@ -48,4 +48,10 @@ export interface SandboxFileStore {
   listExpired(before: Date, limit: number): Promise<SandboxFileRecord[]>;
   /** Delete a file's row by id alone (the sweep). */
   deleteById(id: string): Promise<void>;
+  /**
+   * Whose rows these are: the distinct subjects of the rows with these
+   * ids, in order; ids with no row count for nothing. For a caller that
+   * holds only an id and must know whose it is before acting on it.
+   */
+  subjectsOf(ids: string[]): Promise<string[]>;
 }

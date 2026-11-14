@@ -34,7 +34,8 @@
 import type { DOMAINS } from './domains';
 
 /** Which implementation answered. */
-export type DataStoreKind = 'postgres' | 'memory';
+/** `remote`: no database here; every call is sent to a process that has one (store/remote.ts). */
+export type DataStoreKind = 'postgres' | 'memory' | 'remote';
 
 type Repositories = {
   readonly [K in keyof typeof DOMAINS]: ReturnType<(typeof DOMAINS)[K]['memory']>;
@@ -117,6 +118,8 @@ export type * from './domains/sandbox-services';
 export type * from './domains/code-service-image-rules';
 export type * from './domains/sandbox-env-secrets';
 export type * from './domains/sandbox-crawls';
+export type * from './domains/sandboxes';
+export type * from './domains/sandbox-archives';
 export type * from './domains/webex-dirty-windows';
 export type * from './domains/resource-keys';
 export type * from './domains/delegate-signing-keys';

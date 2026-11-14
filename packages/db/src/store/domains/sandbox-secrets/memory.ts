@@ -55,5 +55,12 @@ export function memorySandboxSecrets(tables: MemoryTables): SandboxSecretStore {
       const wanted = secretId;
       tables.delete('sandbox_secrets', (r) => r.id === wanted);
     },
+    async subjectsOf(ids) {
+      const wanted = new Set(ids);
+      const subjects = new Set(
+        tables.select('sandbox_secrets', (r) => wanted.has(r.id)).map((row) => row.subject)
+      );
+      return [...subjects].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    },
   };
 }

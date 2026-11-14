@@ -269,9 +269,10 @@ ls -la .next/
 ## Published Images
 
 Every push to `main` that passes CI (lint, typecheck, tests) also builds
-and publishes the nine images `docker-compose.yaml` pulls — `renkei`,
+and publishes the ten images `docker-compose.yaml` pulls — `renkei`,
 `renkei-migrate`, `renkei-worker`, `renkei-fileshares`, `renkei-onbase`,
-`renkei-mirth`, `renkei-admanager`, `renkei-delegate`, `renkei-sandbox` —
+`renkei-mirth`, `renkei-admanager`, `renkei-delegate`, `renkei-sandbox`,
+`renkei-orchestrator` —
 to Docker Hub from the `docker` job in `.github/workflows/ci.yml`. Each
 image is pushed under three tags: `latest`, the version in
 `apps/web/package.json` (the version every app in the workspace shares,
@@ -748,6 +749,31 @@ nothing, and the organization stays on the default (off). Afterwards the
 variables are unread: delete them from `.env`, and turn features on or
 off per organization under admin → Settings → Sandbox. A new organization
 starts with every sandbox feature off.
+
+**A sandbox per person, agent and project (opt-in):** instead of a shared
+sandbox worker, the sandbox orchestrator (`worker-orchestrator`, the
+`orchestrator` compose profile) makes each scope a sandbox of its own on
+first use — a container on this host's Docker engine, or a microVM in an
+Azure Container Apps sandbox group — suspends it after 15 idle minutes
+and evicts it after 24 idle hours: what it holds is archived, compressed,
+to the organization's storage and unpacked into the scope's next sandbox.
+Set `SANDBOX_ORCHESTRATOR_URL` and `SANDBOX_ORCHESTRATOR_API_KEY` in
+`.env`, start with `--profile orchestrator --scale worker-sandbox=0`,
+and then set sandboxes up as an operator under **Organization →
+Sandboxes**: where they are made, the identity, the idle rules and what
+each is started with are stored sealed in the database, not in `.env`,
+and the orchestrator picks a change up without a restart. A sandbox has
+no database access and is created with no secret but its own key: its
+worker makes its data store calls through the orchestrator and is handed
+its secrets sealed under that key; each of those calls is held to the
+people that sandbox serves. The
+orchestrator is the only container holding the engine's socket; no
+sandbox does. Code project services run inside each sandbox on an engine
+of its own (Podman) — on Azure as they are, on this host's Docker only
+with “Run sandboxes privileged” (a developer's machine).
+`docs/sandbox-orchestrator-design.md` has the page's fields, the Azure
+setup, and the list of what still runs the old way. Run `migrate` first
+(migrations 180 to 182).
 
 **More than one sandbox replica:** fine on one host, because Compose
 replicas of a service share its named volumes — and the sandbox worker

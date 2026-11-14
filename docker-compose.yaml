@@ -294,6 +294,10 @@ services:
       <<: [*crypto-keys, *logging-env, *runtime-database-urls, *delegate-worker]
       SANDBOX_WORKER_API_KEY:
       SANDBOX_WORKER_URL: ${SANDBOX_WORKER_URL:-http://renkei-worker-sandbox:8092}
+      # Set both to have each scope's sandbox made by the orchestrator
+      # (worker-orchestrator below) instead of calling the shared worker.
+      SANDBOX_ORCHESTRATOR_URL:
+      SANDBOX_ORCHESTRATOR_API_KEY:
     <<: *locked-down
     tmpfs: *worker-tmpfs
     # On the sandbox network too, as a CALLER of the sandbox worker (OCR
@@ -659,6 +663,68 @@ services:
     # own 25s deadline (src/index.ts), so it is the worker that decides.
     stop_grace_period: 30s
 
+  # The sandbox orchestrator (docs/sandbox-orchestrator-design.md) — OPT-IN,
+  # behind the `orchestrator` profile. With it, there is no shared sandbox
+  # worker: each person (for their chats), each agent and each project
+  # gets a sandbox of its own, made on first use, suspended when idle,
+  # and evicted (its work archived to the organization's storage) after a
+  # day idle.
+  #
+  # WHERE sandboxes are made — an Azure Container Apps sandbox group, or
+  # this host's Docker engine — how large they are, the idle rules and
+  # what each is started with are NOT variables here: an operator sets
+  # them under Organization → Sandboxes, they are stored sealed in the
+  # database like a connector's, and this service picks a change up
+  # without a restart. Until that page is saved it makes nothing and says
+  # why.
+  #
+  # To turn it on, in .env:
+  #   SANDBOX_ORCHESTRATOR_URL=http://renkei-worker-orchestrator:8097
+  #   SANDBOX_ORCHESTRATOR_API_KEY=<openssl rand -base64 32>
+  #   DOCKER_GID=<the gid of /var/run/docker.sock on this host>   (Docker only)
+  # then `docker compose --profile orchestrator up -d --scale worker-sandbox=0`,
+  # and set sandboxes up on that page.
+  #
+  # It holds TOKEN_ENCRYPTION_KEY, to open that stored configuration, and
+  # it is the ONE container given the engine: both because it runs
+  # nobody's code. No sandbox gets the socket, that key or a database URL:
+  # a sandbox's data store calls come through this service (which is why
+  # it is on the sandbox network), and its secrets are handed to it sealed
+  # under its own key. Each sandbox's
+  # bearer key is derived from SANDBOX_WORKER_API_KEY, which no sandbox
+  # ever holds. Code project services run INSIDE each sandbox, on an
+  # engine of its own (Podman).
+  worker-orchestrator:
+    image: scotteremiaroden/renkei-orchestrator:latest
+    container_name: renkei-worker-orchestrator
+    profiles: ['orchestrator']
+    environment:
+      # The blob store here is only the fallback for an organization that
+      # has not set its own storage up (Organization → Storage).
+      <<: [*runtime-database-urls, *crypto-keys, *logging-env, *blob-store]
+      SANDBOX_ORCHESTRATOR_API_KEY: ${SANDBOX_ORCHESTRATOR_API_KEY:-}
+      SANDBOX_WORKER_API_KEY:
+      SANDBOX_DEPLOYMENT:
+    # Only for sandboxes made on this host's Docker engine; harmless otherwise.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    # The socket is root's and the engine group's; this process is neither.
+    group_add:
+      - '${DOCKER_GID:-999}'
+    <<: *locked-down
+    tmpfs: *worker-tmpfs
+    # `renkei-internal` for the database and its callers; `renkei-sandbox`
+    # because it asks each sandbox whether it is up before answering where
+    # it is. Bearer-authenticated, and it holds nothing a sandbox could ask
+    # it for but other sandboxes' addresses.
+    networks:
+      - renkei-internal
+      - renkei-sandbox
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   renkei:
     image: scotteremiaroden/renkei:latest
     container_name: renkei-app
@@ -687,6 +753,10 @@ services:
       # organization's own setting under admin → Settings → Sandbox, read
       # per request here and on the worker.
       SANDBOX_WORKER_URL: ${SANDBOX_WORKER_URL:-http://renkei-worker-sandbox:8092}
+      # Set both to have each scope's sandbox made by the orchestrator
+      # (worker-orchestrator above) instead of calling the shared worker.
+      SANDBOX_ORCHESTRATOR_URL:
+      SANDBOX_ORCHESTRATOR_API_KEY:
       # The chat calls the app's OWN MCP endpoint for tool calls, the same
       # way the agents worker does; loopback inside the container.
       RENKEI_WEB_INTERNAL_URL: http://127.0.0.1:3000

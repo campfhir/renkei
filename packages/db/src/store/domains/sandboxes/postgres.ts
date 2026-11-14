@@ -1,0 +1,120 @@
+import { sql, type Kysely } from 'kysely';
+import type { DB } from '../../../db.types';
+import { sandboxRecordOf } from './record';
+import type { SandboxStore } from './types';
+
+export function postgresSandboxes(db: () => Kysely<DB>): SandboxStore {
+  return {
+    async claim(input) {
+      const row = await db()
+        .insertInto('sandboxes')
+        .values({
+          id: input.id,
+          route_key: input.routeKey,
+          kind: input.kind,
+          provider: input.provider,
+          provider_id: null,
+          state: 'provisioning',
+          address: null,
+          error: null,
+          created_at: input.at,
+          last_active_at: input.at,
+          state_changed_at: input.at,
+          verified_at: input.at,
+          subjects: [],
+        })
+        // The partial unique index: one sandbox that is not deleted per scope.
+        .onConflict((conflict) =>
+          conflict.column('route_key').where('state', '<>', 'deleted').doNothing()
+        )
+        .returningAll()
+        .executeTakeFirst();
+      return row ? sandboxRecordOf(row) : null;
+    },
+    async live(routeKey) {
+      const row = await db()
+        .selectFrom('sandboxes')
+        .selectAll()
+        .where('route_key', '=', routeKey)
+        .where('state', '<>', 'deleted')
+        .executeTakeFirst();
+      return row ? sandboxRecordOf(row) : null;
+    },
+    async get(id) {
+      const row = await db()
+        .selectFrom('sandboxes')
+        .selectAll()
+        .where('id', '=', id)
+        .executeTakeFirst();
+      return row ? sandboxRecordOf(row) : null;
+    },
+    async transition(input) {
+      const result = await db()
+        .updateTable('sandboxes')
+        .set({
+          state: input.to,
+          state_changed_at: input.at,
+          verified_at: input.at,
+          ...(input.providerId !== undefined ? { provider_id: input.providerId } : {}),
+          ...(input.address !== undefined ? { address: input.address } : {}),
+          ...(input.error !== undefined ? { error: input.error } : {}),
+        })
+        .where('id', '=', input.id)
+        .where('state', 'in', input.from)
+        .executeTakeFirst();
+      return Number(result.numUpdatedRows) > 0;
+    },
+    async touch(id, at) {
+      await db()
+        .updateTable('sandboxes')
+        .set({ last_active_at: at })
+        .where('id', '=', id)
+        .where('last_active_at', '<', at)
+        .execute();
+    },
+    async allowSubject(id, subject, limit) {
+      // One statement: appended only when absent and there is room, so two
+      // orchestrators adding at once cannot list a subject twice.
+      await db()
+        .updateTable('sandboxes')
+        .set({ subjects: sql<string[]>`array_append(subjects, ${subject})` })
+        .where('id', '=', id)
+        .where(sql<boolean>`NOT (${subject} = ANY(subjects))`)
+        .where(sql<boolean>`cardinality(subjects) < ${limit}`)
+        .execute();
+      const row = await db()
+        .selectFrom('sandboxes')
+        .select('subjects')
+        .where('id', '=', id)
+        .executeTakeFirst();
+      return row ? row.subjects.includes(subject) : false;
+    },
+    async verified(id, at) {
+      await db().updateTable('sandboxes').set({ verified_at: at }).where('id', '=', id).execute();
+    },
+    async list(input) {
+      if (input.states.length === 0) return [];
+      let query = db().selectFrom('sandboxes').selectAll().where('state', 'in', input.states);
+      if (input.lastActiveBefore) {
+        query = query.where('last_active_at', '<', input.lastActiveBefore);
+      }
+      if (input.stateChangedBefore) {
+        query = query.where('state_changed_at', '<', input.stateChangedBefore);
+      }
+      const rows = await query
+        .orderBy('last_active_at', 'asc')
+        .orderBy('id', 'asc')
+        .limit(input.limit)
+        .execute();
+      return rows.map(sandboxRecordOf);
+    },
+    async purgeDeleted(before) {
+      const result = await db()
+        .deleteFrom('sandboxes')
+        .where('state', '=', 'deleted')
+        .where('state_changed_at', '<', before)
+        .executeTakeFirst();
+      return Number(result.numDeletedRows);
+    },
+  };
+}

@@ -67,7 +67,8 @@ import { BrowserOpError, type BrowserErrorType, type BrowserTarget } from './bro
 import { ChartRenderError, type ChartErrorType, type ChartVerbs } from './charts';
 import { SecretVault } from './secret-vault';
 import { secretSummary } from './secrets';
-import { interruptRunningProcesses, orphanedByNow } from './workspaces';
+import { getWorkspacesRoot, interruptRunningProcesses, orphanedByNow } from './workspaces';
+import { ARCHIVE_CONTENT_TYPE, readArchive, writeArchive } from './archive';
 import { createWorkspaceHandlers } from './workspace-endpoints';
 import { createServiceHandlers } from './service-endpoints';
 import { createPreviewHandlers } from './preview-endpoints';
@@ -126,6 +127,14 @@ export interface BrowserVerbs {
 export interface SandboxServerDeps {
   /** Accepted bearer keys; empty means every request is refused. */
   apiKeys: string[];
+  /**
+   * Whether the orchestrator made this worker's machine for one scope.
+   * Only then does it pack and unpack what it holds (archive.ts): on a
+   * worker many callers share, that would be everyone's.
+   */
+  orchestrated?: boolean;
+  /** The directories an archive holds; the data and workspaces roots unless a test says otherwise. */
+  archiveRoots?: () => string[];
   /** The per-tenant per-file ceiling (the org's attachment limit). */
   maxFileBytes?: () => Promise<number>;
   /**
@@ -202,9 +211,16 @@ function str(value: unknown): string {
 
 function authorized(request: IncomingMessage, keys: string[]): boolean {
   if (keys.length === 0) return false;
+  // Behind an ingress that takes `authorization` for its own token and
+  // strips it (Entra, on an Azure sandbox's port), the key rides its own
+  // header. Either is the same secret.
+  const own = request.headers['x-sandbox-key'];
   const header = request.headers.authorization?.trim() ?? '';
-  if (header.length < 8 || header.slice(0, 7).toLowerCase() !== 'bearer ') return false;
-  const presented = header.slice(7).trim();
+  const bearer =
+    header.length >= 8 && header.slice(0, 7).toLowerCase() === 'bearer '
+      ? header.slice(7).trim()
+      : '';
+  const presented = (typeof own === 'string' ? own.trim() : '') || bearer;
   if (!presented) return false;
   return keys.some((key) => {
     const bufA = Buffer.from(presented);
@@ -1008,6 +1024,47 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     }
     if (request.method !== 'POST') {
       return sendError(response, 405, 'method_not_allowed');
+    }
+
+    // What this sandbox holds, out as one compressed stream and back in:
+    // the orchestrator's, when it evicts the sandbox and when it makes the
+    // scope a new one (archive.ts).
+    if (url.pathname === '/v1/archive' || url.pathname === '/v1/restore') {
+      if (!deps.orchestrated) return sendError(response, 404, 'unknown_operation');
+      const roots = deps.archiveRoots?.() ?? [disk.getDataRoot(), getWorkspacesRoot()];
+      if (url.pathname === '/v1/restore') {
+        try {
+          await readArchive(roots, request);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          logger.error(
+            'an archive could not be unpacked into this sandbox: {error}; the sandbox holds none of the work it was to bring back',
+            { component: 'worker-sandbox/archive', error: message }
+          );
+          return sendError(response, 500, 'restore_failed', message);
+        }
+        logger.info('an archive was unpacked into this sandbox', {
+          component: 'worker-sandbox/archive',
+        });
+        return sendJson(response, 200, { ok: true });
+      }
+      request.resume();
+      response.writeHead(200, { 'content-type': ARCHIVE_CONTENT_TYPE });
+      try {
+        await writeArchive(roots, response);
+      } catch (error) {
+        // The headers are gone; a stream cut short is how the receiver
+        // learns this is not a whole archive.
+        logger.error(
+          'this sandbox could not be packed into an archive: {error}; the stream was cut short and nothing was archived',
+          {
+            component: 'worker-sandbox/archive',
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
+        response.destroy();
+      }
+      return;
     }
 
     // Write is the one endpoint whose body IS the file: metadata rides the

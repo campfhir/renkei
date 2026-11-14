@@ -116,4 +116,15 @@ export const sandboxEnvSecretScenarios: Scenario<DataStore>[] = [
       await store.sandboxEnvSecrets.count('bob'),
     ],
   },
+  {
+    method: 'sandboxEnvSecrets.subjectsOf',
+    name: 'the distinct subjects of the rows named, in order; an id with no row counts for nothing',
+    fixture,
+    run: async (store) => [
+      await store.sandboxEnvSecrets.subjectsOf([id(4), id(1), id(2), id(99)]),
+      await store.sandboxEnvSecrets.subjectsOf([id(1)]),
+      await store.sandboxEnvSecrets.subjectsOf([id(99)]),
+      await store.sandboxEnvSecrets.subjectsOf([]),
+    ],
+  },
 ];

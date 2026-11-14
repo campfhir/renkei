@@ -49,6 +49,9 @@ const SANDBOX_NETWORK_MEMBERS = [
   'worker-delegate',
   'worker-batch-jobs',
   'worker-sandbox',
+  // Asks each sandbox it made whether it is up. It holds the deployment key
+  // (it opens the stored sandbox configuration) and runs nobody's code.
+  'worker-orchestrator',
 ];
 
 const dir = mkdtempSync(join(tmpdir(), 'compose-secrets-'));
@@ -206,6 +209,16 @@ for (const service of Object.keys(withRoles.services)) {
   }
   if (service !== 'worker-sandbox' && env.includes(SANDBOX_PASSWORD) && service !== 'migrate') {
     problems.push(`${service}: carries the sandbox role's password`);
+  }
+  // What a sandbox is started with is the organization's stored configuration
+  // (Organization → Sandboxes), never the orchestrator's environment.
+  if (
+    service === 'worker-orchestrator' &&
+    Object.keys(withRoles.services[service].environment ?? {}).some((name) =>
+      name.startsWith('SANDBOX_TEMPLATE_ENV_')
+    )
+  ) {
+    problems.push(`${service}: hands sandboxes values from its environment`);
   }
 }
 const migrateEnv = withRoles.services.migrate?.environment ?? {};
