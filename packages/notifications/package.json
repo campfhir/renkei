@@ -22,7 +22,7 @@
     "@types/web-push": "^3.6.4",
     "jest": "^30.5.2",
     "ts-jest": "^29.4.15",
-    "typescript": "^5.9.3"
+    "typescript": "^6.0.3"
   },
   "exports": {
     ".": "./src/index.ts"
