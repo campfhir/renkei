@@ -143,14 +143,15 @@ export function createOrchestratorServer(deps: OrchestratorServerDeps): Server {
     const id = request.headers['x-sandbox-id'];
     const header = request.headers.authorization?.trim() ?? '';
     const key = header.slice(0, 7).toLowerCase() === 'bearer ' ? header.slice(7).trim() : '';
-    // Which sandbox is asking is settled before anything is read: with no
-    // orchestrator in force there is no sandbox to be.
-    const status = deps.status();
-    const sandbox =
-      typeof id === 'string' && key && !status.problem
-        ? await deps.orchestrator().authenticate(id, key)
-        : null;
-    if (!sandbox) return sendError(response, 'unauthorized');
+    // With no orchestrator in force there is no sandbox to be.
+    if (deps.status().problem) return sendError(response, 'unauthorized');
+    // Which sandbox is asking is settled before anything is read. Whatever
+    // was presented goes to the one check that decides: the key must be the
+    // one derived for that id, compared in constant time, and the sandbox
+    // must exist (the orchestrator's `authenticate`). A missing id or key
+    // is simply a pair that does not match.
+    const sandbox = await deps.orchestrator().authenticate(typeof id === 'string' ? id : '', key);
+    if (sandbox === null) return sendError(response, 'unauthorized');
 
     if (url.pathname === '/sandbox/v1/bootstrap') {
       request.resume();

@@ -53,6 +53,7 @@
 import {
   ProviderError,
   SANDBOX_WORKER_PORT,
+  withoutTrailingSlashes,
   type ProviderSandbox,
   type ProviderSandboxState,
   type SandboxProvider,
@@ -254,7 +255,7 @@ export class AzureSandboxProvider implements SandboxProvider {
       ]);
       const url = ports.find((opened) => opened.port === port)?.url;
       if (!url) throw new ProviderError('the platform opened the port without an address');
-      return { url: url.replace(/\/+$/, '') };
+      return { url: withoutTrailingSlashes(url) };
     } catch (error) {
       throw wrap(error);
     }
@@ -281,7 +282,7 @@ export class AzureSandboxProvider implements SandboxProvider {
     return {
       providerId: sandbox.id,
       state,
-      address: state === 'running' && url ? url.replace(/\/+$/, '') : null,
+      address: state === 'running' && url ? withoutTrailingSlashes(url) : null,
       sandboxId: sandbox.labels?.[LABEL_ID] ?? null,
       createdAt: created && !Number.isNaN(created.getTime()) ? created : null,
     };

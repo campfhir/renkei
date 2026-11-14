@@ -18,6 +18,17 @@
 
 import type { SandboxKind } from '@renkei/db';
 
+/**
+ * `value` without its trailing slashes. A loop, not `/\/+$/`: on a long
+ * run of slashes that does not end the string, that expression backtracks
+ * over it again and again, and these values come from outside.
+ */
+export function withoutTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1;
+  return value.slice(0, end);
+}
+
 /** The port the sandbox worker listens on inside every sandbox. */
 export const SANDBOX_WORKER_PORT = 8092;
 

@@ -44,6 +44,7 @@ import {
 import { sandboxApiKey } from './keys';
 import {
   SANDBOX_WORKER_PORT,
+  withoutTrailingSlashes,
   type ProviderSandbox,
   type SandboxProvider,
   type SandboxSpec,
@@ -314,7 +315,7 @@ export class Orchestrator {
         SANDBOX_ORCHESTRATED: '1',
         SANDBOX_INSTANCE_ID: row.id,
         ...(this.options.callbackUrl
-          ? { SANDBOX_ORCHESTRATOR_CALLBACK_URL: this.options.callbackUrl.replace(/\/+$/, '') }
+          ? { SANDBOX_ORCHESTRATOR_CALLBACK_URL: withoutTrailingSlashes(this.options.callbackUrl) }
           : {}),
       },
       idleSuspendSeconds: Math.round(this.idleSuspendMs / 1000),

@@ -46,6 +46,7 @@
 
 import { getDataStore } from '@renkei/db';
 import { isRecord } from '@renkei/guards';
+import { withoutTrailingSlashes } from './slashes';
 
 export interface SandboxEndpoint {
   /** The instance's base address, no trailing slash. */
@@ -95,7 +96,7 @@ const ENSURE_TIMEOUT_MS = 150_000;
 
 /** The orchestrator's address and key; null when sandboxes are not orchestrated. */
 export function sandboxOrchestratorConfig(): SandboxEndpoint | null {
-  const url = process.env.SANDBOX_ORCHESTRATOR_URL?.trim().replace(/\/+$/, '');
+  const url = withoutTrailingSlashes(process.env.SANDBOX_ORCHESTRATOR_URL?.trim() ?? '');
   const key = process.env.SANDBOX_ORCHESTRATOR_API_KEY?.trim();
   if (!url || !key) return null;
   return { url, key };
@@ -203,7 +204,8 @@ async function orchestratedEndpoint(
   } catch {
     body = null;
   }
-  const url = isRecord(body) && typeof body.url === 'string' ? body.url.replace(/\/+$/, '') : '';
+  const url =
+    isRecord(body) && typeof body.url === 'string' ? withoutTrailingSlashes(body.url) : '';
   const key = isRecord(body) && typeof body.key === 'string' ? body.key : '';
   if (!url || !key) return unavailableEndpoint(orchestrator, 'provider');
   const headers = isRecord(body) ? headersOf(body.headers) : undefined;
@@ -385,7 +387,7 @@ async function runningSandboxes(orchestrator: SandboxEndpoint): Promise<SandboxE
       }
       const headers = headersOf(entry.headers);
       out.push({
-        url: entry.url.replace(/\/+$/, ''),
+        url: withoutTrailingSlashes(entry.url),
         key: entry.key,
         ...(headers ? { headers } : {}),
       });

@@ -28,6 +28,17 @@
 import { openSandboxEnv } from '@renkei/connector-sandbox';
 import { createHttpStoreTransport, createRemoteDataStore, registerDataStore } from '@renkei/db';
 
+/**
+ * `value` without its trailing slashes. A loop, not `/\/+$/`: on a long
+ * run of slashes that does not end the string, that expression backtracks
+ * over it again and again, and these values come from outside.
+ */
+function withoutTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1;
+  return value.slice(0, end);
+}
+
 const ATTEMPTS = 20;
 const RETRY_MS = 1_500;
 
@@ -46,7 +57,7 @@ export interface SealedBootDeps {
 export async function sealedBoot(deps: SealedBootDeps): Promise<'shared' | 'sandbox'> {
   const { env } = deps;
   if (env.SANDBOX_ORCHESTRATED !== '1') return 'shared';
-  const url = env.SANDBOX_ORCHESTRATOR_CALLBACK_URL?.trim().replace(/\/+$/, '');
+  const url = withoutTrailingSlashes(env.SANDBOX_ORCHESTRATOR_CALLBACK_URL?.trim() ?? '');
   const sandboxId = env.SANDBOX_INSTANCE_ID?.trim();
   const sandboxKey = env.SANDBOX_WORKER_API_KEY?.trim();
   if (!url || !sandboxId || !sandboxKey) {

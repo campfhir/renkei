@@ -37,7 +37,7 @@ type Tagged = { $date: string } | { $bytes: string } | { $bigint: string };
  * parsed JSON can come from another realm, whose `Object.prototype` is
  * not this one's, so the prototype is known by what it is, not which.
  */
-function isPlainObject(value: unknown): value is Record<string, unknown> {
+function isJsonObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null) return false;
   if (Object.prototype.toString.call(value) !== '[object Object]') return false;
   const proto: unknown = Object.getPrototypeOf(value);
@@ -62,7 +62,7 @@ export function encodeWire(value: unknown): unknown {
     return tagged;
   }
   if (Array.isArray(value)) return value.map(encodeWire);
-  if (isPlainObject(value)) {
+  if (isJsonObject(value)) {
     const out: Record<string, unknown> = {};
     for (const [key, entry] of Object.entries(value)) {
       if (entry !== undefined) out[key] = encodeWire(entry);
@@ -78,7 +78,7 @@ export function encodeWire(value: unknown): unknown {
 /** The value `encodeWire` was given, back from its JSON. */
 export function decodeWire(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(decodeWire);
-  if (!isPlainObject(value)) return value;
+  if (!isJsonObject(value)) return value;
   const keys = Object.keys(value);
   if (keys.length === 1) {
     if (typeof value.$date === 'string') return new Date(value.$date);
@@ -371,7 +371,7 @@ function methodOf(
 }
 
 function subjectOfRow(row: unknown): string | null {
-  return isPlainObject(row) && typeof row.subject === 'string' ? row.subject : null;
+  return isJsonObject(row) && typeof row.subject === 'string' ? row.subject : null;
 }
 
 /**
@@ -403,7 +403,7 @@ export async function dispatchStoreCall(
   }
   if (guard.kind === 'subject') {
     const arg = call.args[guard.arg];
-    if (!serves(isPlainObject(arg) ? arg.subject : arg)) throw outside();
+    if (!serves(isJsonObject(arg) ? arg.subject : arg)) throw outside();
   }
   if (guard.kind === 'owned') {
     const arg = call.args[guard.arg];
@@ -420,6 +420,17 @@ export async function dispatchStoreCall(
 }
 
 /**
+ * `value` without its trailing slashes. A loop, not `/\/+$/`: on a long
+ * run of slashes that does not end the string, that expression backtracks
+ * over it again and again, and these values come from outside.
+ */
+function withoutTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1;
+  return value.slice(0, end);
+}
+
+/**
  * The transport a sandbox's worker uses: each call POSTed to the
  * orchestrator's `/sandbox/v1/store`, as that sandbox (its id, and its
  * own key as the bearer). A refusal or a failed call rejects with the far
@@ -432,7 +443,7 @@ export function createHttpStoreTransport(options: {
   sandboxKey: string;
   timeoutMs?: number;
 }): StoreTransport {
-  const endpoint = `${options.url.replace(/\/+$/, '')}/sandbox/v1/store`;
+  const endpoint = `${withoutTrailingSlashes(options.url)}/sandbox/v1/store`;
   return async (call) => {
     const response = await fetch(endpoint, {
       method: 'POST',
@@ -454,8 +465,8 @@ export function createHttpStoreTransport(options: {
     } catch {
       body = null;
     }
-    if (isPlainObject(body) && body.ok === true) return decodeWire(body.result);
-    const error = isPlainObject(body) && isPlainObject(body.error) ? body.error : {};
+    if (isJsonObject(body) && body.ok === true) return decodeWire(body.result);
+    const error = isJsonObject(body) && isJsonObject(body.error) ? body.error : {};
     throw new RemoteStoreError(
       typeof error.message === 'string'
         ? error.message

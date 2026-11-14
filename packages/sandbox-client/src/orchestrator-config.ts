@@ -24,6 +24,7 @@
  */
 
 import { isRecord } from '@renkei/guards';
+import { withoutTrailingSlashes } from './slashes';
 
 /** The connector_configs key. */
 export const SANDBOX_ORCHESTRATOR_CONNECTOR = 'sandbox-orchestrator';
@@ -199,7 +200,7 @@ export function orchestratorSettingsOfRow(
   const command = Array.isArray(docker.command) ? docker.command.map(text).filter(Boolean) : [];
   return {
     provider: settings.provider === 'docker' ? 'docker' : 'azure',
-    callbackUrl: text(settings.callbackUrl).replace(/\/+$/, ''),
+    callbackUrl: withoutTrailingSlashes(text(settings.callbackUrl)),
     idleSuspendMinutes: numberIn(settings.idleSuspendMinutes, 15, 1, 1_440) ?? 15,
     idleEvictHours: numberIn(settings.idleEvictHours, 24, 1, 8_760) ?? 24,
     azure: {

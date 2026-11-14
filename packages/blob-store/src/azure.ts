@@ -37,12 +37,24 @@ async function refused(response: Response): Promise<Result<never, BlobError>> {
   return err(refusal.kind, { message: refusal.message });
 }
 
+/**
+ * `value` without its trailing slashes. A loop, not `/\/+$/`: on a long
+ * run of slashes that does not end the string, that expression backtracks
+ * over it again and again, and these values come from outside.
+ */
+function withoutTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1;
+  return value.slice(0, end);
+}
+
 export function createAzureBlobStore(config: AzureBlobConfig): BlobStore {
   let containerReady = false;
   // An emulator (Azurite) is addressed path-style, with the account as
   // the endpoint's first path segment, and counts that segment as part of
   // the resource it signs: `/{account}/{account}/{container}/{blob}`.
-  const pathStyle = new URL(config.endpoint).pathname.replace(/\/+$/, '') === `/${config.account}`;
+  const pathStyle =
+    withoutTrailingSlashes(new URL(config.endpoint).pathname) === `/${config.account}`;
 
   const send = async (
     verb: 'PUT' | 'GET' | 'DELETE',
