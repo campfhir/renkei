@@ -15,7 +15,7 @@
   "dependencies": {
     "@campfhir/bored-logs": "^0.7.1",
     "@campfhir/safe-functions": "^0.1.3",
-    "kysely": "^0.29.7",
+    "kysely": "^0.29.8",
     "pg": "^8.23.1"
   },
   "devDependencies": {
