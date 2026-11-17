@@ -23,6 +23,8 @@ import { CodeLineNumbersProvider } from '@/components/code-display-context';
 import { UploadQueueProvider } from '@/components/uploads/upload-queue';
 import { getVersionInfo } from '@/lib/version-info';
 import { countChangesAwaitingReview } from '@/lib/admin-changes/sources';
+import { getDataStore } from '@renkei/db';
+import { FABRIC } from '@renkei/provider-grants';
 import AppNav from './nav';
 import PreferencesSync from './preferences-sync';
 
@@ -86,18 +88,33 @@ export default async function TenantLayout({ children }: { children: ReactNode }
   // A chat list that cannot be read leaves the menu without chats, as it
   // always has when the database is down.
   // An operator's Changes row counts what waits for them; a count that
-  // cannot be read leaves the row without one.
-  const [identity, prefs, theme, coachMarks, orgSettings, chats, coachMarkProgress, pendingChanges] =
-    await Promise.all([
-      getIdentityDisplay(session.subject),
-      getNotificationPrefs(session.subject, { fresh: true }),
-      getThemePrefs(session.subject, { fresh: true }),
-      getCoachMarkPrefs(session.subject, { fresh: true }),
-      getOrgSettings(),
-      loadChatSidebar(session.subject, { since: chatSidebarActiveSince() }).catch(() => null),
-      listCoachMarkProgress(session.subject),
-      isOperator ? countChangesAwaitingReview().catch(() => null) : null,
-    ]);
+  // cannot be read leaves the row without one. Someone who connected
+  // Microsoft Fabric gets its page in the menu; a grant that cannot be
+  // read leaves the row out.
+  const [
+    identity,
+    prefs,
+    theme,
+    coachMarks,
+    orgSettings,
+    chats,
+    coachMarkProgress,
+    pendingChanges,
+    fabricConnected,
+  ] = await Promise.all([
+    getIdentityDisplay(session.subject),
+    getNotificationPrefs(session.subject, { fresh: true }),
+    getThemePrefs(session.subject, { fresh: true }),
+    getCoachMarkPrefs(session.subject, { fresh: true }),
+    getOrgSettings(),
+    loadChatSidebar(session.subject, { since: chatSidebarActiveSince() }).catch(() => null),
+    listCoachMarkProgress(session.subject),
+    isOperator ? countChangesAwaitingReview().catch(() => null) : null,
+    getDataStore()
+      .providerGrants.listForSubject(session.subject, { provider: FABRIC })
+      .then((grants) => grants.length > 0)
+      .catch(() => false),
+  ]);
   const userName = identity?.displayName ?? identity?.email ?? session.subject;
   const coachMarksEnabled = orgSettings.ok ? orgSettings.val.coachMarksEnabled : true;
 
@@ -148,6 +165,7 @@ export default async function TenantLayout({ children }: { children: ReactNode }
               chats={chats}
               version={version}
               pendingChanges={pendingChanges}
+              fabricConnected={fabricConnected}
             >
               {children}
             </AppNav>

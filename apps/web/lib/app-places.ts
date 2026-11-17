@@ -26,6 +26,14 @@ export interface AppPlaceEntry {
   section: 'Settings' | 'Connectors' | 'Organization';
   /** Only the organization's operators are offered these. */
   operatorOnly: boolean;
+  /**
+   * The connector (capability key) this place belongs to, when it has a
+   * page of its own once connected: for someone connected, the place leads
+   * to `connectedHref` instead of the card on the Connectors page.
+   */
+  connector?: string;
+  connectedHref?: string;
+  connectedWhere?: string;
 }
 
 const PREFERENCES = '/preferences';
@@ -116,8 +124,16 @@ const SETTINGS: AppPlaceEntry[] = [
   },
 ];
 
-/** The connector cards on the Connectors page, by the id each card carries. */
-const CONNECTOR_CARDS: { title: string; card: string; keywords: string }[] = [
+/**
+ * The connector cards on the Connectors page, by the id each card carries;
+ * `page` is where a connector with a page of its own leads once connected.
+ */
+const CONNECTOR_CARDS: {
+  title: string;
+  card: string;
+  keywords: string;
+  page?: { href: string; where: string };
+}[] = [
   {
     title: 'Atlassian',
     card: 'atlassian',
@@ -142,6 +158,7 @@ const CONNECTOR_CARDS: { title: string; card: string; keywords: string }[] = [
     title: 'Microsoft Fabric',
     card: 'fabric',
     keywords: 'fabric power bi lakehouse warehouse notebook pipeline data factory onelake',
+    page: { href: '/fabric', where: 'Fabric · workspaces, notebooks and pipelines' },
   },
   {
     title: 'File shares',
@@ -169,6 +186,9 @@ const CONNECTOR_PLACES: AppPlaceEntry[] = CONNECTOR_CARDS.map((entry) => ({
   keywords: `${entry.keywords} connect add configure`,
   section: 'Connectors',
   operatorOnly: false,
+  ...(entry.page
+    ? { connector: entry.card, connectedHref: entry.page.href, connectedWhere: entry.page.where }
+    : {}),
 }));
 
 /** The organization's settings sections, by the heading each one carries. */
@@ -216,9 +236,15 @@ export const APP_PLACE_ENTRIES: AppPlaceEntry[] = [
 
 /**
  * The places every word of `needle` appears in, title matches first. The
- * caller passes the needle already lower-cased.
+ * caller passes the needle already lower-cased; `connected` names the
+ * connectors (capability keys) this person has connected, so a connector
+ * with a page of its own leads there rather than to its card.
  */
-export function matchPlaceEntries(needle: string, isOperator: boolean): AppPlaceEntry[] {
+export function matchPlaceEntries(
+  needle: string,
+  isOperator: boolean,
+  connected: ReadonlySet<string> = new Set()
+): AppPlaceEntry[] {
   const terms = needle.split(/\s+/).filter(Boolean);
   if (terms.length === 0) return [];
   const matched = APP_PLACE_ENTRIES.filter((place) => {
@@ -227,5 +253,9 @@ export function matchPlaceEntries(needle: string, isOperator: boolean): AppPlace
     return terms.every((term) => haystack.includes(term));
   });
   const titled = (place: AppPlaceEntry) => place.title.toLowerCase().includes(needle);
-  return [...matched.filter(titled), ...matched.filter((place) => !titled(place))];
+  return [...matched.filter(titled), ...matched.filter((place) => !titled(place))].map((place) =>
+    place.connector && place.connectedHref && connected.has(place.connector)
+      ? { ...place, href: place.connectedHref, where: place.connectedWhere ?? place.where }
+      : place
+  );
 }

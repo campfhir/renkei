@@ -47,6 +47,7 @@ export type DeliveryEvent =
   | 'runFailed'
   | 'agentEditedByOthers'
   | BatchEvent
+  | 'fabricDefinitionReady'
   | 'chatShared'
   | 'agentShared';
 

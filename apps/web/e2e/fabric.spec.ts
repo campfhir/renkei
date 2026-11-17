@@ -6,8 +6,9 @@
  * Fabric card, opens their workspaces, a lakehouse's tables, and a
  * notebook's definition — which Fabric hands over as a long-running
  * operation: the operation page shows it being prepared, then the cells
- * arrive over the page's event stream, without a reload. A phone-width
- * pass closes it.
+ * arrive over the page's event stream, without a reload. Once connected,
+ * the menu carries a Fabric row and search leads to the page rather than
+ * the card. A phone-width pass closes it.
  *
  * Where the rules went: what the browser page shows and sends is
  * app/(app)/fabric/fabric-browser.model.test.ts; when the operation page
@@ -81,11 +82,12 @@ test('fabric: connect, browse a workspace, and watch a notebook definition arriv
   expect(scopes).toContain('https://api.fabric.microsoft.com/Notebook.ReadWrite.All');
   expect(scopes).not.toContain('User.Read');
 
-  // --- Connected from its card, which leads to the Fabric page. ---
+  // --- Connected from its card; the menu now carries the Fabric page. ---
   await connectThrough(page, '/api/fabric/authorize');
   const card = page.locator('[data-coach="card-fabric"]').filter({ visible: true });
   await expect(card.getByText('Connected as')).toBeVisible();
-  await card.getByRole('link', { name: 'Open Fabric' }).click();
+  await expect(card.getByRole('link', { name: 'Open Fabric' })).toHaveAttribute('href', '/fabric');
+  await page.getByRole('link', { name: 'Fabric', exact: true }).filter({ visible: true }).click();
   await page.waitForURL(/\/fabric$/);
 
   // --- A workspace, its items, a lakehouse's tables. ---
@@ -114,15 +116,24 @@ test('fabric: connect, browse a workspace, and watch a notebook definition arriv
   });
   const cells = main.getByRole('list', { name: 'Cells' });
   await expect(cells.getByText('Cell 2 · code')).toBeVisible();
-  await expect(cells.getByText('df = spark.read.table("bronze.orders")', { exact: false })).toBeVisible();
+  await expect(
+    cells.getByText('df = spark.read.table("bronze.orders")', { exact: false })
+  ).toBeVisible();
   await expect(main.getByRole('tab', { name: 'notebook-content.ipynb' })).toHaveAttribute(
     'aria-selected',
     'true'
   );
   await shot(page, testInfo, 'fabric-03-definition');
 
-  // --- The Fabric page lists it as fetched and ready. ---
-  await page.goto('/fabric');
+  // --- Search finds the page by a word only the connector knows; it lists the fetch as ready. ---
+  const search = page.getByRole('searchbox', { name: 'Search Renkei' });
+  await search.click();
+  await search.fill('lakehouse');
+  await page
+    .getByRole('listbox', { name: 'Results' })
+    .getByRole('option', { name: /Microsoft Fabric/ })
+    .click();
+  await page.waitForURL(/\/fabric$/);
   const recent = main.getByRole('region', { name: 'Definitions you fetched' });
   await expect(recent.getByRole('link', { name: /Load orders/ }).first()).toBeVisible();
   await expect(recent.getByText(/Ready ·/).first()).toBeVisible();

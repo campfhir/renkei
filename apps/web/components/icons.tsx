@@ -130,6 +130,8 @@ export const ICONS = {
   sliders: 'M4 7h16M4 12h16M4 17h16M15 5v4M9 10v4M13 15v4',
   /** A plug — Connectors. */
   plug: 'M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4',
+  /** A table of rows and a column — Microsoft Fabric's workspaces and lakehouses. */
+  dataTable: 'M4 5h16v14H4zM4 10h16M4 15h16M10 10v9',
   /** Stacked layers — Batch jobs. */
   layers: 'M4 7l8-4 8 4-8 4zM4 12l8 4 8-4M4 17l8 4 8-4',
   /** Bars — My usage. */
