@@ -14,7 +14,13 @@ jest.mock('@/lib/logger', () => ({
 jest.mock('@/lib/get-origin', () => ({ getOrigin: jest.fn() }));
 
 import type { BitbucketAuth } from '@/lib/mcp-tools/bitbucket/bitbucket-auth';
-import { createRepository, listRepositories, listWorkspaces } from './bitbucket-browse';
+import {
+  createRepository,
+  listRepositories,
+  listSource,
+  listWorkspaces,
+  readSourceFile,
+} from './bitbucket-browse';
 
 interface Route {
   match: string;
@@ -249,5 +255,62 @@ describe('createRepository', () => {
       await createRepository(stubAuth, { workspace: 'nems', project: 'BILL', name: '···' })
     ).toEqual({ ok: false, error: 'That name has no characters a repository slug can use.' });
     expect(requests).toEqual([]);
+  });
+});
+
+describe('reading the source on a branch', () => {
+  const REPO = 'north-east-medical-services/xcure-data-processor';
+  const TREE = {
+    values: [
+      { path: 'src', type: 'commit_directory' },
+      { path: 'README.md', type: 'commit_file', size: 12 },
+    ],
+  };
+
+  it('reads a branch whose name has a slash at its commit — Bitbucket takes feature/x in /src/ as the commit "feature"', async () => {
+    routes = [
+      {
+        match: '/refs/branches?q=',
+        body: {
+          values: [
+            { name: 'feature/xcure-zip-fetch-and-pdf-select', target: { hash: 'abc123def456' } },
+          ],
+        },
+      },
+      { match: '/src/abc123def456/', body: TREE },
+    ];
+    const listed = await listSource(stubAuth, REPO, 'feature/xcure-zip-fetch-and-pdf-select', '');
+    expect(listed).toEqual({
+      ok: true,
+      ref: 'feature/xcure-zip-fetch-and-pdf-select',
+      entries: [
+        { path: 'src', kind: 'dir', sizeBytes: null },
+        { path: 'README.md', kind: 'file', sizeBytes: 12 },
+      ],
+    });
+    expect(requests[0]).toContain(
+      encodeURIComponent('name="feature/xcure-zip-fetch-and-pdf-select"')
+    );
+    expect(requests.some((path) => path.includes('/src/feature'))).toBe(false);
+  });
+
+  it('reads a plain branch name as it is, with no lookup', async () => {
+    routes = [{ match: '/src/main/', body: TREE }];
+    expect((await listSource(stubAuth, REPO, 'main', '')).ok).toBe(true);
+    expect(requests).toEqual([
+      '/repositories/north-east-medical-services/xcure-data-processor/src/main/?pagelen=100',
+    ]);
+  });
+
+  it('says the branch is not in the repository when the lookup finds none', async () => {
+    routes = [{ match: '/refs/branches?q=', body: { values: [] } }];
+    expect(await listSource(stubAuth, REPO, 'feature/gone', '')).toEqual({
+      ok: false,
+      error: 'The branch feature/gone is not in the repository.',
+    });
+    expect(await readSourceFile(stubAuth, REPO, 'feature/gone', 'README.md')).toEqual({
+      ok: false,
+      error: 'The branch feature/gone is not in the repository.',
+    });
   });
 });

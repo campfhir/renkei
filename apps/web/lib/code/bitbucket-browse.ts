@@ -205,6 +205,28 @@ async function refOf(auth: BitbucketAuth, base: string, branch: string): Promise
 }
 
 /**
+ * What to put in a `/src/{node}/…` path for a branch. Bitbucket splits
+ * that path on `/` even when the slash is encoded, so a branch such as
+ * `feature/x` reads as the commit `feature` and answers "Commit not
+ * found". A name with a slash is therefore looked up first — in the
+ * query string, where slashes are safe — and its commit hash used. A
+ * plain name goes as it is. Null when the branch is not there.
+ */
+async function nodeOf(auth: BitbucketAuth, base: string, ref: string): Promise<string | null> {
+  if (!ref.includes('/')) return encodeURIComponent(ref);
+  const query = encodeURIComponent(`name="${ref.replace(/"/g, '')}"`);
+  const found = await bbJson(
+    auth,
+    ['repository'],
+    `${base}/refs/branches?q=${query}&fields=values.name,values.target.hash&pagelen=10`
+  );
+  if (!found.ok) return null;
+  const branch = values(found.body).find((entry) => str(entry.name) === ref);
+  const hash = branch ? str(rec(branch.target).hash) : '';
+  return hash || null;
+}
+
+/**
  * One directory of the repository as Bitbucket has it on the branch —
  * the tree a project page shows before anything is cloned. Directories
  * first, then files with sizes; a few pages at most.
@@ -220,6 +242,8 @@ export async function listSource(
   const base = `/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(slug)}`;
   const ref = await refOf(auth, base, branch);
   if (!ref) return { ok: false, error: 'The repository’s branch could not be read.' };
+  const node = await nodeOf(auth, base, ref);
+  if (!node) return { ok: false, error: `The branch ${ref} is not in the repository.` };
   const clean = path.replace(/^\/+|\/+$/g, '');
   const dir = clean
     ? clean
@@ -228,7 +252,7 @@ export async function listSource(
         .join('/') + '/'
     : '';
   const entries: SourceEntry[] = [];
-  let next: string | null = `${base}/src/${encodeURIComponent(ref)}/${dir}?pagelen=100`;
+  let next: string | null = `${base}/src/${node}/${dir}?pagelen=100`;
   for (let page = 0; next && page < SOURCE_PAGES; page += 1) {
     const listed = await bbJson(auth, ['repository'], next);
     if (!listed.ok) return listed;
@@ -273,11 +297,13 @@ export async function readReadme(
   const base = `/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(slug)}`;
   const ref = await refOf(auth, base, branch);
   if (!ref) return null;
+  const node = await nodeOf(auth, base, ref);
+  if (!node) return null;
   for (const name of README_NAMES) {
     const file = await bbRawText(
       auth,
       ['repository'],
-      `${base}/src/${encodeURIComponent(ref)}/${encodeURIComponent(name)}`
+      `${base}/src/${node}/${encodeURIComponent(name)}`
     );
     if (file.ok && file.text.trim()) {
       return { path: name, text: file.text.slice(0, README_MAX_CHARS) };
@@ -308,15 +334,13 @@ export async function readSourceFile(
   const base = `/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(slug)}`;
   const ref = await refOf(auth, base, branch);
   if (!ref) return { ok: false, error: 'The repository’s branch could not be read.' };
+  const node = await nodeOf(auth, base, ref);
+  if (!node) return { ok: false, error: `The branch ${ref} is not in the repository.` };
   const encoded = path
     .split('/')
     .map((part) => encodeURIComponent(part))
     .join('/');
-  const file = await bbRawText(
-    auth,
-    ['repository'],
-    `${base}/src/${encodeURIComponent(ref)}/${encoded}`
-  );
+  const file = await bbRawText(auth, ['repository'], `${base}/src/${node}/${encoded}`);
   if (!file.ok) return file;
   if (file.text.includes('\0')) return { ok: true, text: '', ref, truncated: false, binary: true };
   const truncated = file.text.length > SOURCE_FILE_MAX_CHARS;
