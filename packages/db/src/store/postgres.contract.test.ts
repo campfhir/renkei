@@ -30,6 +30,7 @@ maybe('postgres', () => {
             ] as const) {
               await kysely.deleteFrom(table).where('subject', 'in', subjects).execute();
             }
+            await kysely.deleteFrom('artifacts').where('owner_subject', 'in', subjects).execute();
           }
           if (settingKeys.length > 0) {
             await kysely.deleteFrom('settings').where('key', 'in', settingKeys).execute();

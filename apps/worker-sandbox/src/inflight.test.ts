@@ -3,7 +3,7 @@
  * makes of a note that was never cleared.
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -27,7 +27,6 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 const onDisk = (): { op: string }[] => JSON.parse(readFileSync(file, 'utf8'));
-const settle = () => new Promise((resolve) => setTimeout(resolve, 30));
 
 describe('while it runs', () => {
   it('a request is on disk before it is handled, and off it once answered', async () => {
@@ -38,7 +37,7 @@ describe('while it runs', () => {
       { op: 'workspaces/find', subject: 'code-project:p1', detail: 'id: ws-1, glob: **/*' },
     ]);
     done();
-    await settle();
+    await inflight.settled();
     expect(onDisk()).toEqual([]);
   });
 
@@ -52,11 +51,32 @@ describe('while it runs', () => {
     ]);
     first();
     first(); // Ending twice is ending once.
-    await settle();
+    await inflight.settled();
     expect(onDisk().map((entry) => entry.op)).toEqual(['workspaces/kernel/execute']);
     second();
-    await settle();
+    await inflight.settled();
     expect(onDisk()).toEqual([]);
+  });
+
+  it('is never caught half written: every read while requests begin and end is a whole note', async () => {
+    const inflight = new Inflight(file);
+    const reads: unknown[] = [];
+    for (let round = 0; round < 50; round += 1) {
+      const ends = [1, 2, 3].map((n) =>
+        inflight.begin('workspaces/exec', 'ann', { id: `ws-${n}` })
+      );
+      for (const end of ends) {
+        end();
+        // A reader while the end's write is under way: the old note or the new one.
+        await new Promise((resolve) => setImmediate(resolve));
+        reads.push(onDisk());
+      }
+    }
+    await inflight.settled();
+    expect(reads.every((note) => Array.isArray(note))).toBe(true);
+    expect(onDisk()).toEqual([]);
+    // Nothing is left beside it.
+    expect(readdirSync(join(dir, 'instances'))).toEqual(['sandbox-4.inflight.json']);
   });
 
   it('notes where a request points, never what it carries', () => {

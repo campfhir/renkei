@@ -22,8 +22,8 @@
  * language server are too many to note and are left out.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isRecord } from '@renkei/guards';
 
@@ -55,10 +55,47 @@ export function detailOf(body: Record<string, unknown>): string | null {
   return parts.length > 0 ? parts.join(', ') : null;
 }
 
+let temporaries = 0;
+
+/**
+ * A name beside `file` for one write: the new note is written there in
+ * full and then renamed over the note, so a reader — this run's test, or
+ * the next run after a death mid-write — sees the old note or the new
+ * one, never a file emptied by a write still under way. Each write has
+ * its own, so a write begun while another is under way cannot clobber it.
+ */
+function temporaryFor(file: string): string {
+  temporaries += 1;
+  return `${file}.${process.pid}.${temporaries}.tmp`;
+}
+
+/** Replace `file` with `content` all at once. Throws as a write would. */
+function replaceSync(file: string, content: string): void {
+  const temporary = temporaryFor(file);
+  try {
+    writeFileSync(temporary, content);
+    renameSync(temporary, file);
+  } catch (error) {
+    rmSync(temporary, { force: true });
+    throw error;
+  }
+}
+
+async function replace(file: string, content: string): Promise<void> {
+  const temporary = temporaryFor(file);
+  try {
+    await writeFile(temporary, content);
+    await rename(temporary, file);
+  } catch (error) {
+    await rm(temporary, { force: true });
+    throw error;
+  }
+}
+
 export class Inflight {
   private readonly entries = new Map<number, InflightEntry>();
   private nextId = 1;
-  private writing = false;
+  private writing: Promise<void> | null = null;
   private stale = false;
 
   constructor(private readonly file: string | null) {}
@@ -76,7 +113,7 @@ export class Inflight {
     // Before it is handled: if this is the request that ends the process,
     // it is already written down.
     try {
-      writeFileSync(this.file, this.serialized());
+      replaceSync(this.file, this.serialized());
     } catch {
       // A disk that cannot be written is no reason to refuse the request.
     }
@@ -100,16 +137,16 @@ export class Inflight {
 
   /** An end is written when the last write is done, the latest state winning. */
   private persistSoon(): void {
-    if (!this.file) return;
+    const file = this.file;
+    if (!file) return;
     if (this.writing) {
       this.stale = true;
       return;
     }
-    this.writing = true;
-    void writeFile(this.file, this.serialized())
+    this.writing = replace(file, this.serialized())
       .catch(() => undefined)
       .then(() => {
-        this.writing = false;
+        this.writing = null;
         if (this.stale) {
           this.stale = false;
           this.persistSoon();
@@ -117,12 +154,17 @@ export class Inflight {
       });
   }
 
+  /** Resolves once the note on disk says what is under way now: no write left to make. */
+  async settled(): Promise<void> {
+    while (this.writing) await this.writing;
+  }
+
   /** A clean stop: nothing was under way that anyone need hear about. */
   clear(): void {
     this.entries.clear();
     if (!this.file) return;
     try {
-      writeFileSync(this.file, '[]');
+      replaceSync(this.file, '[]');
     } catch {
       // Nothing to add.
     }
@@ -156,7 +198,7 @@ export function takePreviousInflight(file: string | null): InflightEntry[] {
     return [];
   }
   try {
-    writeFileSync(file, '[]');
+    replaceSync(file, '[]');
   } catch {
     // Reported again next start, then; better twice than not at all.
   }

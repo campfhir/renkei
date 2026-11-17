@@ -435,5 +435,41 @@ export function describeDataStoreContract(
         expect(row.createdAt.getTime()).toBeGreaterThanOrEqual(before - 1000);
       });
     });
+
+    describe('artifacts', () => {
+      it('files made one after another come back oldest first, in the order they were made', async () => {
+        const me = subject();
+        const ids: string[] = [];
+        // As quickly as a reply writes five files: well inside one millisecond apart.
+        for (const name of ['report.pdf', 'memo.docx', 'q4.xlsx', 'notes.md', 'deck.pptx']) {
+          const id = randomUUID();
+          ids.push(id);
+          await store().artifacts.create({
+            id,
+            ownerSubject: me,
+            chatId: null,
+            messageId: null,
+            origin: 'model',
+            keyKind: 'artifact',
+            keyRef: null,
+            blobKey: `blobs/${id}`,
+            filename: name,
+            contentType: 'application/octet-stream',
+            sizeBytes: 1,
+            extractedText: null,
+            extractStatus: 'done',
+            digestStatus: 'pending',
+          });
+        }
+        const listed = await store().artifacts.getMany([...ids].reverse());
+        expect(listed.map((artifact) => artifact.filename)).toEqual([
+          'report.pdf',
+          'memo.docx',
+          'q4.xlsx',
+          'notes.md',
+          'deck.pptx',
+        ]);
+      });
+    });
   });
 }
