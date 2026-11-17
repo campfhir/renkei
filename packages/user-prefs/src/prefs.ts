@@ -91,6 +91,13 @@ export interface NotificationPrefs {
   batchFinished: DeliveryPrefs;
   batchFailed: DeliveryPrefs;
   /**
+   * A Microsoft Fabric definition the person asked for (a notebook's or a
+   * pipeline's) has arrived — or failed — after they left the page that was
+   * waiting for it. Never sent while that page is open: it shows the
+   * arrival itself. On in the app by default, like a batch finishing.
+   */
+  fabricDefinitionReady: DeliveryPrefs;
+  /**
    * On by default: someone shares a chat of theirs with you. Not
    * per-agent overridable — a chat has no agent.
    */
@@ -167,6 +174,7 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   batchStarted: { app: false, email: false, webex: false },
   batchFinished: { app: true, email: false, webex: false },
   batchFailed: { app: true, email: false, webex: false },
+  fabricDefinitionReady: { app: true, email: false, webex: false },
   chatShared: { app: true, email: false, webex: false },
   agentShared: { app: true, email: false, webex: false },
   chatReplyDesktop: false,
@@ -375,6 +383,10 @@ export function parseNotificationPrefs(stored: unknown): NotificationPrefs {
     batchStarted: deliveryPrefs(raw.batchStarted, DEFAULT_NOTIFICATION_PREFS.batchStarted),
     batchFinished: deliveryPrefs(raw.batchFinished, DEFAULT_NOTIFICATION_PREFS.batchFinished),
     batchFailed: deliveryPrefs(raw.batchFailed, DEFAULT_NOTIFICATION_PREFS.batchFailed),
+    fabricDefinitionReady: deliveryPrefs(
+      raw.fabricDefinitionReady,
+      DEFAULT_NOTIFICATION_PREFS.fabricDefinitionReady
+    ),
     chatShared: deliveryPrefs(raw.chatShared, DEFAULT_NOTIFICATION_PREFS.chatShared),
     agentShared: deliveryPrefs(raw.agentShared, DEFAULT_NOTIFICATION_PREFS.agentShared),
     chatReplyDesktop: boolOr(raw.chatReplyDesktop, DEFAULT_NOTIFICATION_PREFS.chatReplyDesktop),

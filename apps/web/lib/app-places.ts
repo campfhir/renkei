@@ -139,6 +139,11 @@ const CONNECTOR_CARDS: { title: string; card: string; keywords: string }[] = [
     keywords: 'entra azure ad app registration developer',
   },
   {
+    title: 'Microsoft Fabric',
+    card: 'fabric',
+    keywords: 'fabric power bi lakehouse warehouse notebook pipeline data factory onelake',
+  },
+  {
     title: 'File shares',
     card: 'fileshares',
     keywords: 'file share smb network drive server files',

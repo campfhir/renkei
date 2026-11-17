@@ -132,7 +132,16 @@ const BATCH_EVENTS = [
     'Every item done — including a batch where some items failed; the counts are in the notification.',
   ],
   ['batchFailed', 'A batch job fails', 'It stopped before its items, or every item failed.'],
-] as const satisfies readonly [key: BatchEvent, label: string, hint: string | null][];
+  [
+    'fabricDefinitionReady',
+    'A Fabric definition you asked for arrives',
+    'A notebook or pipeline Fabric took a while to hand over — only when you have left its page.',
+  ],
+] as const satisfies readonly [
+  key: BatchEvent | 'fabricDefinitionReady',
+  label: string,
+  hint: string | null,
+][];
 
 /**
  * The two sharing events, `{app, email, webex}` like a run event, but not
@@ -487,7 +496,8 @@ export default function PreferencesForm({
             <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
               When a batch of yours — a document OCR pipeline over a folder, say — starts and
               finishes. A scheduled batch tells whoever owns the schedule. Each notification says
-              what kind of job it was and how many items succeeded or failed.
+              what kind of job it was and how many items succeeded or failed. Also: a Microsoft
+              Fabric definition that arrives after you have moved on.
             </p>
           </div>
           <div className="overflow-x-auto border-t border-gray-200 dark:border-gray-800">

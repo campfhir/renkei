@@ -33,6 +33,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   'atlassian-admin': 'Jira Administration',
   microsoft: 'Microsoft 365',
   'entra-developer': 'Entra Developer',
+  fabric: 'Microsoft Fabric',
   webex: 'WebEx',
   zoom: 'Zoom',
   github: 'GitHub',

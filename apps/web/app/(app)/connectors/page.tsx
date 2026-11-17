@@ -12,6 +12,7 @@ import AtlassianConnector from './atlassian-connector';
 import WebexUserConnector from './webex-user-connector';
 import MicrosoftConnector from './microsoft-connector';
 import EntraDeveloperConnector from './entra-developer-connector';
+import FabricConnector from './fabric-connector';
 import ZoomConnector from './zoom-connector';
 import GitHubConnector from './github-connector';
 import SalesforceConnector, { SalesforceOrphanedConnections } from './salesforce-connector';
@@ -44,6 +45,7 @@ import {
   ATLASSIAN_ADMIN_TOKEN,
   MICROSOFT,
   ENTRA_DEVELOPER,
+  FABRIC,
   ZOOM,
   ONBASE,
   ONBASE_ADMIN,
@@ -52,6 +54,7 @@ import {
 import { WEBEX_USER_CONNECTOR } from '@/lib/webex-app';
 import { MICROSOFT_CONNECTOR } from '@/lib/microsoft-app';
 import { ENTRA_DEVELOPER_CONNECTOR } from '@/lib/entra-developer-app';
+import { FABRIC_CONNECTOR } from '@/lib/fabric-app';
 import { ZOOM_CONNECTOR } from '@/lib/zoom-app';
 import { GITHUB_CONNECTOR } from '@/lib/github-app';
 import { listSalesforceConnectors } from '@/lib/salesforce-app';
@@ -66,6 +69,7 @@ import { ROLE_OPERATOR } from '@/lib/access';
 import { DEFAULT_WEBEX_USER_SCOPES } from '@/lib/webex-scopes';
 import { DEFAULT_MICROSOFT_SCOPES } from '@/lib/microsoft-scopes';
 import { DEFAULT_ENTRA_DEVELOPER_SCOPES } from '@/lib/entra-developer-scopes';
+import { DEFAULT_FABRIC_SCOPES } from '@/lib/fabric-scopes';
 import { DEFAULT_ZOOM_SCOPES } from '@/lib/zoom-scopes';
 import { DEFAULT_GITHUB_SCOPES } from '@/lib/github-scopes';
 import {
@@ -235,6 +239,7 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
     settingsOf(ENTRA_DEVELOPER_CONNECTOR),
     DEFAULT_ENTRA_DEVELOPER_SCOPES
   );
+  const fabricCeiling = ceilingFrom(settingsOf(FABRIC_CONNECTOR), DEFAULT_FABRIC_SCOPES);
   const zoomCeiling = ceilingFrom(settingsOf(ZOOM_CONNECTOR), DEFAULT_ZOOM_SCOPES);
   const githubCeiling = ceilingFrom(settingsOf(GITHUB_CONNECTOR), DEFAULT_GITHUB_SCOPES);
   // One card per Salesforce connector (org) the admin switched on, each
@@ -279,6 +284,7 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
     : 0;
   const microsoftGrant = grants.get(MICROSOFT);
   const entraDeveloperGrant = grants.get(ENTRA_DEVELOPER);
+  const fabricGrant = grants.get(FABRIC);
   const zoomGrant = grants.get(ZOOM);
   const githubGrant = grants.get(GITHUB);
   const onbaseGrant = grants.get(ONBASE);
@@ -490,6 +496,20 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
               priorScopes={entraDeveloperGrant?.requestedScopes ?? null}
             />
             <RemovableProducts products={removable(['entra-developer'])} />
+          </>
+        );
+      case 'fabric':
+        // Its own card: a third Entra app registration whose token is for
+        // Fabric's API alone (fabric-connector.tsx).
+        return (
+          <>
+            <FabricConnector
+              connected={fabricGrant !== undefined}
+              displayName={fabricGrant?.displayName ?? null}
+              ceiling={fabricCeiling}
+              priorScopes={fabricGrant?.requestedScopes ?? null}
+            />
+            <RemovableProducts products={removable(['fabric'])} />
           </>
         );
       case 'zoom':

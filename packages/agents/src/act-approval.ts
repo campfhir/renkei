@@ -94,6 +94,12 @@ export const ALWAYS_APPROVAL_TOOLS: readonly string[] = [
   'entra_remove_app_role_assignment_preview',
   'entra_remove_app_role_preview',
   'entra_update_application_preview',
+  // Fabric: replacing a notebook's or pipeline's content keeps no earlier
+  // version, and a workspace is where a team's work lives.
+  'fabric_create_workspace_preview',
+  'fabric_update_notebook_preview',
+  'fabric_update_pipeline_preview',
+  'fabric_update_workspace_preview',
 ];
 
 const ALWAYS = new Set(ALWAYS_APPROVAL_TOOLS);

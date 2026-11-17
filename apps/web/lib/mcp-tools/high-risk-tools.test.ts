@@ -105,6 +105,7 @@ import { sharepointScopeFor } from './sharepoint/scopes';
 import { githubScopeFor } from './github/scopes';
 import { bitbucketScopeFor } from './bitbucket/scopes';
 import { entraScopeFor } from './entra-developer/scopes';
+import { fabricScopeFor } from './fabric/scopes';
 import { salesforceScopeFor } from './salesforce/scopes';
 import type { MCPToolContext } from './common';
 
@@ -217,6 +218,7 @@ beforeEach(() => {
     'atlassian-bitbucket': grantFor(['bitbucket_'], bitbucketScopeFor),
     github: grantFor(['github_'], githubScopeFor),
     'entra-developer': grantFor(['entra_'], entraScopeFor),
+    fabric: grantFor(['fabric_'], fabricScopeFor),
     salesforce: grantFor(['salesforce_'], salesforceScopeFor),
   };
   fetchSpy.mockReset();

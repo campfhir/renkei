@@ -85,6 +85,7 @@ with the next one.
 | SharePoint              | Microsoft; library watches once connected        | `connect-microsoft`        | Partial |
 | OneDrive                | Microsoft                                        | `connect-microsoft`        | Covered |
 | Entra Developer         | own Entra app, directory-wide scopes; developers | `connect-entra-developer`  | Covered |
+| Microsoft Fabric        | own Entra app, Fabric API only; data teams       | `connect-fabric`           | Covered |
 | Salesforce              | org's own External Client App, PKCE; My Domain   | `connect-salesforce`       | Covered |
 | Salesforce Admin        | own External Client App per org; change requests | `connect-salesforce-admin` | Covered |
 | WebEx                   | Integration OAuth; "Watch all my spaces"         | `connect-webex`            | Covered |

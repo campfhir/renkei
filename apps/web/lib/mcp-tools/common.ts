@@ -149,6 +149,13 @@ export interface MCPToolContext {
    */
   entraDeveloperScopes?: string[];
   /**
+   * Same, for the caller's grant on the Microsoft Fabric app registration —
+   * a THIRD Entra app (FABRIC), whose token is for Fabric's API alone: its
+   * delegated Fabric scopes as the token names them (short, no resource
+   * prefix), for the registration-time gate in fabric/index.ts.
+   */
+  fabricScopes?: string[];
+  /**
    * Same, for the caller's Salesforce grant: Renkei's own capabilities the
    * person chose (lib/salesforce-scopes.ts) — Salesforce's `api` scope
    * cannot tell a read from a delete, so this is the registration-time

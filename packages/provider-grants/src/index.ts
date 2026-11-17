@@ -43,7 +43,7 @@ export {
   type OnBaseRefresh,
 } from './onbase';
 export { GenericOAuthAdapter } from './generic-oauth';
-export { MICROSOFT, ENTRA_DEVELOPER, MicrosoftAdapter } from './microsoft';
+export { MICROSOFT, ENTRA_DEVELOPER, FABRIC, MicrosoftAdapter } from './microsoft';
 export {
   SALESFORCE,
   SALESFORCE_ADMIN,

@@ -27,6 +27,7 @@ import {
   AtlassianAdapter,
   BitbucketAdapter,
   ENTRA_DEVELOPER,
+  FABRIC,
   GenericOAuthAdapter,
   GITHUB,
   GitHubAdapter,
@@ -131,11 +132,18 @@ function atlassian(provider: string): ProviderSpec {
   };
 }
 
-function microsoft(provider: string): ProviderSpec {
+/**
+ * An Entra app registration. Every one refreshes at the directory's own
+ * token endpoint; the resource API differs — Graph for Microsoft 365 and
+ * Entra Developer, Fabric's own API for Fabric (Entra mints one token per
+ * resource, so a Fabric token is never sent to Graph, nor a Graph one to
+ * Fabric).
+ */
+function microsoft(provider: string, apiHosts: string[] = ['graph.microsoft.com']): ProviderSpec {
   return {
     connector: provider,
     tokenEndpoint: null, // per directory tenant; resolved by `tokenEndpointFor`
-    hosts: ['graph.microsoft.com', 'login.microsoftonline.com'],
+    hosts: [...apiHosts, 'login.microsoftonline.com'],
     clientAuth: 'body',
     adapter: (config, grant) => {
       const tid =
@@ -240,6 +248,7 @@ export const PROVIDERS: Readonly<Record<string, ProviderSpec>> = {
   },
   [MICROSOFT]: microsoft(MICROSOFT),
   [ENTRA_DEVELOPER]: microsoft(ENTRA_DEVELOPER),
+  [FABRIC]: microsoft(FABRIC, ['api.fabric.microsoft.com']),
   [WEBEX_USER]: {
     connector: 'webex-user',
     tokenEndpoint: 'https://webexapis.com/v1/access_token',
@@ -332,7 +341,8 @@ export function providerSpec(provider: string): ProviderSpec | null {
  * A stand-in for a provider's API, for the e2e and dev environments that
  * point the web app's clients at a local stub (`GITHUB_API_BASE_URL`,
  * `BITBUCKET_API_BASE_URL`, `JIRA_ADMIN_API_BASE_URL`,
- * `JIRA_AUTOMATION_API_BASE_URL`, `ENTRA_DEVELOPER_API_BASE_URL`): the
+ * `JIRA_AUTOMATION_API_BASE_URL`, `ENTRA_DEVELOPER_API_BASE_URL`,
+ * `FABRIC_API_BASE_URL`): the
  * delegate honors the same variables,
  * so a request to that origin may carry the provider's token too. Unset
  * in production, where only the provider's own hosts are allowed.
@@ -348,6 +358,7 @@ export const STAND_IN_ENV: Readonly<Record<string, string>> = {
   // The Automation API's stand-in (apps/web/lib/mcp-tools/jira-admin/automation-client.ts).
   [ATLASSIAN_ADMIN_TOKEN]: 'JIRA_AUTOMATION_API_BASE_URL',
   [ENTRA_DEVELOPER]: 'ENTRA_DEVELOPER_API_BASE_URL',
+  [FABRIC]: 'FABRIC_API_BASE_URL',
 };
 
 /**
@@ -426,7 +437,7 @@ export function tokenEndpointFor(
   if (spec.tokenEndpoint) return spec.tokenEndpoint;
   if (spec.tokenEndpointFrom) return spec.tokenEndpointFrom(config, which);
   const directoryTenantId = which;
-  if (spec.hosts.some((host) => host === 'graph.microsoft.com')) {
+  if (spec.hosts.some((host) => host === 'login.microsoftonline.com')) {
     const tid = directoryTenantId || settingOf(config, 'directoryTenantId');
     return tid
       ? `https://login.microsoftonline.com/${encodeURIComponent(tid)}/oauth2/v2.0/token`

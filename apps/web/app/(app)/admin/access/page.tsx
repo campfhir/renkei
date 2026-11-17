@@ -33,6 +33,7 @@ const PROVIDER_ICON_KEY: Record<string, string> = {
   'atlassian-admin': 'jira-admin',
   microsoft: 'microsoft',
   'entra-developer': 'entra-developer',
+  fabric: 'fabric',
   webex: 'webex',
   zoom: 'zoom',
   onbase: 'onbase',
