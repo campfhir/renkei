@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-17',
     entries: [
       {
+        kind: 'fixed',
+        title: 'Code projects on a branch with a slash show their files',
+        detail:
+          'A code project on a branch such as feature/x showed "Bitbucket API 404: Commit not found" instead of its files and README before a checkout was ready. It now reads the branch from Bitbucket correctly.',
+      },
+      {
         kind: 'changed',
         title: 'Test connection runs in the background and can be cancelled',
         detail:
