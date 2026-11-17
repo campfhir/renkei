@@ -46,6 +46,17 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-17',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'Azure sandboxes start from your imported image',
+        detail:
+          "Sandboxes on Azure Container Apps are now made from the sandbox image imported into your sandbox group, named on Organization → Sandboxes by the id the portal shows; before, Azure refused every one. When Azure refuses a sandbox, the orchestrator's log now says why.",
+      },
+    ],
+  },
+  {
     date: '2026-11-14',
     entries: [
       {

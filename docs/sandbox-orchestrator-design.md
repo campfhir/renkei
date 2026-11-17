@@ -387,8 +387,10 @@ In Azure, once:
    deployment: not the database.
 
 Then on Organization → Sandboxes: the subscription, resource group,
-sandbox group and region; the disk image and the VNet connection by
-name; the orchestrator's address as a sandbox reaches it; the service
+sandbox group and region; the disk image by its id (the GUID the
+portal shows for an imported image: the platform takes the group's own
+images by id and only Microsoft's public ones by name) and the VNet
+connection by name; the orchestrator's address as a sandbox reaches it; the service
 principal's ids and secret (or neither, for a managed identity); the
 identity allowed to call a worker; and the secrets a worker is started
 with. Test connection, then Save.
@@ -408,8 +410,13 @@ reach the processes inside (PID 1 and anything run there), though the
 API does not echo them back on a read; a sandbox runs as root on its own
 kernel.
 
-**What has not**: the sandbox image itself as a disk image (so the real
-worker, its sealed boot and Podman inside the microVM), Entra on the
+Since then: a sandbox created from the renkei sandbox image imported as
+the group's own disk image, referenced by its id (a `name` with
+`isPublic: false` is refused with a 400), reaching `Running` with an
+anonymous worker port.
+
+**What has not**: the real worker's sealed boot and Podman inside the
+microVM, Entra on the
 worker's port with a service identity (Microsoft's documentation
 describes users, and the preview SDK sets allowed emails but not the
 tenant id bearer calls need), opening a preview port to a named person,

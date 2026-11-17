@@ -50,6 +50,7 @@
  * describes allowing users, not service principals.
  */
 
+import { isString, recordOrNull } from '@renkei/guards';
 import {
   ProviderError,
   SANDBOX_WORKER_PORT,
@@ -98,7 +99,12 @@ export interface AzureSandbox {
 
 /** What a sandbox is created with — the fields of the SDK's CreateSandboxRequest this provider sets. */
 export interface AzureCreateRequest {
-  sourcesRef: { diskImage: { name: string; isPublic: boolean } };
+  /**
+   * The platform takes one of the group's own disk images by its `id` (the
+   * GUID the portal shows), and only Microsoft's public images by `name`
+   * — a `name` with `isPublic: false` is refused with a 400.
+   */
+  sourcesRef: { diskImage: { id: string } | { name: string; isPublic: true } };
   resources: { cpu: string; memory: string; disk: string };
   lifecycle: {
     autoSuspend: { enabled: boolean; interval: number; mode: 'Memory' | 'Disk' };
@@ -136,9 +142,12 @@ export interface AzureSandboxClient {
 }
 
 export interface AzureProviderOptions {
-  /** The disk image sandboxes boot from: the sandbox OCI image, imported into the group. */
+  /**
+   * The disk image sandboxes boot from: the sandbox OCI image, imported
+   * into the group — its id, the GUID the portal shows for it.
+   */
   diskImage: string;
-  /** Whether `diskImage` names one of Microsoft's public images rather than the group's own. */
+  /** Whether `diskImage` is the name of one of Microsoft's public images rather than the id of the group's own. */
   diskImagePublic?: boolean;
   /** e.g. `2000m`, `4096Mi`, `40Gi`. */
   cpu: string;
@@ -191,6 +200,41 @@ export function azureState(state: string | undefined): ProviderSandboxState | nu
 function statusOf(error: unknown): number {
   if (!(error instanceof Error) || !('statusCode' in error)) return 0;
   return typeof error.statusCode === 'number' ? error.statusCode : 0;
+}
+
+/**
+ * What the platform said about a refused request, in a line: its own
+ * message (`{ error: { code, message } }`) or its validation errors
+ * (`{ title, errors: { field: [why] } }`), else the body as it came. The
+ * SDK's error keeps only "Unexpected status code: 400", so this is read
+ * off the raw response (`onResponse`) and added to it.
+ */
+export function azureErrorDetail(body: unknown): string | null {
+  if (typeof body === 'string') return body.trim().slice(0, 500) || null;
+  const record = recordOrNull(body);
+  if (!record) return null;
+  const inner = recordOrNull(record.error);
+  if (inner && isString(inner.message)) {
+    return isString(inner.code) ? `${inner.code}: ${inner.message}` : inner.message;
+  }
+  const errors = recordOrNull(record.errors);
+  if (errors) {
+    const reasons = Object.values(errors)
+      .flatMap((value) => (Array.isArray(value) ? value : [value]))
+      .filter(isString);
+    if (reasons.length > 0) return reasons.join('; ');
+  }
+  if (isString(record.title)) return record.title;
+  if (isString(record.message)) return record.message;
+  return JSON.stringify(body).slice(0, 500);
+}
+
+/** The SDK's error with the platform's reason added, its status kept. */
+function withAzureDetail(error: unknown, detail: string | null): unknown {
+  if (!detail || !(error instanceof Error)) return error;
+  return Object.assign(new Error(`${error.message} (${detail})`), {
+    statusCode: statusOf(error) || undefined,
+  });
 }
 
 function wrap(error: unknown): ProviderError {
@@ -308,7 +352,9 @@ export class AzureSandboxProvider implements SandboxProvider {
       const sandbox = await this.client
         .beginCreate({
           sourcesRef: {
-            diskImage: { name: options.diskImage, isPublic: options.diskImagePublic === true },
+            diskImage: options.diskImagePublic
+              ? { name: options.diskImage, isPublic: true }
+              : { id: options.diskImage },
           },
           resources: { cpu: options.cpu, memory: options.memory, disk: options.disk },
           lifecycle: {
@@ -498,7 +544,21 @@ export async function createAzureSandboxClient(
   return {
     get: (id) => sandboxes.get(id),
     list: (options) => sandboxes.list(options),
-    beginCreate: (body) => sandboxes.beginCreate(body),
+    beginCreate: (body) => {
+      // The SDK drops a refusal's body; keep what the platform said.
+      let detail: string | null = null;
+      const poller = sandboxes.beginCreate(body, {
+        onResponse: (raw: { status: number; parsedBody?: unknown; bodyAsText?: string | null }) => {
+          if (raw.status >= 400) detail = azureErrorDetail(raw.parsedBody ?? raw.bodyAsText);
+        },
+      });
+      return {
+        pollUntilDone: () =>
+          poller.pollUntilDone().catch((error: unknown) => {
+            throw withAzureDetail(error, detail);
+          }),
+      };
+    },
     delete: (id) => sandboxes.delete(id),
     updatePorts: (id, ports) => group.ports.update(id, ports),
     removePort: (id, port) => group.ports.remove(id, port),
