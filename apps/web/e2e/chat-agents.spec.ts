@@ -56,7 +56,9 @@ test('@-mentioning an agent hands it the task, and its reply lands on the card @
     await box.fill('@Tri');
     const list = page.getByRole('listbox', { name: 'Agents you can ask' });
     await list.getByRole('option', { name: new RegExp(agentName) }).click();
-    await expect(main.getByText(`To ${agentName}`)).toBeVisible();
+    await expect(
+      main.locator('[data-agent-addressee]', { hasText: `To ${agentName}` })
+    ).toBeVisible();
 
     // The chat's model hands the task over, then says so.
     await box.fill(
@@ -75,12 +77,16 @@ test('@-mentioning an agent hands it the task, and its reply lands on the card @
       agentId,
       text: expect.stringMatching(new RegExp(`^@${agentName} `)),
     });
-    await expect(main.getByText(`To ${agentName}`)).toHaveCount(0);
 
     // No permission card: the person addressed the agent themselves.
     const card = main.locator('[data-agent-ask]');
-    await expect(card).toBeVisible();
-    await expect(card.getByText(agentName)).toBeVisible();
+    // It appears once the chat's model has called chat_ask_agent.
+    await expect(card).toBeVisible({ timeout: 30_000 });
+    await expect(card.getByText(agentName, { exact: true })).toBeVisible();
+    // The send went through: the next message is for the chat again.
+    await expect(
+      main.locator('[data-agent-addressee]', { hasText: `To ${agentName}` })
+    ).toHaveCount(0);
     await expect(card.locator('[data-agent-ask-reply]')).toContainText(LLM_STUB_REPLY, {
       timeout: 30_000,
     });
@@ -93,7 +99,9 @@ test('@-mentioning an agent hands it the task, and its reply lands on the card @
 
     // Reply addresses the composer back to the agent.
     await card.getByRole('button', { name: `Reply to ${agentName}` }).click();
-    await expect(main.getByText(`To ${agentName}`)).toBeVisible();
+    await expect(
+      main.locator('[data-agent-addressee]', { hasText: `To ${agentName}` })
+    ).toBeVisible();
 
     // A phone: the card and the chip fit the width.
     await page.setViewportSize({ width: 390, height: 844 });
