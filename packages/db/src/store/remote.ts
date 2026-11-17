@@ -12,7 +12,8 @@
  * held to the subjects that sandbox serves) and runs it on its own store.
  *
  * The wire is JSON with the few values JSON has no word for written as
- * tagged objects (`encodeWire` / `decodeWire`): a Date, bytes, a bigint.
+ * tagged objects (`encodeWire` / `decodeWire`): a Date, bytes, a bigint,
+ * a Map (the organization's settings, `settings.all`, are one).
  * `undefined` travels as absent, as it does into a SQL statement. A
  * refusal a caller acts on — a duplicate's SQLSTATE — comes back as the
  * thrown error's `code`, so the callers that check for 23505 still do.
@@ -30,7 +31,11 @@ export interface StoreCall {
 /** How a call reaches the process that has the database; resolves to the decoded answer. */
 export type StoreTransport = (call: StoreCall) => Promise<unknown>;
 
-type Tagged = { $date: string } | { $bytes: string } | { $bigint: string };
+type Tagged =
+  | { $date: string }
+  | { $bytes: string }
+  | { $bigint: string }
+  | { $map: Array<[unknown, unknown]> };
 
 /**
  * A plain object — one JSON would write as `{…}` — wherever it was made:
@@ -46,7 +51,7 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
   return Object.getPrototypeOf(proto) === null;
 }
 
-/** A value as JSON can carry it: Dates, bytes and bigints tagged, the rest as it is. */
+/** A value as JSON can carry it: Dates, bytes, bigints and Maps tagged, the rest as it is. */
 export function encodeWire(value: unknown): unknown {
   if (value === undefined || value === null) return null;
   if (value instanceof Date) {
@@ -59,6 +64,15 @@ export function encodeWire(value: unknown): unknown {
   }
   if (value instanceof Uint8Array) {
     const tagged: Tagged = { $bytes: Buffer.from(value).toString('base64') };
+    return tagged;
+  }
+  if (value instanceof Map) {
+    const tagged: Tagged = {
+      $map: [...value.entries()].map(([key, entry]): [unknown, unknown] => [
+        encodeWire(key),
+        encodeWire(entry),
+      ]),
+    };
     return tagged;
   }
   if (Array.isArray(value)) return value.map(encodeWire);
@@ -84,6 +98,17 @@ export function decodeWire(value: unknown): unknown {
     if (typeof value.$date === 'string') return new Date(value.$date);
     if (typeof value.$bigint === 'string') return BigInt(value.$bigint);
     if (typeof value.$bytes === 'string') return Buffer.from(value.$bytes, 'base64');
+    if (
+      Array.isArray(value.$map) &&
+      value.$map.every((pair) => Array.isArray(pair) && pair.length === 2)
+    ) {
+      return new Map(
+        value.$map.map((pair: unknown[]): [unknown, unknown] => [
+          decodeWire(pair[0]),
+          decodeWire(pair[1]),
+        ])
+      );
+    }
   }
   const out: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) out[key] = decodeWire(entry);

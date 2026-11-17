@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-17',
     entries: [
       {
+        kind: 'fixed',
+        title: "Orchestrated sandboxes see the organization's sandbox switches",
+        detail:
+          "A sandbox made by the sandbox orchestrator could not read the organization's settings, so it acted as if every sandbox feature were off: code project services, workspaces, the browser, charts and scripts were refused even with their switches on. It now reads them.",
+      },
+      {
         kind: 'changed',
         title: 'Test connection starts a real test sandbox',
         detail:
