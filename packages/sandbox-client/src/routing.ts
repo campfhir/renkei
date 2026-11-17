@@ -518,6 +518,16 @@ export async function unexposeSandboxPort(routeKey: string, port: number): Promi
 }
 
 /** What the orchestrator says of itself: which provider is in force, or why none is. */
+/** The disk image an Azure setup leaves to the orchestrator: where its preparation for this build is. */
+export interface SandboxImageStatus {
+  build: string;
+  base: string;
+  state: 'preparing' | 'ready' | 'failed';
+  diskImageId: string | null;
+  /** The group's word while preparing; why, when failed. */
+  detail: string | null;
+}
+
 export interface SandboxOrchestratorStatus {
   /** Whether callers are configured to use an orchestrator at all. */
   wired: boolean;
@@ -525,6 +535,32 @@ export interface SandboxOrchestratorStatus {
   reachable: boolean;
   provider: string | null;
   problem: string | null;
+  /** Present when the orchestrator prepares the disk image itself. */
+  image?: SandboxImageStatus | null;
+}
+
+function imageStatusOf(value: unknown): SandboxImageStatus | null {
+  if (!isRecord(value)) return null;
+  const state = value.state;
+  if (state !== 'preparing' && state !== 'ready' && state !== 'failed') return null;
+  const text = (field: unknown): string | null => (typeof field === 'string' ? field : null);
+  return {
+    build: text(value.build) ?? '',
+    base: text(value.base) ?? '',
+    state,
+    diskImageId: text(value.diskImageId),
+    detail: text(value.detail),
+  };
+}
+
+function statusOfBody(body: Record<string, unknown>): SandboxOrchestratorStatus {
+  return {
+    wired: true,
+    reachable: true,
+    provider: typeof body.provider === 'string' ? body.provider : null,
+    problem: typeof body.problem === 'string' ? body.problem : null,
+    image: imageStatusOf(body.image),
+  };
 }
 
 export async function sandboxOrchestratorStatus(): Promise<SandboxOrchestratorStatus> {
@@ -536,12 +572,29 @@ export async function sandboxOrchestratorStatus(): Promise<SandboxOrchestratorSt
     });
     const body: unknown = response.ok ? await response.json() : null;
     if (!isRecord(body)) return { wired: true, reachable: false, provider: null, problem: null };
-    return {
-      wired: true,
-      reachable: true,
-      provider: typeof body.provider === 'string' ? body.provider : null,
-      problem: typeof body.problem === 'string' ? body.problem : null,
-    };
+    return statusOfBody(body);
+  } catch {
+    return { wired: true, reachable: false, provider: null, problem: null };
+  }
+}
+
+/**
+ * Have the orchestrator prepare the stored setup's disk image again — an
+ * operator's ask after a failed build — and say where it is now.
+ */
+export async function prepareSandboxImage(): Promise<SandboxOrchestratorStatus> {
+  const orchestrator = sandboxOrchestratorConfig();
+  if (!orchestrator) return { wired: false, reachable: false, provider: null, problem: null };
+  try {
+    const response = await fetch(`${orchestrator.url}/v1/image`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${orchestrator.key}`, 'content-type': 'application/json' },
+      body: '{}',
+      signal: AbortSignal.timeout(60_000),
+    });
+    const body: unknown = response.ok ? await response.json() : null;
+    if (!isRecord(body)) return { wired: true, reachable: false, provider: null, problem: null };
+    return statusOfBody(body);
   } catch {
     return { wired: true, reachable: false, provider: null, problem: null };
   }

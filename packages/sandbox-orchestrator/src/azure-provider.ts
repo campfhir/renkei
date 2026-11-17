@@ -51,6 +51,7 @@
  */
 
 import { isString, recordOrNull } from '@renkei/guards';
+import type { DiskImageClient, DiskImageView } from './disk-image';
 import {
   ProviderError,
   SANDBOX_WORKER_PORT,
@@ -139,6 +140,8 @@ export interface AzureSandboxClient {
   removePort(sandboxId: string, port: number): Promise<void>;
   beginStop(sandboxId: string): Poller<unknown>;
   beginResume(sandboxId: string): Poller<unknown>;
+  /** The group's disk images, for preparing the one sandboxes boot from (disk-image.ts). */
+  diskImages?: DiskImageClient;
 }
 
 export interface AzureProviderOptions {
@@ -542,6 +545,7 @@ export async function createAzureSandboxClient(
   );
   const { sandboxes } = group;
   return {
+    diskImages: azureDiskImages(group.diskImages),
     get: (id) => sandboxes.get(id),
     list: (options) => sandboxes.list(options),
     beginCreate: (body) => {
@@ -564,5 +568,79 @@ export async function createAzureSandboxClient(
     removePort: (id, port) => group.ports.remove(id, port),
     beginStop: (id) => sandboxes.beginStop(id),
     beginResume: (id) => sandboxes.beginResume(id),
+  };
+}
+
+/** A disk image as the SDK answers it — only what is read here. */
+interface SdkDiskImage {
+  id: string;
+  name?: string;
+  labels?: Record<string, string>;
+  image?: { base?: string };
+  status?: { state?: string; message?: string };
+}
+
+function diskImageView(image: SdkDiskImage): DiskImageView {
+  return {
+    id: image.id,
+    name: image.name ?? image.labels?.name ?? null,
+    base: image.image?.base ?? null,
+    state: image.status?.state ?? 'Unknown',
+    message: image.status?.message ?? null,
+  };
+}
+
+const CREATED_WITHIN_MS = 2 * 60_000;
+
+/**
+ * The SDK's disk images as disk-image.ts reads them. Its create resolves
+ * only once the image is Ready, so it is started here and left to run,
+ * and the new image is found by its name label: disk-image.ts then
+ * follows its state itself, and a later start of the orchestrator finds
+ * a build still under way the same way.
+ */
+function azureDiskImages(operations: {
+  list(): AsyncIterable<SdkDiskImage>;
+  get(id: string): Promise<SdkDiskImage>;
+  beginCreate(base: string, options: { name: string }): Poller<SdkDiskImage>;
+}): DiskImageClient {
+  const list = async (): Promise<DiskImageView[]> => {
+    const images: DiskImageView[] = [];
+    for await (const image of operations.list()) images.push(diskImageView(image));
+    return images;
+  };
+  return {
+    list,
+    async get(id) {
+      try {
+        return diskImageView(await operations.get(id));
+      } catch (error) {
+        if (statusOf(error) === 404) return null;
+        throw wrap(error);
+      }
+    },
+    async create(base, name) {
+      const before = new Set((await list()).map((image) => image.id));
+      let refused: unknown = null;
+      // Its end is followed through get(); only a refusal to start matters here.
+      operations
+        .beginCreate(base, { name })
+        .pollUntilDone()
+        .catch((error: unknown) => {
+          refused = error;
+        });
+      const deadline = Date.now() + CREATED_WITHIN_MS;
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        if (refused) throw wrap(refused);
+        const made = (await list()).find((image) => image.name === name && !before.has(image.id));
+        if (made) return made.id;
+        if (Date.now() > deadline) {
+          throw new ProviderError(
+            `the sandbox group did not list the disk image it was asked to build from ${base}`
+          );
+        }
+      }
+    },
   };
 }

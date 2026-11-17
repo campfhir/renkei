@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-17',
     entries: [
       {
+        kind: 'changed',
+        title: 'Azure sandboxes always run this release',
+        detail:
+          'On Organization → Sandboxes, leave Disk image blank and Renkei has your Azure sandbox group build the sandbox image for the release you are running, after the first save and after each upgrade, and makes sandboxes once it is ready. The page shows which release sandboxes run, and a failed build can be prepared again from it. There is nothing to import by hand.',
+      },
+      {
         kind: 'fixed',
         title: "Orchestrated sandboxes see the organization's sandbox switches",
         detail:

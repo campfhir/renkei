@@ -19,6 +19,7 @@ import {
   checkSandboxOrchestrator,
   mergeOrchestratorSecrets,
   orchestratorViewOfRow,
+  prepareSandboxImage,
   sandboxOrchestratorStatus,
   type OrchestratorInput,
   type OrchestratorView,
@@ -89,4 +90,13 @@ export async function testSandboxes(
   const row = await merged(input);
   if (typeof row === 'string') return { ok: false, detail: row };
   return checkSandboxOrchestrator(row);
+}
+
+/**
+ * Has the orchestrator prepare the stored setup's disk image again (after
+ * a failed build), then reads the setup back with what it says now.
+ */
+export async function prepareSandboxesImage(): Promise<SandboxesView | 'ERROR'> {
+  await prepareSandboxImage();
+  return readSandboxes();
 }

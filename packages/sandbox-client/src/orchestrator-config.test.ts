@@ -52,6 +52,18 @@ describe('the sandbox setup an operator saves', () => {
     expect(input.settings.callbackUrl).toBe('https://orchestrator.internal:8097');
   });
 
+  it('leaves the disk image to the orchestrator when none is pinned, pulled from the sandbox image repository', () => {
+    const input = parsed(form({ azure: { ...AZURE, diskImage: '' } }));
+    expect(input.settings.azure.diskImage).toBe('');
+    expect(input.settings.azure.imageRepository).toBe('docker.io/scotteremiaroden/renkei-sandbox');
+    const own = parsed(
+      form({
+        azure: { ...AZURE, diskImage: '', imageRepository: 'myregistry.azurecr.io/renkei-sandbox' },
+      })
+    );
+    expect(own.settings.azure.imageRepository).toBe('myregistry.azurecr.io/renkei-sandbox');
+  });
+
   it('or a Docker engine, which needs none of the Azure fields', () => {
     const input = parsed({
       provider: 'docker',
@@ -73,7 +85,13 @@ describe('the sandbox setup an operator saves', () => {
     [{ azure: { ...AZURE, subscriptionId: 'prod' } }, /subscription id is a GUID/],
     [{ azure: { ...AZURE, sandboxGroup: '' } }, /sandbox group/],
     [{ azure: { ...AZURE, region: 'East US 2' } }, /region/],
-    [{ azure: { ...AZURE, diskImage: '' } }, /disk image/],
+    [{ azure: { ...AZURE, diskImage: 'not an id!' } }, /disk image is its id/],
+    [
+      {
+        azure: { ...AZURE, diskImage: '', imageRepository: 'docker.io/acme/renkei-sandbox:latest' },
+      },
+      /without its tag/,
+    ],
     [{ azure: { ...AZURE, cpu: '2 cores' } }, /millicores/],
     [{ azure: { ...AZURE, memory: '4GB' } }, /Memory/],
     [{ azure: { ...AZURE, entraAllowed: [] } }, /name the identity/],

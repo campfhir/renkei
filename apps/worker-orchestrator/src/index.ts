@@ -36,7 +36,7 @@ import { getConnectorConfig } from '@renkei/connector-config';
 import { loadKeyring } from '@renkei/crypto';
 import { checkDataStore, closeDataStore, getDataStore } from '@renkei/db';
 import { SANDBOX_ORCHESTRATOR_CONNECTOR } from '@renkei/sandbox-client';
-import { TrialSandboxes } from '@renkei/sandbox-orchestrator';
+import { DiskImagePreparer, TrialSandboxes } from '@renkei/sandbox-orchestrator';
 import { watchLogLevel } from '@renkei/settings';
 import { schedulePeriodicSweep } from '@renkei/worker-loop';
 import { archiveBlobsOf, archiveRetentionMs, organizationBlobStore } from './archive-blobs';
@@ -101,10 +101,17 @@ async function main(): Promise<void> {
       : null;
   };
 
+  // Sandboxes run this build: where the setup pins no disk image, one is
+  // built in the group from the sandbox image at this commit (stored.ts).
+  const commit = /^[0-9a-f]{40}$/.test(process.env.GIT_SHA?.trim() ?? '')
+    ? (process.env.GIT_SHA?.trim() ?? null)
+    : null;
+  const image = { preparer: new DiskImagePreparer(), commit };
   const host = new OrchestratorHost({
     read,
     masterKey,
     logger,
+    image,
     archives: {
       store: () => getDataStore().sandboxArchives,
       blobs: archiveBlobsOf(organizationBlobStore),
@@ -146,6 +153,7 @@ async function main(): Promise<void> {
     trials,
     orchestrator: () => host.current(),
     status: () => host.status(),
+    prepareImage: () => host.prepareAgain(),
     store: () => getDataStore().sandboxes,
     dataStore: () => getDataStore(),
     check: async (candidate) => {
@@ -153,7 +161,7 @@ async function main(): Promise<void> {
       if (!row) {
         return { ok: false, detail: 'Nothing is configured yet: save the sandbox setup first.' };
       }
-      return checkStored(row, {}, { trials, masterKey, newId: randomUUID });
+      return checkStored(row, {}, { trials, masterKey, newId: randomUUID }, image);
     },
   });
   server.listen(port, '0.0.0.0', () => {

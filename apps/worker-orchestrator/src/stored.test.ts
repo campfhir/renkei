@@ -1,8 +1,12 @@
 import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import {
+  DiskImagePreparer,
+  OrchestratorError,
   TrialSandboxes,
   type AzureCreateRequest,
   type AzureSandboxClient,
+  type DiskImageClient,
+  type DiskImageView,
 } from '@renkei/sandbox-orchestrator';
 import { OrchestratorHost } from './host';
 import { buildFromStored, checkStored, type StoredRow } from './stored';
@@ -151,6 +155,7 @@ describe('the orchestrator in force', () => {
     expect(waiting.status()).toEqual({
       provider: null,
       problem: expect.stringMatching(/not set up/),
+      image: null,
     });
   });
 
@@ -160,7 +165,7 @@ describe('the orchestrator in force', () => {
     await live.reload();
     stored = row();
     await live.reload();
-    expect(live.status()).toEqual({ provider: 'azure', problem: null });
+    expect(live.status()).toEqual({ provider: 'azure', problem: null, image: null });
     expect(live.current()).toBe(live.maybe());
   });
 
@@ -259,5 +264,178 @@ describe('Test connection with a test sandbox', () => {
     );
     expect(probed).toEqual(['https://az-1--8092.eastus2.adcproxy.io']);
     expect(group.deleted).toEqual(['az-1']);
+  });
+});
+
+describe('the disk image for this build', () => {
+  const SHA = '12112db66f6bdd6fd42846039b8b9e9432136eb7';
+  const BASE = `docker.io/scotteremiaroden/renkei-sandbox:${SHA}`;
+  const automatic = (): StoredRow =>
+    row({
+      settings: {
+        provider: 'azure',
+        callbackUrl: 'https://orchestrator.internal:8097',
+        azure: { ...AZURE, diskImage: '' },
+        envNames: [],
+      },
+    });
+  const silent = { info: () => undefined, warn: () => undefined, error: () => undefined };
+
+  /** A group whose disk images build to `outcome` once `finish()` is called. */
+  function imageGroup(outcome: 'Ready' | 'Failed' = 'Ready') {
+    const images: DiskImageView[] = [];
+    const created: string[] = [];
+    let done = false;
+    const diskImages: DiskImageClient = {
+      list: async () => images.map((image) => ({ ...image })),
+      get: async (id) => {
+        const image = images.find((candidate) => candidate.id === id);
+        if (!image) return null;
+        if (done) image.state = outcome;
+        return { ...image, message: image.state === 'Failed' ? 'manifest unknown' : null };
+      },
+      create: async (base, name) => {
+        created.push(base);
+        const id = `img-${created.length}`;
+        images.push({ id, name, base, state: 'Building', message: null });
+        return id;
+      },
+    };
+    const client: AzureSandboxClient = { ...azureClient(), diskImages };
+    return {
+      client,
+      created,
+      finish: () => {
+        done = true;
+      },
+      reset: () => {
+        done = false;
+        outcome = 'Ready';
+      },
+    };
+  }
+
+  /** Until `ready()` holds, letting the preparation's timers and promises run. */
+  async function until(ready: () => boolean): Promise<void> {
+    for (let i = 0; i < 200 && !ready(); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(ready()).toBe(true);
+  }
+
+  beforeEach(() => registerDataStore(createMemoryDataStore()));
+  afterEach(() => resetDataStore());
+
+  it('is built from the sandbox image at this commit before any sandbox is made, and callers are told it is starting', async () => {
+    const group = imageGroup();
+    const preparer = new DiskImagePreparer();
+    const live = new OrchestratorHost({
+      read: async () => automatic(),
+      masterKey: 'master',
+      logger: silent,
+      deps: { azureClient: async () => group.client },
+      image: { preparer, commit: SHA, pollMs: 5 },
+    });
+    await live.reload();
+    expect(live.maybe()).toBeNull();
+    expect(() => live.current()).toThrow(/disk image for build 12112db is being prepared/);
+    // A caller is told to try again shortly, not that sandboxes are broken.
+    const refusal = (() => {
+      try {
+        live.current();
+        return null;
+      } catch (error) {
+        return error;
+      }
+    })();
+    expect(refusal instanceof OrchestratorError && refusal.type).toBe('starting');
+    await until(() => live.status().image?.diskImageId === 'img-1');
+    expect(group.created).toEqual([BASE]);
+    expect(live.status().image).toMatchObject({ state: 'preparing', build: '12112db', base: BASE });
+
+    group.finish();
+    await until(() => live.maybe() !== null);
+    expect(live.status()).toEqual({
+      provider: 'azure',
+      problem: null,
+      image: { build: '12112db', base: BASE, state: 'ready', diskImageId: 'img-1', detail: null },
+    });
+  });
+
+  it('is reused on a restart: a group that already has it Ready is in force at once', async () => {
+    const group = imageGroup();
+    group.finish();
+    await group.client.diskImages?.create(BASE, 'renkei-sandbox-12112db66f6b');
+    const live = new OrchestratorHost({
+      read: async () => automatic(),
+      masterKey: 'master',
+      logger: silent,
+      deps: { azureClient: async () => group.client },
+      image: { preparer: new DiskImagePreparer(), commit: SHA, pollMs: 5 },
+    });
+    await live.reload();
+    await until(() => live.maybe() !== null);
+    expect(group.created).toEqual([BASE]);
+  });
+
+  it('that fails makes nothing, says why, and is prepared again when an operator asks', async () => {
+    const group = imageGroup('Failed');
+    group.finish();
+    const live = new OrchestratorHost({
+      read: async () => automatic(),
+      masterKey: 'master',
+      logger: silent,
+      deps: { azureClient: async () => group.client },
+      image: { preparer: new DiskImagePreparer(), commit: SHA, pollMs: 5 },
+    });
+    await live.reload();
+    await until(() => live.status().image?.state === 'failed');
+    await until(() => /could not be prepared/.test(live.status().problem ?? ''));
+    expect(live.status().problem).toMatch(
+      /manifest unknown; prepare it again from Organization → Sandboxes/
+    );
+    expect(live.maybe()).toBeNull();
+
+    group.reset();
+    const after = await live.prepareAgain();
+    expect(after.image?.state).toBe('preparing');
+    group.finish();
+    await until(() => live.maybe() !== null);
+    expect(group.created).toHaveLength(2);
+  });
+
+  it('cannot be had by a build that does not know its commit, and says to pin one', async () => {
+    const live = new OrchestratorHost({
+      read: async () => automatic(),
+      masterKey: 'master',
+      logger: silent,
+      deps: { azureClient: async () => imageGroup().client },
+      image: { preparer: new DiskImagePreparer(), commit: null },
+    });
+    await live.reload();
+    expect(live.status().problem).toMatch(/built without its commit .* enter a disk image id/);
+  });
+
+  it('is what Test connection waits on, and says so when it is still being built', async () => {
+    const group = imageGroup();
+    const preparer = new DiskImagePreparer();
+    const tried = await checkStored(
+      automatic(),
+      { azureClient: async () => group.client },
+      { trials: new TrialSandboxes('master'), masterKey: 'master', newId: () => 'trial-1' },
+      { preparer, commit: SHA, testWaitMs: 20, pollMs: 5 }
+    );
+    expect(tried.ok).toBe(false);
+    expect(tried.detail).toMatch(
+      /^Reached the sandbox group .* The disk image for build 12112db is being built from docker\.io\/scotteremiaroden\/renkei-sandbox:12112db66f6b.* Press Test connection again once it is ready\.$/
+    );
+    expect(group.created).toEqual([BASE]);
+    // The build carries on after the answer; it ends Ready, nothing left polling.
+    group.finish();
+    await until(
+      () =>
+        preparer.status(`${AZURE.subscriptionId}/PRD_INFRA/renkei-sandbox-group|${BASE}`)?.state ===
+        'ready'
+    );
   });
 });

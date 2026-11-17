@@ -514,6 +514,7 @@ jobs:
           tags: ${{ steps.meta.outputs.scan_tag }}
           build-args: |
             GIT_COMMIT=${{ steps.meta.outputs.commit }}
+            GIT_SHA=${{ github.sha }}
             APP_VERSION=${{ steps.meta.outputs.version }}
             DISTRO_REFRESH=${{ steps.meta.outputs.distro_refresh }}
           cache-from: type=gha,scope=${{ matrix.target }}
@@ -575,6 +576,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             GIT_COMMIT=${{ steps.meta.outputs.commit }}
+            GIT_SHA=${{ github.sha }}
             APP_VERSION=${{ steps.meta.outputs.version }}
             DISTRO_REFRESH=${{ steps.meta.outputs.distro_refresh }}
           labels: |

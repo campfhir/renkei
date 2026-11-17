@@ -6,11 +6,15 @@ import type { SandboxesView } from '@/lib/sandboxes-admin';
 import {
   asksEntraAllowed,
   badge,
+  canPrepareImage,
   canSubmit,
   clientSecretPlaceholder,
   envPlaceholder,
+  imageLine,
   init,
+  leavesImageToOrchestrator,
   orchestratorLine,
+  prepareImageLabel,
   reducer,
   requestBody,
   saveLabel,
@@ -63,6 +67,7 @@ export default function SandboxesForm({ initial }: { initial: SandboxesView | nu
   const [state, dispatch] = useReducer(reducer, initial, init);
   const { draft } = state;
   const line = orchestratorLine(state);
+  const imageNote = imageLine(state);
   const shown = badge(state);
 
   async function save(event: FormEvent) {
@@ -94,6 +99,23 @@ export default function SandboxesForm({ initial }: { initial: SandboxesView | nu
     dispatch({ type: 'tested', ok: result.data.ok, detail: result.data.detail });
   }
 
+  async function prepareImage() {
+    dispatch({ type: 'sent', what: 'image' });
+    const result = await sendJsonFull<SandboxesView>(
+      '/api/admin/sandboxes/prepare-image',
+      'POST',
+      {}
+    );
+    if (result.error || !result.data) {
+      dispatch({
+        type: 'failed',
+        message: result.error ?? 'The disk image could not be prepared.',
+      });
+      return;
+    }
+    dispatch({ type: 'imagePrepared', view: result.data });
+  }
+
   const azureText = (
     key:
       | 'subscriptionId'
@@ -102,6 +124,7 @@ export default function SandboxesForm({ initial }: { initial: SandboxesView | nu
       | 'region'
       | 'endpoint'
       | 'diskImage'
+      | 'imageRepository'
       | 'cpu'
       | 'memory'
       | 'disk'
@@ -144,7 +167,20 @@ export default function SandboxesForm({ initial }: { initial: SandboxesView | nu
 
   return (
     <form onSubmit={save} className="space-y-4">
-      <p className={`rounded-md border px-3 py-2 text-sm ${LINE_CLASS[line.tone]}`}>{line.text}</p>
+      <div className={`rounded-md border px-3 py-2 text-sm ${LINE_CLASS[line.tone]}`}>
+        <p>{line.text}</p>
+        {imageNote ? <p className="mt-1">{imageNote}</p> : null}
+        {canPrepareImage(state) || state.busy === 'image' ? (
+          <button
+            type="button"
+            onClick={() => void prepareImage()}
+            disabled={!canPrepareImage(state)}
+            className="mt-2 rounded-lg border border-current px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+          >
+            {prepareImageLabel(state)}
+          </button>
+        ) : null}
+      </div>
 
       <section className={sectionClass}>
         <div className="mb-3 flex items-center justify-between gap-4">
@@ -210,10 +246,18 @@ export default function SandboxesForm({ initial }: { initial: SandboxesView | nu
                 )}
                 {azureText(
                   'diskImage',
-                  'Disk image',
-                  '00000000-0000-0000-0000-000000000000',
-                  'The id of the disk image in the group that sandboxes start from (the sandbox image, imported): the GUID the portal shows for it.'
+                  'Disk image (optional)',
+                  'Built for this release',
+                  'Leave blank: the orchestrator has the group build the sandbox image for its own release, and sandboxes start once it is ready. Enter a disk image’s id (the GUID the portal shows) only to pin one whatever the release.'
                 )}
+                {leavesImageToOrchestrator(state)
+                  ? azureText(
+                      'imageRepository',
+                      'Sandbox image repository',
+                      'docker.io/scotteremiaroden/renkei-sandbox',
+                      'Where the group pulls the sandbox image from; the orchestrator’s commit is the tag.'
+                    )
+                  : null}
                 {azureText(
                   'vnetConnection',
                   'VNet connection (optional)',

@@ -17,9 +17,18 @@ import {
   Orchestrator,
   OrchestratorError,
   type ArchiveOptions,
+  type DiskImageStatus,
+  type OrchestratorErrorType,
   type OrchestratorLogger,
 } from '@renkei/sandbox-orchestrator';
-import { buildFromStored, type BuildDeps, type StoredRow } from './stored';
+import {
+  automaticImageOf,
+  buildFromStored,
+  startDiskImage,
+  type BuildDeps,
+  type ImageDeps,
+  type StoredRow,
+} from './stored';
 
 const COMPONENT = 'worker-orchestrator/config';
 export const RELOAD_MS = 15_000;
@@ -32,12 +41,23 @@ export interface HostOptions {
   /** Where evicted sandboxes' archives are kept; absent, an eviction removes the work. */
   archives?: ArchiveOptions;
   deps?: BuildDeps;
+  /**
+   * Preparing the disk image for this build, where the setup leaves it to
+   * the orchestrator (stored.ts automaticImageOf). Without it a setup that
+   * pins no disk image makes nothing and says why.
+   */
+  image?: ImageDeps;
 }
 
 export class OrchestratorHost {
   private orchestrator: Orchestrator | null = null;
   private fingerprint: string | null = null;
   private problem = 'the sandbox configuration has not been read yet';
+  /** `starting` while a disk image is prepared: a caller is told to try again shortly. */
+  private problemType: OrchestratorErrorType = 'provider';
+  /** The preparation the stored setup is waiting on, by its key; null when it pins its image or is not Azure. */
+  private imageKey: string | null = null;
+  private lastRow: StoredRow | null = null;
   private providerName: string | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
 
@@ -45,7 +65,7 @@ export class OrchestratorHost {
 
   /** The orchestrator, or a refusal that says why there is none. */
   current(): Orchestrator {
-    if (!this.orchestrator) throw new OrchestratorError('provider', this.problem);
+    if (!this.orchestrator) throw new OrchestratorError(this.problemType, this.problem);
     return this.orchestrator;
   }
 
@@ -54,8 +74,47 @@ export class OrchestratorHost {
     return this.orchestrator;
   }
 
-  status(): { provider: string | null; problem: string | null } {
-    return { provider: this.providerName, problem: this.orchestrator ? null : this.problem };
+  status(): { provider: string | null; problem: string | null; image: DiskImageStatus | null } {
+    return {
+      provider: this.providerName,
+      problem: this.orchestrator ? null : this.problem,
+      image:
+        this.imageKey && this.options.image
+          ? this.options.image.preparer.status(this.imageKey)
+          : null,
+    };
+  }
+
+  /**
+   * Prepare the stored setup's disk image again — after a failed build,
+   * when an operator asks from Organization → Sandboxes — and put the
+   * orchestrator in force once it is ready. What it says now.
+   */
+  async prepareAgain(): Promise<ReturnType<OrchestratorHost['status']>> {
+    const row = this.lastRow;
+    const image = this.options.image;
+    const automatic = row && image ? automaticImageOf(row, image.commit) : null;
+    if (row && image && automatic && typeof automatic !== 'string') {
+      void startDiskImage(row, automatic, image.preparer, this.options.deps, {
+        again: true,
+        ...(image.pollMs ? { pollMs: image.pollMs } : {}),
+      })
+        .catch(() => undefined)
+        .finally(() => {
+          this.fingerprint = null;
+          void this.reload();
+        });
+      this.fingerprint = null;
+      await this.reload();
+    }
+    return this.status();
+  }
+
+  private noOrchestrator(problem: string, type: OrchestratorErrorType = 'provider'): void {
+    this.orchestrator = null;
+    this.providerName = null;
+    this.problem = problem;
+    this.problemType = type;
   }
 
   /** Read the stored configuration and, when it has changed, build from it. */
@@ -73,12 +132,74 @@ export class OrchestratorHost {
     }
     const fingerprint = createHash('sha256').update(JSON.stringify(row)).digest('hex');
     if (fingerprint === this.fingerprint) return;
-    const built = await buildFromStored(row, this.options.deps);
     this.fingerprint = fingerprint;
+    this.lastRow = row;
+
+    // A setup that leaves the disk image to the orchestrator is put in
+    // force only once the image for this build is Ready in its group.
+    const image = this.options.image;
+    const automatic = row?.enabled ? automaticImageOf(row, image?.commit ?? null) : null;
+    this.imageKey = automatic && typeof automatic !== 'string' ? automatic.key : null;
+    if (typeof automatic === 'string') {
+      this.noOrchestrator(automatic);
+      this.options.logger.warn('no sandbox can be made: {problem}', {
+        component: COMPONENT,
+        problem: automatic,
+      });
+      return;
+    }
+    let preparedDiskImage: string | null = null;
+    if (row && automatic) {
+      if (!image) {
+        this.noOrchestrator(
+          'this orchestrator cannot prepare a disk image; pin one on Organization → Sandboxes'
+        );
+        return;
+      }
+      const status = image.preparer.status(automatic.key);
+      if (status?.state === 'failed') {
+        this.noOrchestrator(
+          `the disk image for build ${automatic.plan.build} could not be prepared — ${status.detail ?? 'no reason was given'}; prepare it again from Organization → Sandboxes`
+        );
+        this.options.logger.error(
+          'the disk image for build {build} could not be prepared from {base}, so no sandbox can be made: {error}',
+          {
+            component: COMPONENT,
+            build: automatic.plan.build,
+            base: automatic.plan.base,
+            error: status.detail,
+          }
+        );
+        return;
+      }
+      if (status?.state !== 'ready' || !status.diskImageId) {
+        this.noOrchestrator(
+          `the disk image for build ${automatic.plan.build} is being prepared from ${automatic.plan.base}; sandboxes are made once it is ready`,
+          'starting'
+        );
+        if (!status) {
+          this.options.logger.info(
+            'preparing the disk image for build {build} from {base}; sandboxes are made once it is ready',
+            { component: COMPONENT, build: automatic.plan.build, base: automatic.plan.base }
+          );
+          void startDiskImage(row, automatic, image.preparer, this.options.deps, {
+            ...(image.pollMs ? { pollMs: image.pollMs } : {}),
+          })
+            .catch(() => undefined)
+            .finally(() => {
+              // Ready or failed: read the setup again and act on what the preparation came to.
+              this.fingerprint = null;
+              void this.reload();
+            });
+        }
+        return;
+      }
+      preparedDiskImage = status.diskImageId;
+    }
+
+    const built = await buildFromStored(row, this.options.deps, preparedDiskImage);
     if (typeof built === 'string') {
-      this.orchestrator = null;
-      this.providerName = null;
-      this.problem = built;
+      this.noOrchestrator(built);
       this.options.logger.warn('no sandbox can be made: {problem}', {
         component: COMPONENT,
         problem: built,
@@ -96,6 +217,7 @@ export class OrchestratorHost {
       idleDeleteMs: built.idleDeleteMs,
       ...(this.options.archives ? { archives: this.options.archives } : {}),
     });
+    this.problemType = 'provider';
     this.providerName = built.provider.name;
     this.options.logger.info(
       'sandboxes are made by {provider}, suspended after {suspendMinutes} idle minutes and evicted after {evictHours} idle hours, as the organization’s settings now say',

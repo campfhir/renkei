@@ -39,6 +39,15 @@ export {
 } from './archive';
 export { sandboxApiKey } from './keys';
 export {
+  DiskImagePreparer,
+  diskImagePlanFor,
+  ensureDiskImage,
+  type DiskImageClient,
+  type DiskImagePlan,
+  type DiskImageStatus,
+  type DiskImageView,
+} from './disk-image';
+export {
   TrialSandboxes,
   sandboxWorkerEnv,
   trySandbox,

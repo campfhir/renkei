@@ -480,8 +480,13 @@ COPY --chown=worker:nodejs apps/worker-orchestrator/package.json apps/worker-orc
 USER worker
 
 ARG GIT_COMMIT
+# The full commit: the tag of the sandbox image built from the same commit,
+# which the orchestrator has its Azure sandbox group make a disk image from
+# (packages/sandbox-orchestrator disk-image.ts).
+ARG GIT_SHA=
 ENV NODE_ENV=production \
-    GIT_COMMIT=${GIT_COMMIT}
+    GIT_COMMIT=${GIT_COMMIT} \
+    GIT_SHA=${GIT_SHA}
 
 EXPOSE 8097
 

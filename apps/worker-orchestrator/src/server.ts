@@ -32,6 +32,11 @@
  *                       its worker to answer (trial.ts in
  *                       @renkei/sandbox-orchestrator); it is removed
  *                       after. Takes minutes, not seconds.
+ *   POST /v1/image      → `{ provider, problem?, image? }`: prepare the stored
+ *                       setup's disk image again (after a failed build),
+ *                       and put the orchestrator in force once it is
+ *                       ready. `image` — also on /health — is where that
+ *                       preparation is: preparing, ready or failed.
  *   ANY  /unavailable/<why>/…   answers every request with a refusal in
  *                       the sandbox worker's error shape. Where the
  *                       client sends a call whose sandbox could not be
@@ -75,6 +80,7 @@ import { isRecord } from '@renkei/guards';
 import {
   Orchestrator,
   OrchestratorError,
+  type DiskImageStatus,
   type OrchestratorErrorType,
   type TrialSandboxes,
 } from '@renkei/sandbox-orchestrator';
@@ -124,7 +130,18 @@ export interface OrchestratorServerDeps {
   /** The orchestrator in force; throws an OrchestratorError saying why when there is none. */
   orchestrator: () => Orchestrator;
   /** Which provider is in force, or why none is. */
-  status: () => { provider: string | null; problem: string | null };
+  status: () => {
+    provider: string | null;
+    problem: string | null;
+    /** The disk image the stored setup is waiting on or running from, when the orchestrator prepares it. */
+    image?: DiskImageStatus | null;
+  };
+  /** Prepare the stored setup's disk image again; what the orchestrator says of itself after. */
+  prepareImage?: () => Promise<{
+    provider: string | null;
+    problem: string | null;
+    image?: DiskImageStatus | null;
+  }>;
   store: () => SandboxStore;
   /** The whole data store, for the calls sandboxes make through this process. */
   dataStore: () => DataStore;
@@ -257,6 +274,7 @@ export function createOrchestratorServer(deps: OrchestratorServerDeps): Server {
         orchestrator: true,
         provider: status.provider,
         ...(status.problem ? { problem: status.problem } : {}),
+        ...(status.image ? { image: status.image } : {}),
         ...(isRecord(health) && isRecord(health.capabilities)
           ? { capabilities: health.capabilities }
           : {}),
@@ -290,6 +308,15 @@ export function createOrchestratorServer(deps: OrchestratorServerDeps): Server {
     }
     if (!isRecord(body)) return sendError(response, 'bad_request');
 
+    if (url.pathname === '/v1/image') {
+      if (!deps.prepareImage) return sendError(response, 'unknown_operation');
+      const status = await deps.prepareImage();
+      return sendJson(response, 200, {
+        provider: status.provider,
+        ...(status.problem ? { problem: status.problem } : {}),
+        ...(status.image ? { image: status.image } : {}),
+      });
+    }
     if (url.pathname === '/v1/check') {
       const secrets: Record<string, string> = {};
       if (isRecord(body.secrets)) {
