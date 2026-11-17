@@ -600,46 +600,100 @@ export async function prepareSandboxImage(): Promise<SandboxOrchestratorStatus> 
   }
 }
 
-/**
- * Have the orchestrator try a sandbox configuration — the one given
- * (settings and opened secrets, as they would be stored) or, with none,
- * the one stored — by asking its provider whether it answers, then making
- * a test sandbox from it and waiting for its worker to answer (it is
- * removed after). The orchestrator is the process that holds the means to
- * ask. That takes minutes on a cold image, hence the long wait here. A
- * failed try is an answer.
- */
-export async function checkSandboxOrchestrator(
-  candidate: { settings: unknown; secrets: Record<string, string> } | null
-): Promise<{ ok: boolean; detail: string }> {
-  const orchestrator = sandboxOrchestratorConfig();
-  if (!orchestrator) {
-    return {
-      ok: false,
-      detail:
-        'This deployment runs no sandbox orchestrator (SANDBOX_ORCHESTRATOR_URL is not set on the app), so there is nothing to try the configuration with.',
-    };
+/** Test connection as the orchestrator runs it: a job the page reads until it ends. */
+export interface SandboxCheckJob {
+  id: string;
+  state: 'running' | 'passed' | 'failed' | 'cancelled';
+  /** What the test has done so far, in order. */
+  steps: Array<{ at: string; text: string }>;
+  /** The answer, once it has ended. */
+  detail: string | null;
+  startedAt: string;
+  endedAt: string | null;
+}
+
+function checkJobOf(value: unknown): SandboxCheckJob | null {
+  if (!isRecord(value) || typeof value.id !== 'string') return null;
+  const state = value.state;
+  if (state !== 'running' && state !== 'passed' && state !== 'failed' && state !== 'cancelled') {
+    return null;
   }
+  const steps = Array.isArray(value.steps)
+    ? value.steps.flatMap((step) =>
+        isRecord(step) && typeof step.text === 'string'
+          ? [{ at: typeof step.at === 'string' ? step.at : '', text: step.text }]
+          : []
+      )
+    : [];
+  return {
+    id: value.id,
+    state,
+    steps,
+    detail: typeof value.detail === 'string' ? value.detail : null,
+    startedAt: typeof value.startedAt === 'string' ? value.startedAt : '',
+    endedAt: typeof value.endedAt === 'string' ? value.endedAt : null,
+  };
+}
+
+/** A test that could not be started, as a job that has already ended — one shape for the page. */
+export function notStartedCheck(detail: string, at: Date = new Date()): SandboxCheckJob {
+  const when = at.toISOString();
+  return { id: 'not-started', state: 'failed', steps: [], detail, startedAt: when, endedAt: when };
+}
+
+const NO_ORCHESTRATOR =
+  'This deployment runs no sandbox orchestrator (SANDBOX_ORCHESTRATOR_URL is not set on the app), so there is nothing to try the configuration with.';
+
+async function checkCall(
+  path: '/v1/check' | '/v1/check/status' | '/v1/check/cancel',
+  body: unknown
+): Promise<{ job: SandboxCheckJob | null } | { error: string }> {
+  const orchestrator = sandboxOrchestratorConfig();
+  if (!orchestrator) return { error: NO_ORCHESTRATOR };
   try {
-    const response = await fetch(`${orchestrator.url}/v1/check`, {
+    const response = await fetch(`${orchestrator.url}${path}`, {
       method: 'POST',
-      headers: {
-        authorization: `Bearer ${orchestrator.key}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(candidate ?? {}),
-      // The orchestrator gives a test sandbox five minutes to answer.
-      signal: AbortSignal.timeout(6 * 60_000),
+      headers: { authorization: `Bearer ${orchestrator.key}`, 'content-type': 'application/json' },
+      body: JSON.stringify(body ?? {}),
+      signal: AbortSignal.timeout(15_000),
     });
-    const body: unknown = await response.json().catch(() => null);
-    if (response.ok && isRecord(body) && typeof body.detail === 'string') {
-      return { ok: body.ok === true, detail: body.detail };
+    const answer: unknown = await response.json().catch(() => null);
+    if (!response.ok || !isRecord(answer)) {
+      return { error: `The orchestrator answered ${response.status}.` };
     }
-    return { ok: false, detail: `The orchestrator answered ${response.status}.` };
+    return { job: checkJobOf(answer.job) };
   } catch (error) {
     return {
-      ok: false,
-      detail: `The orchestrator could not be reached: ${error instanceof Error ? error.message : String(error)}`,
+      error: `The orchestrator could not be reached: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
+}
+
+/**
+ * Start trying a sandbox configuration on the orchestrator — the one given
+ * (settings and opened secrets, as they would be stored) or, with none,
+ * the one stored: it asks the provider whether it answers, then makes a
+ * test sandbox and waits for its worker (removed after). That takes
+ * minutes, so it runs there as a job; this answers it at once, and
+ * `sandboxCheckStatus` reads it until it ends. While one runs, this
+ * answers the one running.
+ */
+export async function startSandboxCheck(
+  candidate: { settings: unknown; secrets: Record<string, string> } | null
+): Promise<SandboxCheckJob> {
+  const answer = await checkCall('/v1/check', candidate ?? {});
+  if ('error' in answer) return notStartedCheck(answer.error);
+  return answer.job ?? notStartedCheck('The orchestrator did not start the test.');
+}
+
+/** The test running on the orchestrator, or its last one; null when there has been none or it cannot be asked. */
+export async function sandboxCheckStatus(): Promise<SandboxCheckJob | null> {
+  const answer = await checkCall('/v1/check/status', {});
+  return 'error' in answer ? null : answer.job;
+}
+
+/** Cancel the running test; it ends once its sandbox is removed. */
+export async function cancelSandboxCheck(id: string | null): Promise<SandboxCheckJob | null> {
+  const answer = await checkCall('/v1/check/cancel', id ? { id } : {});
+  return 'error' in answer ? null : answer.job;
 }

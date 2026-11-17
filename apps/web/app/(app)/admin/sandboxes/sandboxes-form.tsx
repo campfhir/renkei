@@ -1,13 +1,16 @@
 'use client';
 
-import { useReducer, type FormEvent, type ReactNode } from 'react';
-import { sendJsonFull } from '@/lib/fetch-json';
+import { useEffect, useReducer, type FormEvent, type ReactNode } from 'react';
+import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import type { SandboxesView } from '@/lib/sandboxes-admin';
 import {
   asksEntraAllowed,
   badge,
+  canCancelTest,
   canPrepareImage,
   canSubmit,
+  canTest,
+  cancelTestLabel,
   clientSecretPlaceholder,
   envPlaceholder,
   imageLine,
@@ -17,8 +20,12 @@ import {
   prepareImageLabel,
   reducer,
   requestBody,
+  runningTestId,
   saveLabel,
   testLabel,
+  testRunning,
+  testSteps,
+  type CheckJob,
   usesServicePrincipal,
 } from './sandboxes-form.model';
 
@@ -87,17 +94,53 @@ export default function SandboxesForm({ initial }: { initial: SandboxesView | nu
 
   async function test() {
     dispatch({ type: 'sent', what: 'test' });
-    const result = await sendJsonFull<{ ok: boolean; detail: string }>(
+    const result = await sendJsonFull<{ job: CheckJob }>(
       '/api/admin/sandboxes/test-connection',
       'POST',
       requestBody(state)
     );
-    if (result.error || !result.data) {
-      dispatch({ type: 'failed', message: result.error ?? 'The test could not run.' });
+    if (result.error || !result.data?.job) {
+      dispatch({ type: 'failed', message: result.error ?? 'The test could not be started.' });
       return;
     }
-    dispatch({ type: 'tested', ok: result.data.ok, detail: result.data.detail });
+    dispatch({ type: 'checkStarted', job: result.data.job });
   }
+
+  async function cancelTest() {
+    dispatch({ type: 'sent', what: 'cancel' });
+    const result = await sendJsonFull<{ job: CheckJob | null }>(
+      '/api/admin/sandboxes/test-connection/cancel',
+      'POST',
+      { id: runningTestId(state) }
+    );
+    if (result.error || !result.data?.job) {
+      dispatch({ type: 'failed', message: result.error ?? 'The test could not be cancelled.' });
+      return;
+    }
+    dispatch({ type: 'checkStarted', job: result.data.job });
+  }
+
+  // While a test runs on the orchestrator, read it every few seconds: its
+  // steps, and its answer when it ends. Nothing holds a request open, so a
+  // locked phone or a proxy's timeout loses nothing — this page, opened
+  // again, reads the same test.
+  const running = testRunning(state);
+  useEffect(() => {
+    if (!running) return;
+    let stopped = false;
+    const read = async () => {
+      const result = await getJson<{ job: CheckJob | null }>(
+        '/api/admin/sandboxes/test-connection'
+      );
+      if (!stopped && result.data) dispatch({ type: 'checkRead', job: result.data.job });
+    };
+    const timer = setInterval(() => void read(), 2_000);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [running]);
+  const steps = testSteps(state);
 
   async function prepareImage() {
     dispatch({ type: 'sent', what: 'image' });
@@ -570,12 +613,33 @@ export default function SandboxesForm({ initial }: { initial: SandboxesView | nu
         <button
           type="button"
           onClick={() => void test()}
-          disabled={!canSubmit(state)}
+          disabled={!canTest(state)}
           className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
         >
           {testLabel(state)}
         </button>
+        {running ? (
+          <button
+            type="button"
+            onClick={() => void cancelTest()}
+            disabled={!canCancelTest(state)}
+            className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
+          >
+            {cancelTestLabel(state)}
+          </button>
+        ) : null}
       </div>
+      {steps.length > 0 ? (
+        <ol
+          aria-label="Test connection steps"
+          aria-live="polite"
+          className="list-decimal space-y-1 rounded-md border border-gray-200 px-3 py-2 pl-8 text-sm text-gray-700 dark:border-gray-800 dark:text-gray-300"
+        >
+          {steps.map((text, index) => (
+            <li key={index}>{text}</li>
+          ))}
+        </ol>
+      ) : null}
       {state.notice ? (
         <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800 dark:border-green-900/60 dark:bg-green-950/30 dark:text-green-300">
           {state.notice}

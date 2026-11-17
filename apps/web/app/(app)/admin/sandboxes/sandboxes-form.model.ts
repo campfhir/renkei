@@ -16,6 +16,9 @@
  *   - what Save and Test send;
  *   - what a save, a test and a failure leave on screen, and the badge
  *     and the line that say what the orchestrator is doing;
+ *   - Test connection as a job the orchestrator runs: started, read every
+ *     few seconds while it runs (its steps shown), cancelled; the button
+ *     is off until it ends, and its answer is shown when it does;
  *   - the disk image: left to the orchestrator when none is pinned (the
  *     image repository is then asked for), the line that says which build
  *     sandboxes boot from, and preparing it again after a failed build.
@@ -78,11 +81,17 @@ export interface SandboxesDraft {
   env: EnvRow[];
 }
 
+/** Test connection's job, as the orchestrator runs it. */
+export type CheckJob = NonNullable<SandboxesView['check']>;
+
 export interface SandboxesState {
   /** The setup as last read or saved; null when it could not be read. */
   view: SandboxesView | null;
   draft: SandboxesDraft;
-  busy: 'save' | 'test' | 'image' | null;
+  /** The test running, or the last one; null when there has been none. */
+  check: CheckJob | null;
+  /** A request in flight: Save, starting or cancelling a test, preparing the image. */
+  busy: 'save' | 'test' | 'cancel' | 'image' | null;
   notice: string | null;
   error: string | null;
 }
@@ -95,11 +104,14 @@ export type SandboxesAction =
   | { type: 'envNamed'; index: number; name: string }
   | { type: 'envValued'; index: number; value: string }
   | { type: 'envRemoved'; index: number }
-  | { type: 'sent'; what: 'save' | 'test' | 'image' }
+  | { type: 'sent'; what: 'save' | 'test' | 'cancel' | 'image' }
   | { type: 'saved'; view: SandboxesView }
   /** The orchestrator was asked to prepare the disk image again; the setup as it reads now. */
   | { type: 'imagePrepared'; view: SandboxesView }
-  | { type: 'tested'; ok: boolean; detail: string }
+  /** A test was started (or the running one answered), or cancelling it was asked. */
+  | { type: 'checkStarted'; job: CheckJob }
+  /** What the test is doing now, read while it runs. */
+  | { type: 'checkRead'; job: CheckJob | null }
   | { type: 'failed'; message: string };
 
 /**
@@ -163,7 +175,22 @@ export function draftOf(view: SandboxesView | null): SandboxesDraft {
 }
 
 export function init(view: SandboxesView | null): SandboxesState {
-  return { view, draft: draftOf(view), busy: null, notice: null, error: null };
+  return {
+    view,
+    draft: draftOf(view),
+    check: view?.check ?? null,
+    busy: null,
+    notice: null,
+    error: null,
+  };
+}
+
+/** An ended test's answer: passed is a notice; failed or cancelled, an error to read. */
+function answerOf(job: CheckJob): { notice: string | null; error: string | null } {
+  if (job.state === 'running') return { notice: null, error: null };
+  const detail =
+    job.detail ?? (job.state === 'passed' ? 'The test passed.' : 'The test did not pass.');
+  return job.state === 'passed' ? { notice: detail, error: null } : { notice: null, error: detail };
 }
 
 export function reducer(state: SandboxesState, action: SandboxesAction): SandboxesState {
@@ -211,6 +238,7 @@ export function reducer(state: SandboxesState, action: SandboxesAction): Sandbox
       return {
         view: action.view,
         draft: draftOf(action.view),
+        check: state.check,
         busy: null,
         notice: 'Saved.',
         error: null,
@@ -224,13 +252,16 @@ export function reducer(state: SandboxesState, action: SandboxesAction): Sandbox
         notice: null,
         error: null,
       };
-    case 'tested':
-      return {
-        ...state,
-        busy: null,
-        notice: action.ok ? action.detail : null,
-        error: action.ok ? null : action.detail,
-      };
+    case 'checkStarted':
+      return { ...state, busy: null, check: action.job, ...answerOf(action.job) };
+    case 'checkRead': {
+      const was = state.check;
+      const job = action.job;
+      if (!job) return state;
+      // The answer is shown once, when the test this page watched ends.
+      const ended = job.state !== 'running' && (was?.state === 'running' || was?.id !== job.id);
+      return { ...state, check: job, ...(ended ? answerOf(job) : {}) };
+    }
     case 'failed':
       return { ...state, busy: null, notice: null, error: action.message };
   }
@@ -245,8 +276,37 @@ export function saveLabel(state: SandboxesState): string {
   return state.busy === 'save' ? 'Saving…' : 'Save';
 }
 
+/** A test is running on the orchestrator: the page reads it every few seconds until it ends. */
+export function testRunning(state: SandboxesState): boolean {
+  return state.check?.state === 'running';
+}
+
+/** Test connection is off while a test runs, until it ends or is cancelled. */
+export function canTest(state: SandboxesState): boolean {
+  return state.busy === null && !testRunning(state);
+}
+
 export function testLabel(state: SandboxesState): string {
-  return state.busy === 'test' ? 'Starting a test sandbox…' : 'Test connection';
+  if (state.busy === 'test') return 'Starting the test…';
+  return testRunning(state) ? 'Testing…' : 'Test connection';
+}
+
+export function canCancelTest(state: SandboxesState): boolean {
+  return state.busy === null && testRunning(state);
+}
+
+export function cancelTestLabel(state: SandboxesState): string {
+  return state.busy === 'cancel' ? 'Cancelling…' : 'Cancel test';
+}
+
+/** What the test has done, in order — shown while it runs and after it ends. */
+export function testSteps(state: SandboxesState): string[] {
+  return state.check?.steps.map((step) => step.text) ?? [];
+}
+
+/** The id to cancel: the running test's. */
+export function runningTestId(state: SandboxesState): string | null {
+  return testRunning(state) ? (state.check?.id ?? null) : null;
 }
 
 /** No disk image pinned: the orchestrator makes the one for its build, from the repository asked for. */
@@ -363,6 +423,18 @@ export function orchestratorLine(state: SandboxesState): {
   }
   if (!orchestrator.reachable) {
     return { tone: 'warn', text: 'The sandbox orchestrator is not answering.' };
+  }
+  const image = orchestrator.image;
+  if (
+    orchestrator.problem &&
+    image?.state === 'ready' &&
+    /is being prepared/.test(orchestrator.problem)
+  ) {
+    // The image finished a moment before the orchestrator took it up: not a problem to show.
+    return {
+      tone: 'ok',
+      text: `The disk image for build ${image.build} is ready; the orchestrator is making sandboxes from it.`,
+    };
   }
   if (orchestrator.problem) {
     return { tone: 'warn', text: `No sandbox can be made: ${orchestrator.problem}.` };

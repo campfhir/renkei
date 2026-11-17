@@ -41,6 +41,7 @@ import { watchLogLevel } from '@renkei/settings';
 import { schedulePeriodicSweep } from '@renkei/worker-loop';
 import { archiveBlobsOf, archiveRetentionMs, organizationBlobStore } from './archive-blobs';
 import { OrchestratorHost } from './host';
+import { CheckJobs } from './check-jobs';
 import { createOrchestratorServer } from './server';
 import { checkStored, type StoredRow } from './stored';
 import { attachPersistentLogging, logger } from './logger';
@@ -148,6 +149,26 @@ async function main(): Promise<void> {
 
   // Test connection's test sandboxes, known to this process until each is removed.
   const trials = new TrialSandboxes(masterKey);
+  // Test connection runs here as a job the page reads until it ends (check-jobs.ts).
+  const checks = new CheckJobs({
+    newId: randomUUID,
+    onStep: (job, text) =>
+      logger.info('Test connection {job}: {step}', {
+        component: `${COMPONENT}/check`,
+        job: job.id,
+        step: text,
+      }),
+    onEnd: (job) => {
+      const attributes = {
+        component: `${COMPONENT}/check`,
+        job: job.id,
+        state: job.state,
+        detail: job.detail,
+      };
+      if (job.state === 'passed') logger.info('Test connection {job} passed: {detail}', attributes);
+      else logger.warn('Test connection {job} {state}: {detail}', attributes);
+    },
+  });
   const server = createOrchestratorServer({
     apiKeys,
     trials,
@@ -156,13 +177,14 @@ async function main(): Promise<void> {
     prepareImage: () => host.prepareAgain(),
     store: () => getDataStore().sandboxes,
     dataStore: () => getDataStore(),
-    check: async (candidate) => {
+    check: async (candidate, progress) => {
       const row = candidate ? { enabled: true, ...candidate } : await read();
       if (!row) {
         return { ok: false, detail: 'Nothing is configured yet: save the sandbox setup first.' };
       }
-      return checkStored(row, {}, { trials, masterKey, newId: randomUUID }, image);
+      return checkStored(row, {}, { trials, masterKey, newId: randomUUID }, image, progress);
     },
+    checks,
   });
   server.listen(port, '0.0.0.0', () => {
     const status = host.status();

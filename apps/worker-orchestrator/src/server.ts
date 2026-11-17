@@ -24,14 +24,21 @@
  *                       people's own browsers, signed in as themselves
  *                       (a code project's preview). `/v1/unexpose`
  *                       `{ key, port }` closes it.
- *   POST /v1/check      `{ settings?, secrets? }` → `{ ok, detail }`: try a
- *                       configuration — the one given (the Sandboxes
- *                       page, before it saves) or the one stored — by
- *                       asking its provider whether it answers, then
- *                       making a test sandbox from it and waiting for
- *                       its worker to answer (trial.ts in
+ *   POST /v1/check      `{ settings?, secrets? }` → the test job: start
+ *                       trying a configuration — the one given (the
+ *                       Sandboxes page, before it saves) or the one
+ *                       stored — by asking its provider whether it
+ *                       answers, then making a test sandbox from it and
+ *                       waiting for its worker to answer (trial.ts in
  *                       @renkei/sandbox-orchestrator); it is removed
- *                       after. Takes minutes, not seconds.
+ *                       after. Answered at once: the test takes minutes,
+ *                       and runs here (check-jobs.ts). One at a time —
+ *                       while one runs, this answers it.
+ *   POST /v1/check/status  → the test running, or the last one: its
+ *                       state, its steps so far, its answer once ended;
+ *                       `{ job: null }` when there has been none.
+ *   POST /v1/check/cancel  `{ id? }` → cancel the test running; it ends
+ *                       once its sandbox is removed.
  *   POST /v1/image      → `{ provider, problem?, image? }`: prepare the stored
  *                       setup's disk image again (after a failed build),
  *                       and put the orchestrator in force once it is
@@ -85,6 +92,7 @@ import {
   type TrialSandboxes,
 } from '@renkei/sandbox-orchestrator';
 import { matchApiKey, readBody, sendJson } from '@renkei/worker-kit';
+import type { CheckJobs, CheckRun } from './check-jobs';
 import { logger } from './logger';
 
 const COMPONENT = 'worker-orchestrator/server';
@@ -157,8 +165,11 @@ export interface OrchestratorServerDeps {
     candidate: {
       settings: Record<string, unknown>;
       secrets: Record<string, string>;
-    } | null
+    } | null,
+    progress: CheckRun
   ) => Promise<{ ok: boolean; detail: string }>;
+  /** The test jobs Test connection starts and reads. */
+  checks: CheckJobs;
 }
 
 export function createOrchestratorServer(deps: OrchestratorServerDeps): Server {
@@ -317,6 +328,13 @@ export function createOrchestratorServer(deps: OrchestratorServerDeps): Server {
         ...(status.image ? { image: status.image } : {}),
       });
     }
+    if (url.pathname === '/v1/check/status') {
+      return sendJson(response, 200, { job: deps.checks.current() });
+    }
+    if (url.pathname === '/v1/check/cancel') {
+      const id = typeof body.id === 'string' ? body.id : null;
+      return sendJson(response, 200, { job: deps.checks.cancel(id) });
+    }
     if (url.pathname === '/v1/check') {
       const secrets: Record<string, string> = {};
       if (isRecord(body.secrets)) {
@@ -324,11 +342,9 @@ export function createOrchestratorServer(deps: OrchestratorServerDeps): Server {
           if (typeof value === 'string') secrets[name] = value;
         }
       }
-      return sendJson(
-        response,
-        200,
-        await deps.check(isRecord(body.settings) ? { settings: body.settings, secrets } : null)
-      );
+      const candidate = isRecord(body.settings) ? { settings: body.settings, secrets } : null;
+      const job = deps.checks.start((progress) => deps.check(candidate, progress));
+      return sendJson(response, 200, { job });
     }
     // Everything below needs an orchestrator; without one this throws the reason.
     const orchestrator = deps.orchestrator();

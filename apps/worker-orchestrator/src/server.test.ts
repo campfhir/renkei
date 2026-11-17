@@ -9,6 +9,7 @@ import {
   TrialSandboxes,
   sandboxApiKey,
 } from '@renkei/sandbox-orchestrator';
+import { CheckJobs } from './check-jobs';
 import { createOrchestratorServer } from './server';
 
 /** A response's JSON body as a record ({} when it is not one). */
@@ -30,8 +31,9 @@ async function start() {
     logger: silent,
     probe: async () => ({ ok: true, capabilities: { browser: true, scripts: 'isolated' } }),
   });
-  const state: { problem: string | null } = { problem: null };
+  const state: { problem: string | null; holdCheck?: boolean } = { problem: null };
   const checked: unknown[] = [];
+  let jobs = 0;
   const trials = new TrialSandboxes('master');
   const server: Server = createOrchestratorServer({
     apiKeys: ['caller-key'],
@@ -43,8 +45,15 @@ async function start() {
     status: () => ({ provider: state.problem ? null : provider.name, problem: state.problem }),
     store: () => data.sandboxes,
     dataStore: () => data,
-    check: async (candidate) => {
+    checks: new CheckJobs({ newId: () => `job-${(jobs += 1)}` }),
+    check: async (candidate, progress) => {
       checked.push(candidate);
+      progress.step('Reaching it.');
+      if (state.holdCheck) {
+        // A test that runs until it is cancelled.
+        await new Promise((resolve) => progress.signal.addEventListener('abort', resolve));
+        return { ok: false, detail: 'It stopped.' };
+      }
       return { ok: true, detail: 'Reached it.' };
     },
   });
@@ -181,19 +190,58 @@ describe('the orchestrator’s HTTP surface', () => {
     });
   });
 
-  it('tries a configuration it is handed, or the stored one, without needing an orchestrator in force', async () => {
+  /** The test job until it ends, read as the page reads it. */
+  async function ended(): Promise<Record<string, unknown>> {
+    for (let i = 0; i < 100; i += 1) {
+      const job = (await record(await running.post('/v1/check/status', {}))).job;
+      if (isRecord(job) && job.state !== 'running') return job;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    throw new Error('the test job never ended');
+  }
+
+  it('tries a configuration it is handed, or the stored one, as a job answered at once, without needing an orchestrator in force', async () => {
     running.state.problem = 'sandboxes are not set up yet';
-    const tried = await running.post('/v1/check', {
-      settings: { provider: 'docker' },
-      secrets: { 'env.DATABASE_URL': 'postgres://x', odd: 7 },
+    expect(await record(await running.post('/v1/check/status', {}))).toEqual({ job: null });
+    const started = await record(
+      await running.post('/v1/check', {
+        settings: { provider: 'docker' },
+        secrets: { 'env.DATABASE_URL': 'postgres://x', odd: 7 },
+      })
+    );
+    expect(started.job).toMatchObject({ id: 'job-1', state: 'running', detail: null });
+    expect(await ended()).toMatchObject({
+      id: 'job-1',
+      state: 'passed',
+      detail: 'Reached it.',
+      steps: [{ text: 'Reaching it.' }],
     });
-    expect(await record(tried)).toEqual({ ok: true, detail: 'Reached it.' });
     await running.post('/v1/check', {});
+    expect(await ended()).toMatchObject({ id: 'job-2', state: 'passed' });
     expect(running.checked).toEqual([
       { settings: { provider: 'docker' }, secrets: { 'env.DATABASE_URL': 'postgres://x' } },
       null,
     ]);
     expect((await running.post('/v1/check', {}, 'wrong')).status).toBe(401);
+    expect((await running.post('/v1/check/status', {}, 'wrong')).status).toBe(401);
+  });
+
+  it('runs one test at a time, and a running one is cancelled on request', async () => {
+    running.state.holdCheck = true;
+    const first = await record(await running.post('/v1/check', {}));
+    const firstId = isRecord(first.job) ? String(first.job.id) : '';
+    const again = await record(await running.post('/v1/check', {}));
+    expect(again.job).toMatchObject({ id: firstId, state: 'running' });
+    expect(running.checked).toHaveLength(1);
+    await running.post('/v1/check/cancel', { id: 'not-this-one' });
+    expect((await record(await running.post('/v1/check/status', {}))).job).toMatchObject({
+      state: 'running',
+    });
+    await running.post('/v1/check/cancel', { id: firstId });
+    expect(await ended()).toMatchObject({
+      state: 'cancelled',
+      detail: 'Cancelled: an operator stopped it on Organization → Sandboxes. It stopped.',
+    });
   });
 
   it('removes a scope’s sandbox on request', async () => {

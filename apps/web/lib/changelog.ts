@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'changed',
+        title: 'Test connection runs in the background and can be cancelled',
+        detail:
+          'On Organization → Sandboxes, Test connection now runs on the server: the page shows each step as it happens, keeps the button off until the test ends, and offers Cancel while it runs. Locking your phone or leaving the page no longer loses the result; opening the page again shows the same test.',
+      },
+      {
+        kind: 'changed',
         title: 'Azure sandboxes always run this release',
         detail:
           'On Organization → Sandboxes, leave Disk image blank and Renkei has your Azure sandbox group build the sandbox image for the release you are running, after the first save and after each upgrade, and makes sandboxes once it is ready. The page shows which release sandboxes run, and a failed build can be prepared again from it. There is nothing to import by hand.',

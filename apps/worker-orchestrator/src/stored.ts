@@ -259,8 +259,15 @@ export async function checkStored(
   row: StoredRow,
   deps: BuildDeps = {},
   trial?: TrialDeps,
-  image?: ImageDeps
+  image?: ImageDeps,
+  /**
+   * Run as a job (check-jobs.ts): each step said as it is reached, and a
+   * signal that cancels it. Given one, the test waits on a disk image
+   * until it is ready rather than for `testWaitMs` — it can be cancelled.
+   */
+  progress?: { signal?: AbortSignal; step?: (text: string) => void }
 ): Promise<{ ok: boolean; detail: string }> {
+  const step = (text: string): void => progress?.step?.(text);
   let built = await buildFromStored({ ...row, enabled: true }, deps);
   if (typeof built === 'string') return { ok: false, detail: built };
   const settings = orchestratorSettingsOfRow(row.settings);
@@ -268,6 +275,7 @@ export async function checkStored(
     settings.provider === 'azure'
       ? `the sandbox group "${settings.azure.sandboxGroup}" in ${settings.azure.resourceGroup} (${settings.azure.region})`
       : `the Docker engine at ${settings.docker.host ?? 'the local socket'} with the image ${settings.docker.image}`;
+  step(`Reaching ${where}.`);
   try {
     await built.provider.check();
   } catch (error) {
@@ -304,16 +312,38 @@ export async function checkStored(
     const preparing = startDiskImage(row, automatic, image.preparer, deps, {
       ...(image.pollMs ? { pollMs: image.pollMs } : {}),
     });
+    if (image.preparer.status(automatic.key)?.state !== 'ready') {
+      step(
+        `Waiting for the disk image for build ${automatic.plan.build}, being built from ${automatic.plan.base}; this takes a few minutes the first time.`
+      );
+    }
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
     const waited = await Promise.race([
       preparing.then(
         (id) => ({ id }),
         (error: unknown) => ({ error: messageOf(error) })
       ),
-      new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), image.testWaitMs ?? 60_000);
+      new Promise<null | 'cancelled'>((resolve) => {
+        if (progress?.signal) {
+          // As a job it waits until the image is ready, or until it is cancelled.
+          onAbort = () => resolve('cancelled');
+          if (progress.signal.aborted) onAbort();
+          else progress.signal.addEventListener('abort', onAbort, { once: true });
+        } else {
+          timer = setTimeout(() => resolve(null), image.testWaitMs ?? 60_000);
+        }
       }),
-    ]).finally(() => clearTimeout(timer));
+    ]).finally(() => {
+      clearTimeout(timer);
+      if (onAbort) progress?.signal?.removeEventListener('abort', onAbort);
+    });
+    if (waited === 'cancelled') {
+      return {
+        ok: false,
+        detail: `The test was cancelled while the disk image for build ${automatic.plan.build} was being built; the build carries on, and sandboxes use it once it is ready.`,
+      };
+    }
     if (waited === null) {
       const status = image.preparer.status(automatic.key);
       return {
@@ -324,6 +354,7 @@ export async function checkStored(
       };
     }
     if ('error' in waited) return { ok: false, detail: `Reached ${where}, but ${waited.error}.` };
+    step(`The disk image for build ${automatic.plan.build} is ready (${waited.id}).`);
     built = await buildFromStored({ ...row, enabled: true }, deps, waited.id);
     if (typeof built === 'string') return { ok: false, detail: built };
     source = `the disk image built for build ${automatic.plan.build} ("${waited.id}") in ${settings.azure.sandboxGroup}`;
@@ -341,6 +372,8 @@ export async function checkStored(
     ...(trial.now ? { now: trial.now } : {}),
     ...(trial.sleep ? { sleep: trial.sleep } : {}),
     ...(trial.probe ? { probe: trial.probe } : {}),
+    ...(progress?.signal ? { signal: progress.signal } : {}),
+    ...(progress?.step ? { onStep: progress.step } : {}),
   });
   return tried.ok ? { ok: true, detail: `Reached ${where}. ${tried.detail}` } : tried;
 }

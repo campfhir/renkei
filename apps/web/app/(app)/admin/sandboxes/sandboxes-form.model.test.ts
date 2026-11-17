@@ -17,6 +17,13 @@ import {
   saveLabel,
   testLabel,
   usesServicePrincipal,
+  canCancelTest,
+  canTest,
+  cancelTestLabel,
+  runningTestId,
+  testRunning,
+  testSteps,
+  type CheckJob,
   type SandboxesAction,
   type SandboxesState,
 } from './sandboxes-form.model';
@@ -66,7 +73,23 @@ const STORED: SandboxesView = {
   hasAzureClientSecret: false,
   envStored: ['SANDBOX_ENV_SECRETS_KEY', 'DELEGATE_WORKER_API_KEY'],
   orchestrator: WIRED,
+  check: null,
 };
+
+/** A test job as the orchestrator answers it. */
+const job = (
+  state: CheckJob['state'],
+  steps: string[] = [],
+  detail: string | null = null,
+  id = 'job-1'
+): CheckJob => ({
+  id,
+  state,
+  steps: steps.map((text) => ({ at: '2026-11-17T06:00:00.000Z', text })),
+  detail,
+  startedAt: '2026-11-17T06:00:00.000Z',
+  endedAt: state === 'running' ? null : '2026-11-17T06:03:00.000Z',
+});
 
 const run = (start: SandboxesState, ...actions: SandboxesAction[]) =>
   actions.reduce(reducer, start);
@@ -189,6 +212,7 @@ describe('saving and testing', () => {
     expect(canSubmit(state)).toBe(false);
     expect(saveLabel(state)).toBe('Saving…');
     expect(testLabel(state)).toBe('Test connection');
+    expect(canTest(state)).toBe(false);
   });
 
   it('a save adopts the server’s answer, clears the secrets typed, and says "Saved."', () => {
@@ -219,22 +243,99 @@ describe('saving and testing', () => {
     expect(canSubmit(state)).toBe(true);
   });
 
-  it('a test that reached the provider says where; one that did not says why, as an error; neither saves', () => {
-    const tested = run(init(STORED), { type: 'sent', what: 'test' });
-    expect(testLabel(tested)).toBe('Starting a test sandbox…');
-    const reached = run(tested, { type: 'tested', ok: true, detail: 'Reached the sandbox group.' });
-    expect(reached.notice).toBe('Reached the sandbox group.');
-    expect(reached.error).toBeNull();
-    const refused = run(tested, { type: 'tested', ok: false, detail: 'AuthorizationFailed' });
-    expect(refused.error).toBe('AuthorizationFailed');
-    expect(refused.notice).toBeNull();
-    expect(refused.view).toBe(STORED);
+  it('a test is started as a job: the button is off and reads "Testing…" until it ends, and it can be cancelled', () => {
+    const starting = run(init(STORED), { type: 'sent', what: 'test' });
+    expect(testLabel(starting)).toBe('Starting the test…');
+    expect(canTest(starting)).toBe(false);
+    const running = run(starting, {
+      type: 'checkStarted',
+      job: job('running', ['Reaching the group.']),
+    });
+    expect(testRunning(running)).toBe(true);
+    expect(canTest(running)).toBe(false);
+    expect(testLabel(running)).toBe('Testing…');
+    expect(canCancelTest(running)).toBe(true);
+    expect(runningTestId(running)).toBe('job-1');
+    expect(running.notice).toBeNull();
+    expect(running.error).toBeNull();
+    // Saving is not held up by a test.
+    expect(canSubmit(running)).toBe(true);
+  });
+
+  it('shows each step as it is read, and the answer once, when the test ends', () => {
+    const running = run(init(STORED), {
+      type: 'checkStarted',
+      job: job('running', ['Reaching the group.']),
+    });
+    const further = run(running, {
+      type: 'checkRead',
+      job: job('running', ['Reaching the group.', 'Making a test sandbox.']),
+    });
+    expect(testSteps(further)).toEqual(['Reaching the group.', 'Making a test sandbox.']);
+    expect(further.notice).toBeNull();
+    const passed = run(further, {
+      type: 'checkRead',
+      job: job('passed', ['Reaching the group.', 'Making a test sandbox.'], 'Its worker answered.'),
+    });
+    expect(passed.notice).toBe('Its worker answered.');
+    expect(canTest(passed)).toBe(true);
+    expect(testRunning(passed)).toBe(false);
+    // Read again after an edit cleared it, the same ended test is not shown twice.
+    const edited = run(
+      passed,
+      { type: 'setAzure', patch: { region: 'westus2' } },
+      {
+        type: 'checkRead',
+        job: job('passed', [], 'Its worker answered.'),
+      }
+    );
+    expect(edited.notice).toBeNull();
+  });
+
+  it('a test that failed, or was cancelled, says why as an error; neither saves', () => {
+    const running = run(init(STORED), { type: 'checkStarted', job: job('running') });
+    const failed = run(running, {
+      type: 'checkRead',
+      job: job('failed', [], 'AuthorizationFailed'),
+    });
+    expect(failed.error).toBe('AuthorizationFailed');
+    expect(failed.view).toBe(STORED);
+    const cancelling = run(running, { type: 'sent', what: 'cancel' });
+    expect(cancelTestLabel(cancelling)).toBe('Cancelling…');
+    expect(canCancelTest(cancelling)).toBe(false);
+    const cancelled = run(
+      cancelling,
+      { type: 'checkStarted', job: job('running') },
+      { type: 'checkRead', job: job('cancelled', [], 'Cancelled: an operator stopped it.') }
+    );
+    expect(cancelled.error).toBe('Cancelled: an operator stopped it.');
+    expect(canTest(cancelled)).toBe(true);
+  });
+
+  it('a test that could not start answers at once, as an error', () => {
+    const state = run(
+      init(STORED),
+      { type: 'sent', what: 'test' },
+      {
+        type: 'checkStarted',
+        job: job('failed', [], 'Enter a value for DELEGATE_WORKER_API_KEY.', 'not-started'),
+      }
+    );
+    expect(state.error).toBe('Enter a value for DELEGATE_WORKER_API_KEY.');
+    expect(canTest(state)).toBe(true);
+  });
+
+  it('a page opened while a test runs picks it up, steps and all', () => {
+    const state = init({ ...STORED, check: job('running', ['Waiting for the disk image.']) });
+    expect(testRunning(state)).toBe(true);
+    expect(canTest(state)).toBe(false);
+    expect(testSteps(state)).toEqual(['Waiting for the disk image.']);
   });
 
   it('editing anything clears the last result', () => {
     const state = run(
       init(STORED),
-      { type: 'tested', ok: true, detail: 'Reached it.' },
+      { type: 'checkStarted', job: job('passed', [], 'Reached it.') },
       { type: 'setAzure', patch: { region: 'westus2' } }
     );
     expect(state.notice).toBeNull();
@@ -303,7 +404,20 @@ describe('the disk image sandboxes boot from', () => {
     expect(requestBody(pinned).azure).toMatchObject({ diskImage: 'img-pinned' });
   });
 
-  it('says which release sandboxes boot from once it is ready', () => {
+  it('does not show "being prepared" once the image reports ready, in the moment before the orchestrator takes it up', () => {
+    const state = init(
+      automatic(
+        {},
+        'the disk image for build 12112db is being prepared from x; sandboxes are made once it is ready'
+      )
+    );
+    expect(orchestratorLine(state)).toEqual({
+      tone: 'ok',
+      text: 'The disk image for build 12112db is ready; the orchestrator is making sandboxes from it.',
+    });
+  });
+
+  it('says which build sandboxes boot from once it is ready', () => {
     expect(imageLine(init(automatic({})))).toBe(
       `Sandboxes boot from the disk image built for build 12112db (img-1), from ${IMAGE.base}.`
     );

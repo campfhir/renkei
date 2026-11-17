@@ -326,7 +326,13 @@ sandbox** from it the way every sandbox is made
 and environment. It waits — up to five minutes — for that sandbox's
 worker to fetch its sealed environment from the orchestrator address on
 the page and answer `/health` through the provider's ingress, then
-removes it. So a passing test means a first real call will be served; a
+removes it. It runs on the orchestrator as a job (`apps/worker-orchestrator`
+`check-jobs.ts`; `POST /v1/check` starts it and answers at once,
+`/v1/check/status` reads it, `/v1/check/cancel` cancels it — removing its
+sandbox): one test at a time, each step kept, logged and shown on the page,
+which reads it every few seconds and keeps the button off until it ends.
+A disk image still being built for this release is waited for, not cut
+off; a test runs at most 45 minutes. So a passing test means a first real call will be served; a
 failing one says how far it got (no sandbox made, never called back,
 worker port refused, worker never answered). A test sandbox has no row
 in `sandboxes`; the process running the test lets its bootstrap and

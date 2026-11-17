@@ -16,19 +16,25 @@ import {
 } from '@renkei/connector-config';
 import {
   SANDBOX_ORCHESTRATOR_CONNECTOR,
-  checkSandboxOrchestrator,
+  cancelSandboxCheck,
   mergeOrchestratorSecrets,
+  notStartedCheck,
   orchestratorViewOfRow,
   prepareSandboxImage,
+  sandboxCheckStatus,
   sandboxOrchestratorStatus,
+  startSandboxCheck,
   type OrchestratorInput,
   type OrchestratorView,
+  type SandboxCheckJob,
   type SandboxOrchestratorStatus,
 } from '@renkei/sandbox-client';
 
 /** The setup as the page shows it, with what the orchestrator says of itself. */
 export interface SandboxesView extends OrchestratorView {
   orchestrator: SandboxOrchestratorStatus;
+  /** Test connection's job: the one running, or the last one — so a page opened again shows it. */
+  check: SandboxCheckJob | null;
 }
 
 function encryptionKey(): Buffer | null {
@@ -41,7 +47,11 @@ export async function readSandboxes(): Promise<SandboxesView | 'ERROR'> {
   if (!key) return 'ERROR';
   const row = await getConnectorConfig(SANDBOX_ORCHESTRATOR_CONNECTOR, key);
   if (!row.ok) return 'ERROR';
-  return { ...orchestratorViewOfRow(row.val), orchestrator: await sandboxOrchestratorStatus() };
+  const [orchestrator, check] = await Promise.all([
+    sandboxOrchestratorStatus(),
+    sandboxCheckStatus(),
+  ]);
+  return { ...orchestratorViewOfRow(row.val), orchestrator, check };
 }
 
 /** The row as it would be saved from this input: typed secrets over the stored ones. */
@@ -79,17 +89,27 @@ export async function saveSandboxes(input: OrchestratorInput): Promise<Sandboxes
 }
 
 /**
- * Tries the setup the operator is ABOUT to save — the form's fields, the
- * stored secrets where none were typed — by handing it to the
- * orchestrator, which asks the provider whether it answers. Nothing is
- * stored and no sandbox is made.
+ * Starts trying the setup the operator is ABOUT to save — the form's
+ * fields, the stored secrets where none were typed — on the orchestrator,
+ * which asks the provider whether it answers and makes a test sandbox. It
+ * runs there as a job; this answers it at once (one already running, if
+ * there is one). Nothing is stored. A setup that could not be saved is
+ * answered as a test that ended before it began.
  */
-export async function testSandboxes(
-  input: OrchestratorInput
-): Promise<{ ok: boolean; detail: string }> {
+export async function testSandboxes(input: OrchestratorInput): Promise<SandboxCheckJob> {
   const row = await merged(input);
-  if (typeof row === 'string') return { ok: false, detail: row };
-  return checkSandboxOrchestrator(row);
+  if (typeof row === 'string') return notStartedCheck(row);
+  return startSandboxCheck(row);
+}
+
+/** The test running, or the last one; null when there has been none. */
+export function sandboxesTestStatus(): Promise<SandboxCheckJob | null> {
+  return sandboxCheckStatus();
+}
+
+/** Cancel the running test (its sandbox is removed before it ends). */
+export function cancelSandboxesTest(id: string | null): Promise<SandboxCheckJob | null> {
+  return cancelSandboxCheck(id);
 }
 
 /**
