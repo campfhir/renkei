@@ -20,7 +20,11 @@
  */
 
 import { getOrgSettings } from '@renkei/settings';
-import { takesChanges, type DeployOutcome } from '@renkei/connector-salesforce';
+import {
+  APEX_COVERAGE_PERCENT,
+  takesChanges,
+  type DeployOutcome,
+} from '@renkei/connector-salesforce';
 import { resolveAudience } from '@/lib/connectors/audience';
 import { buildProjection } from '@/lib/mcp-tools/projection';
 import { resolveConnectorAvailability } from '@/lib/mcp-tools/registry';
@@ -43,6 +47,7 @@ import {
   recordDeployStarted,
   setValidation,
   validationFrom,
+  apexTestsVerdict,
   validationPassed,
   type ApplyResults,
   type ChangeRequest,
@@ -107,7 +112,7 @@ export async function waitReporting(
 export async function applyGate(
   subject: string,
   roles: readonly string[],
-  change: Pick<ChangeRequest, 'connectorKey' | 'validation'>
+  change: Pick<ChangeRequest, 'connectorKey' | 'validation' | 'payload'>
 ): Promise<Gate> {
   const settingsResult = await getOrgSettings();
   if (!settingsResult.ok) {
@@ -165,6 +170,15 @@ export async function applyGate(
       reason: running
         ? 'Salesforce is still validating this change; it can be applied once that passes.'
         : 'Salesforce has not validated this change. Propose it again once the errors are fixed.',
+    };
+  }
+  const tests = apexTestsVerdict(change.validation, readMetadataPayload(change.payload));
+  if (tests && !tests.ok) {
+    return {
+      ok: false,
+      reason:
+        `Its Apex tests do not allow a deploy (every test must pass, and each class and trigger it changes be ${APEX_COVERAGE_PERCENT}% covered): ` +
+        tests.problems.join(' '),
     };
   }
 
@@ -636,7 +650,12 @@ export async function applyChangeRequest(
   let quick = false;
   let started = validatedId ? await quickDeploy(context, access, validatedId) : null;
   if (started?.ok) quick = true;
-  if (!started) started = await startDeploy(context, access, payload.files, { checkOnly: false });
+  if (!started) {
+    started = await startDeploy(context, access, payload.files, {
+      checkOnly: false,
+      tests: payload.apexTests,
+    });
+  }
   if (!started.ok) {
     const results = {
       operations: [checked, { label: 'Deploy', outcome: 'failed' as const, detail: started.error }],

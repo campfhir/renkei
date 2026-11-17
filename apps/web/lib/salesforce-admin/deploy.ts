@@ -17,9 +17,11 @@
  *   polls it within a budget — the deploy itself carries on in Salesforce
  *   past that, and a later look picks it up.
  *
- * Tests: sandboxes run none (`NoTestRun`); production is left to
- * Salesforce's default, which runs none for a package without Apex — the
- * only kind these proposals build.
+ * Tests: a change that carries Apex names its test classes, and every
+ * validation and deploy of it runs them (`RunSpecifiedTests`), in a
+ * sandbox as in production — apex-tests.ts says what they must show.
+ * Anything else: sandboxes run none (`NoTestRun`); production is left to
+ * Salesforce's default, which runs none for a package without Apex.
  */
 
 import JSZip from 'jszip';
@@ -92,16 +94,21 @@ export async function startDeploy(
   context: SalesforceCallContext,
   access: SalesforceAccess,
   files: Record<string, string>,
-  options: { checkOnly: boolean }
+  options: { checkOnly: boolean; tests?: readonly string[] }
 ): Promise<DeployAnswer> {
   const zip = await zipFiles(files);
+  const tests = options.tests ?? [];
   const deployOptions = {
     checkOnly: options.checkOnly,
     rollbackOnError: true,
     singlePackage: true,
     ignoreWarnings: false,
     allowMissingFiles: false,
-    ...(access.sandbox ? { testLevel: 'NoTestRun' } : {}),
+    ...(tests.length > 0
+      ? { testLevel: 'RunSpecifiedTests', runTests: [...tests] }
+      : access.sandbox
+        ? { testLevel: 'NoTestRun' }
+        : {}),
   };
   const { body, contentType } = deployMultipart({ deployOptions }, zip);
 

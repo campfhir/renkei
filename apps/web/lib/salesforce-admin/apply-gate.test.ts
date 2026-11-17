@@ -17,7 +17,11 @@ jest.mock('@/lib/mcp-tools/projection', () => ({ buildProjection: jest.fn() }));
 jest.mock('@/lib/salesforce-app', () => ({ listSalesforceConnectors: jest.fn() }));
 
 import { getOrgSettings } from '@renkei/settings';
-import { EMPTY_POLICY, type SalesforceOrg } from '@renkei/connector-salesforce';
+import {
+  EMPTY_POLICY,
+  type ApexTestFailure,
+  type SalesforceOrg,
+} from '@renkei/connector-salesforce';
 import { resolveAudience } from '@/lib/connectors/audience';
 import { resolveConnectorAvailability } from '@/lib/mcp-tools/registry';
 import { buildProjection } from '@/lib/mcp-tools/projection';
@@ -62,7 +66,37 @@ beforeEach(() => {
   jest.mocked(buildProjection).mockReturnValue({ allows: () => true } as never);
 });
 
-const change = { connectorKey: 'uat', validation: passed };
+const fieldsPayload = {
+  files: { 'package.xml': '<Package/>' },
+  members: [{ type: 'CustomField', member: 'Account.Tier__c' }],
+  components: [],
+  preconditions: [],
+  dataSteps: [],
+};
+const change = { connectorKey: 'uat', validation: passed, payload: fieldsPayload };
+
+/** An Apex change: BillingService, tested by BillingServiceTest. */
+const apexPayload = {
+  files: {
+    'package.xml': '<Package/>',
+    'classes/BillingService.cls': 'public class BillingService {}',
+  },
+  members: [{ type: 'ApexClass', member: 'BillingService' }],
+  components: [],
+  preconditions: [],
+  dataSteps: [],
+  apexTests: ['BillingServiceTest'],
+  apexMeasured: [{ kind: 'class', name: 'BillingService' }],
+};
+const tested = (uncovered: number, failures: ApexTestFailure[] = []) => ({
+  ...passed,
+  tests: {
+    run: 3,
+    failures,
+    coverage: [{ name: 'BillingService', type: 'Class', lines: 100, uncovered }],
+    warnings: [],
+  },
+});
 
 it('lets someone with a connected Salesforce Admin connection approve a validated change', async () => {
   expect(await applyGate('operator', ['renkei-operator'], change)).toEqual({ ok: true });
@@ -82,7 +116,51 @@ it('refuses a change Salesforce has not validated', async () => {
   const gate = await applyGate('operator', ['renkei-operator'], {
     connectorKey: 'uat',
     validation: null,
+    payload: fieldsPayload,
   });
   expect(gate.ok).toBe(false);
   expect(gate.ok === false && gate.reason).toMatch(/has not validated/);
+});
+
+describe('an Apex change', () => {
+  it('may deploy once every test passed and the class it changes is 80% covered', async () => {
+    expect(
+      await applyGate('operator', ['renkei-operator'], {
+        connectorKey: 'uat',
+        validation: tested(20),
+        payload: apexPayload,
+      })
+    ).toEqual({ ok: true });
+  });
+
+  it('may not deploy from a sandbox validation Salesforce passed at 79% coverage', async () => {
+    const gate = await applyGate('operator', ['renkei-operator'], {
+      connectorKey: 'uat',
+      validation: tested(21),
+      payload: apexPayload,
+    });
+    expect(gate.ok === false && gate.reason).toContain(
+      'BillingService (class) is 79% covered (79 of 100 lines); it needs 80%.'
+    );
+  });
+
+  it('may not deploy with a failing test, or when no test results were kept', async () => {
+    const failing = await applyGate('operator', ['renkei-operator'], {
+      connectorKey: 'uat',
+      validation: tested(0, [
+        { className: 'BillingServiceTest', method: 'taxes', message: 'boom' },
+      ]),
+      payload: apexPayload,
+    });
+    expect(failing.ok === false && failing.reason).toContain(
+      'BillingServiceTest.taxes failed: boom'
+    );
+
+    const untested = await applyGate('operator', ['renkei-operator'], {
+      connectorKey: 'uat',
+      validation: passed,
+      payload: apexPayload,
+    });
+    expect(untested.ok === false && untested.reason).toContain('No tests ran');
+  });
 });

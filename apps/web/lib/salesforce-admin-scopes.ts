@@ -16,7 +16,9 @@
  * would have every existing connection reconnect to get them. User access — assigning permission sets to people — is
  * off by default: it changes who can do what, not how the org is built. So
  * is security — system permissions, login hours and IP ranges, new
- * profiles: who can administer the org, and who can sign in.
+ * profiles: who can administer the org, and who can sign in. And so is
+ * Apex — code that runs in the org as whoever triggers it — which a
+ * connector admin turns on for the connector before anyone can choose it.
  */
 
 import type { ScopeGroup, ScopeOption } from '@/lib/scope-catalog';
@@ -122,6 +124,24 @@ export const SALESFORCE_ADMIN_SCOPE_OPTIONS: ScopeOption[] = [
     userHint:
       'Propose system permissions, a profile’s login hours and IP ranges, and new profiles. Off unless you choose it.',
     group: 'access',
+    defaultChecked: false,
+  },
+  {
+    id: 'sfa-apex',
+    scopes: ['sfa-apex'],
+    label: 'Write and deploy Apex from code projects',
+    hint:
+      'code_salesforce_retrieve_apex, code_salesforce_test_apex, code_salesforce_propose_apex — ' +
+      'in a code project, pull Apex classes and triggers from the org into the repository, run ' +
+      'their tests in the org (a validation deploy that changes nothing), and propose the ' +
+      'repository’s classes and triggers as a change request: new, changed, a trigger switched ' +
+      'off, or a class deleted. Every validation and deploy runs the named test classes, in a ' +
+      'sandbox as in production, and a change deploys only when every test passes and each ' +
+      'class and trigger it changes is at least 80% covered. Off by default: Apex runs in the ' +
+      'org as whoever triggers it.',
+    userHint:
+      'Work on Apex classes and triggers in a code project and propose them as changes, which deploy only once every test passes with 80% coverage. Off unless you choose it.',
+    group: 'build',
     defaultChecked: false,
   },
 ];

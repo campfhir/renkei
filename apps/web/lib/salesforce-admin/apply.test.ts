@@ -27,6 +27,7 @@ import type { SalesforceAccess } from '@/lib/mcp-tools/salesforce/client';
 import { applyChangeRequest, GROUP_UPDATING_WAITS_MS, refreshApplying } from './apply';
 import type { ChangeRequest } from './change-requests';
 import { applyScopesFor, readMetadataPayload, type MetadataPayload } from './plan';
+import { apexFingerprint } from './apex';
 
 const store = jest.requireMock<{ finishChangeRequest: jest.Mock; recordDeployStarted: jest.Mock }>(
   './change-requests'
@@ -47,6 +48,8 @@ let grantFails: boolean;
 /** How many more grants Salesforce refuses because the set's permission set group is recalculating. */
 let groupBusyFor: number;
 let existingAccess: boolean;
+/** BillingService's source in the org now. */
+let apexBodyNow: string;
 let requests: { method: string; path: string; body: unknown }[];
 
 function answer(status: number, body: unknown): Response {
@@ -202,6 +205,24 @@ global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       ? answer(400, [{ errorCode: 'INVALID_FIELD', message: 'Field is required' }])
       : answer(201, { id: '01k000000000001AAA', success: true });
   }
+  if (method === 'GET' && /FROM ApexClass WHERE Name = 'BillingService'/.test(q)) {
+    return answer(200, {
+      totalSize: 1,
+      done: true,
+      records: [
+        {
+          Id: '01p000000000001AAA',
+          Name: 'BillingService',
+          ApiVersion: 62,
+          Status: 'Active',
+          Body: apexBodyNow,
+        },
+      ],
+    });
+  }
+  if (method === 'GET' && /FROM ApexClass WHERE Name = /.test(q)) {
+    return answer(200, { totalSize: 0, done: true, records: [] });
+  }
   return answer(404, [
     { errorCode: 'NOT_FOUND', message: `no stub for ${method} ${url.pathname}` },
   ]);
@@ -285,6 +306,7 @@ beforeEach(() => {
   grantFails = false;
   groupBusyFor = 0;
   existingAccess = false;
+  apexBodyNow = 'public class BillingService {}';
 });
 
 describe('applyChangeRequest', () => {
@@ -804,6 +826,58 @@ describe('applyChangeRequest', () => {
     const later = { ...change(), results: { deployId: QUICK, quick: true, operations: [] } };
     expect(await refreshApplying(context, access, later)).toBe(true);
     expect(finished()).toMatchObject({ status: 'applied' });
+  });
+});
+
+describe('an Apex change', () => {
+  const apexPayload: MetadataPayload = {
+    files: {
+      'package.xml': '<Package/>',
+      'classes/BillingService.cls': 'public class BillingService { /* new */ }',
+      'classes/BillingService.cls-meta.xml': '<ApexClass/>',
+    },
+    members: [{ type: 'ApexClass', member: 'BillingService' }],
+    components: [],
+    preconditions: [
+      {
+        kind: 'apex-unchanged',
+        type: 'class',
+        name: 'BillingService',
+        fingerprint: apexFingerprint('public class BillingService {}', 'Active'),
+      },
+      { kind: 'apex-absent', type: 'class', name: 'BillingServiceTest' },
+    ],
+    dataSteps: [],
+    apexTests: ['BillingServiceTest'],
+    apexMeasured: [{ kind: 'class', name: 'BillingService' }],
+  };
+  const apexChange = (): ChangeRequest => ({ ...change(), kind: 'apex', payload: apexPayload });
+
+  it('deploys in full running its named tests when the validation does not qualify for a quick deploy', async () => {
+    quickQualifies = false;
+    const outcome = await applyChangeRequest(context, access, apexChange(), 'ada');
+    expect(outcome.status).toBe('applied');
+    const full = requests.find(
+      (r) => r.method === 'POST' && r.path === `${V}/metadata/deployRequest`
+    );
+    const text = Buffer.from(full?.body as Uint8Array).toString('latin1');
+    // In a sandbox too, where nothing else runs tests.
+    expect(text).toContain('"testLevel":"RunSpecifiedTests","runTests":["BillingServiceTest"]');
+  });
+
+  it('stops before deploying when someone changed the class in the org since it was proposed', async () => {
+    apexBodyNow = 'public class BillingService { /* edited in Setup */ }';
+    const outcome = await applyChangeRequest(context, access, apexChange(), 'ada');
+    expect(outcome.status).toBe('failed');
+    expect(finished()?.results.operations[0].detail).toContain(
+      'The Apex class BillingService was changed since this was proposed'
+    );
+    expect(requests.some((r) => r.path.includes('/metadata/'))).toBe(false);
+  });
+
+  it('keeps its tests, what they must cover and its checks when stored and read back', () => {
+    expect(readMetadataPayload(JSON.parse(JSON.stringify(apexPayload)))).toEqual(apexPayload);
+    expect(applyScopesFor('apex')).toEqual(['sfa-apex']);
   });
 });
 
