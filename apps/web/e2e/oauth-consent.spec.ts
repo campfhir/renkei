@@ -147,8 +147,11 @@ test('an MCP client must be allowed on the consent page before it gets a code @s
   await signIn(operatorPage, operator);
   const audit = await operatorPage.newPage();
   await audit.goto('/admin/audit');
-  await expect(audit.getByText(`${personName} oauth.consent_denied`)).toBeVisible();
-  await expect(audit.getByText(`${personName} oauth.consent_granted`).first()).toBeVisible();
+  // The list streams in: until it is swapped into place the page also holds
+  // a hidden copy of each row outside main (AGENTS.md, "Pitfalls").
+  const trail = audit.getByRole('main');
+  await expect(trail.getByText(`${personName} oauth.consent_denied`)).toBeVisible();
+  await expect(trail.getByText(`${personName} oauth.consent_granted`).first()).toBeVisible();
   await operatorPage.close();
 
   // Phone width: the same page, buttons stacked, nothing clipped.
