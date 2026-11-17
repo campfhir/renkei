@@ -43,6 +43,8 @@ export {
   exposeSandboxPort,
   sandboxOrchestratorConfig,
   sandboxOrchestratorStatus,
+  prepareSandboxImage,
+  type SandboxImageStatus,
   sandboxRouteKey,
   unexposeSandboxPort,
   type SandboxEndpoint,
@@ -52,6 +54,7 @@ export {
 export {
   AZURE_CLIENT_SECRET_KEY,
   DEFAULT_ORCHESTRATOR_SETTINGS,
+  DEFAULT_SANDBOX_IMAGE_REPOSITORY,
   SANDBOX_ORCHESTRATOR_CONNECTOR,
   envSecretKey,
   mergeOrchestratorSecrets,

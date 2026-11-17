@@ -120,8 +120,13 @@ GIT_COMMIT="$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unkn
 # The version the web app shows beside the commit (docker/Dockerfile's
 # APP_VERSION build argument; the image sets no npm lifecycle variables).
 APP_VERSION="$(node -p "require('$ROOT_DIR/apps/web/package.json').version" 2>/dev/null || echo dev)"
+# The full commit, for the orchestrator to have its sandbox image built from
+# (docker/Dockerfile's GIT_SHA). Left empty for a dirty tree: no published
+# image matches it, so the orchestrator says to pin a disk image instead.
+GIT_SHA="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
 if ! git -C "$ROOT_DIR" diff --quiet 2>/dev/null; then
   GIT_COMMIT="${GIT_COMMIT}-dirty"
+  GIT_SHA=""
 fi
 echo "Commit: $GIT_COMMIT"
 
@@ -312,6 +317,8 @@ build_target() {
         --platform "$BUILD_PLATFORM" \
         --build-arg BUILD_ENV="$BUILD_ENV" \
         --build-arg GIT_COMMIT="$GIT_COMMIT" \
+      --build-arg GIT_SHA="$GIT_SHA" \
+        --build-arg GIT_SHA="$GIT_SHA" \
         --build-arg APP_VERSION="$APP_VERSION" \
         "${tag_args[@]}" \
         --push \
@@ -323,6 +330,8 @@ build_target() {
         --platform "$BUILD_PLATFORM" \
         --build-arg BUILD_ENV="$BUILD_ENV" \
         --build-arg GIT_COMMIT="$GIT_COMMIT" \
+      --build-arg GIT_SHA="$GIT_SHA" \
+        --build-arg GIT_SHA="$GIT_SHA" \
         --build-arg APP_VERSION="$APP_VERSION" \
         "${tag_args[@]}" \
         --load \
@@ -334,6 +343,7 @@ build_target() {
       --target "$target" \
       --build-arg BUILD_ENV="$BUILD_ENV" \
       --build-arg GIT_COMMIT="$GIT_COMMIT" \
+      --build-arg GIT_SHA="$GIT_SHA" \
       --build-arg APP_VERSION="$APP_VERSION" \
       "${tag_args[@]}" \
       "$ROOT_DIR"

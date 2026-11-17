@@ -389,7 +389,8 @@ In the deploy stack it is the `orchestrator` compose profile
 
 In Azure, once:
 
-1. Create a sandbox group and import the sandbox image as a disk image.
+1. Create a sandbox group. The disk image sandboxes boot from is the
+   orchestrator's to make (below); nothing is imported by hand.
 2. Give the orchestrator's identity — its managed identity, or a service
    principal — the **Container Apps SandboxGroup Data Owner** role on the
    group.
@@ -398,10 +399,7 @@ In Azure, once:
    deployment: not the database.
 
 Then on Organization → Sandboxes: the subscription, resource group,
-sandbox group and region; the disk image by its id (the GUID the
-portal shows for an imported image: the platform takes the group's own
-images by id and only Microsoft's public ones by name) and the VNet
-connection by name; the orchestrator's address as a sandbox reaches it; the service
+sandbox group and region; the VNet connection by name; the orchestrator's address as a sandbox reaches it; the service
 principal's ids and secret (or neither, for a managed identity); the
 identity allowed to call a worker; and the secrets a worker is started
 with. Test connection, then Save.
@@ -410,6 +408,27 @@ One step may still need the portal: the preview SDK sets a port's
 allowed emails but not the tenant id that scripted (bearer) calls
 require. If the worker's port refuses the service identity, switch
 “Worker port” to **Sandbox key only** while that is sorted out.
+
+**The disk image matches the orchestrator's build.** A sandbox's worker
+and the orchestrator speak a protocol of their own (the sealed boot, the
+data store calls), so a sandbox must run the orchestrator's build: an
+older image boots, fetches its environment, and then fails on an answer
+it cannot read. With the page's Disk image left blank, the orchestrator
+has the group build one from `<image repository>:<its own commit>` (the
+tag CI publishes; the repository defaults to the published sandbox image),
+named `renkei-sandbox-<commit>`, and makes sandboxes only once it is Ready
+(`packages/sandbox-orchestrator` `disk-image.ts`, `ensureDiskImage`). That
+runs on the orchestrator's start when a setup is stored, when the setup is
+first saved or changed, and when an operator asks for it again after a
+failed build (the page's "Prepare the disk image again", `POST /v1/image`);
+Test connection starts or joins the same preparation and runs its test
+sandbox on the result. A Ready image for the build is reused, so a restart
+imports nothing; while one builds, callers are told the sandbox is starting
+and `/health` says where it is; a failed build is never stood in for by an
+older image. The orchestrator learns its commit from `GIT_SHA`, which CI
+and `scripts/docker-build.sh` pass into its image. A disk image id entered
+on the page pins that image whatever the build (the platform takes a
+group's own images by id, Microsoft's public ones by name).
 
 **What has been run against a real sandbox group** (westus2, the
 public `ubuntu` image, the smallest size), through this provider:

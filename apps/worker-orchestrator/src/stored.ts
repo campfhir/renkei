@@ -18,8 +18,12 @@ import {
   DockerSandboxProvider,
   azureIngressToken,
   createAzureSandboxClient,
+  diskImagePlanFor,
+  ensureDiskImage,
   trySandbox,
   type AzureIdentity,
+  type DiskImagePlan,
+  type DiskImagePreparer,
   type TrialProbe,
   type TrialSandboxes,
   type AzureSandboxClient,
@@ -59,10 +63,29 @@ function identityOf(
   return tenantId && clientId && clientSecret ? { tenantId, clientId, clientSecret } : null;
 }
 
-async function providerOf(
+async function azureClientOf(
   settings: SandboxOrchestratorSettings,
   secrets: Record<string, string>,
   deps: BuildDeps
+): Promise<AzureSandboxClient> {
+  const azure = settings.azure;
+  return deps.azureClient
+    ? await deps.azureClient(azure)
+    : await createAzureSandboxClient({
+        subscriptionId: azure.subscriptionId,
+        resourceGroup: azure.resourceGroup,
+        sandboxGroup: azure.sandboxGroup,
+        region: azure.region,
+        endpoint: azure.endpoint,
+        identity: identityOf(settings, secrets),
+      });
+}
+
+async function providerOf(
+  settings: SandboxOrchestratorSettings,
+  secrets: Record<string, string>,
+  deps: BuildDeps,
+  diskImage: string
 ): Promise<SandboxProvider> {
   if (settings.provider === 'docker') {
     const docker = settings.docker;
@@ -83,18 +106,9 @@ async function providerOf(
   }
   const azure = settings.azure;
   const identity = identityOf(settings, secrets);
-  const client = deps.azureClient
-    ? await deps.azureClient(azure)
-    : await createAzureSandboxClient({
-        subscriptionId: azure.subscriptionId,
-        resourceGroup: azure.resourceGroup,
-        sandboxGroup: azure.sandboxGroup,
-        region: azure.region,
-        endpoint: azure.endpoint,
-        identity,
-      });
+  const client = await azureClientOf(settings, secrets, deps);
   return new AzureSandboxProvider({
-    diskImage: azure.diskImage,
+    diskImage,
     cpu: azure.cpu,
     memory: azure.memory,
     disk: azure.disk,
@@ -116,7 +130,9 @@ async function providerOf(
  */
 export async function buildFromStored(
   row: StoredRow | null,
-  deps: BuildDeps = {}
+  deps: BuildDeps = {},
+  /** The disk image prepared for this build, where the setup leaves it to the orchestrator. */
+  preparedDiskImage: string | null = null
 ): Promise<BuiltOrchestration | string> {
   if (!row) {
     return 'sandboxes are not set up yet: an operator configures them under Organization → Sandboxes';
@@ -128,7 +144,12 @@ export async function buildFromStored(
     return `the stored sandbox configuration is not usable: ${checked}`;
   try {
     return {
-      provider: await providerOf(settings, row.secrets, deps),
+      provider: await providerOf(
+        settings,
+        row.secrets,
+        deps,
+        preparedDiskImage ?? settings.azure.diskImage
+      ),
       env: orchestratorTemplateEnv(settings, row.secrets),
       idleSuspendMs: settings.idleSuspendMinutes * 60_000,
       idleDeleteMs: settings.idleEvictHours * 60 * 60_000,
@@ -137,6 +158,81 @@ export async function buildFromStored(
   } catch (error) {
     return `the sandbox provider could not be set up: ${error instanceof Error ? error.message : String(error)}`;
   }
+}
+
+/** What preparing a disk image for this build needs. */
+export interface ImageDeps {
+  preparer: DiskImagePreparer;
+  /** This orchestrator's full commit (GIT_SHA); null when the build does not know it. */
+  commit: string | null;
+  /** How long Test connection waits on a preparation before saying it is still under way. */
+  testWaitMs?: number;
+  /** How often a building image is looked at again. */
+  pollMs?: number;
+}
+
+/** The disk image an Azure setup leaves to the orchestrator: which one, and its key among preparations. */
+export interface AutomaticImage {
+  key: string;
+  plan: DiskImagePlan;
+}
+
+/**
+ * Whether this setup leaves the disk image to the orchestrator — Azure,
+ * with no disk image pinned — and if so the one to prepare for this
+ * build; null when it does not; a sentence when it does but cannot be
+ * done (a build that does not know its commit).
+ */
+export function automaticImageOf(
+  row: StoredRow,
+  commit: string | null
+): AutomaticImage | string | null {
+  const settings = orchestratorSettingsOfRow(row.settings);
+  if (settings.provider !== 'azure' || settings.azure.diskImage) return null;
+  if (!commit) {
+    return 'this orchestrator was built without its commit (GIT_SHA), so it cannot have a disk image built to match it: enter a disk image id on Organization → Sandboxes to pin one';
+  }
+  const plan = diskImagePlanFor(settings.azure.imageRepository, commit);
+  const azure = settings.azure;
+  return {
+    key: `${azure.subscriptionId}/${azure.resourceGroup}/${azure.sandboxGroup}|${plan.base}`,
+    plan,
+  };
+}
+
+/**
+ * Prepare (or join the preparation of) this setup's disk image: the one
+ * way it happens, whether the orchestrator is starting, the setup was
+ * saved, or an operator asked for it again.
+ */
+export function startDiskImage(
+  row: StoredRow,
+  image: AutomaticImage,
+  preparer: DiskImagePreparer,
+  deps: BuildDeps = {},
+  options: { again?: boolean; pollMs?: number } = {}
+): Promise<string> {
+  const settings = orchestratorSettingsOfRow(row.settings);
+  return preparer.prepare(
+    image.key,
+    image.plan,
+    async (onProgress) => {
+      const client = await azureClientOf(settings, row.secrets, deps);
+      if (!client.diskImages)
+        throw new Error('this sandbox group cannot be asked to build disk images');
+      return ensureDiskImage({
+        client: client.diskImages,
+        plan: image.plan,
+        ...(onProgress ? { onProgress } : {}),
+        ...(options.pollMs ? { pollMs: options.pollMs } : {}),
+      });
+    },
+    options
+  );
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** What making a test sandbox needs, besides the setup being tried. */
@@ -162,9 +258,10 @@ export interface TrialDeps {
 export async function checkStored(
   row: StoredRow,
   deps: BuildDeps = {},
-  trial?: TrialDeps
+  trial?: TrialDeps,
+  image?: ImageDeps
 ): Promise<{ ok: boolean; detail: string }> {
-  const built = await buildFromStored({ ...row, enabled: true }, deps);
+  let built = await buildFromStored({ ...row, enabled: true }, deps);
   if (typeof built === 'string') return { ok: false, detail: built };
   const settings = orchestratorSettingsOfRow(row.settings);
   const where =
@@ -190,16 +287,55 @@ export async function checkStored(
     }
   }
   if (!trial) return { ok: true, detail: `Reached ${where}. No sandbox was made.` };
+
+  // Where the setup leaves the disk image to the orchestrator, the test
+  // sandbox boots from the one prepared for this build: started (or
+  // joined) here exactly as the orchestrator itself would.
+  let source =
+    settings.provider === 'azure'
+      ? `the disk image "${settings.azure.diskImage}" in ${settings.azure.sandboxGroup}`
+      : `the image ${settings.docker.image}`;
+  const automatic = automaticImageOf(row, image?.commit ?? null);
+  if (typeof automatic === 'string')
+    return { ok: false, detail: `Reached ${where}, but ${automatic}.` };
+  if (automatic) {
+    if (!image)
+      return { ok: false, detail: `Reached ${where}, but no disk image can be prepared here.` };
+    const preparing = startDiskImage(row, automatic, image.preparer, deps, {
+      ...(image.pollMs ? { pollMs: image.pollMs } : {}),
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const waited = await Promise.race([
+      preparing.then(
+        (id) => ({ id }),
+        (error: unknown) => ({ error: messageOf(error) })
+      ),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), image.testWaitMs ?? 60_000);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    if (waited === null) {
+      const status = image.preparer.status(automatic.key);
+      return {
+        ok: false,
+        detail: `Reached ${where}. The disk image for build ${automatic.plan.build} is being built from ${automatic.plan.base}${
+          status?.detail ? ` (the group says: ${status.detail})` : ''
+        }; this takes a few minutes the first time. Press Test connection again once it is ready.`,
+      };
+    }
+    if ('error' in waited) return { ok: false, detail: `Reached ${where}, but ${waited.error}.` };
+    built = await buildFromStored({ ...row, enabled: true }, deps, waited.id);
+    if (typeof built === 'string') return { ok: false, detail: built };
+    source = `the disk image built for build ${automatic.plan.build} ("${waited.id}") in ${settings.azure.sandboxGroup}`;
+  }
+
   const tried = await trySandbox({
     provider: built.provider,
     trials: trial.trials,
     masterKey: trial.masterKey,
     callbackUrl: built.callbackUrl,
     env: built.env,
-    source:
-      settings.provider === 'azure'
-        ? `the disk image "${settings.azure.diskImage}" in ${settings.azure.sandboxGroup}`
-        : `the image ${settings.docker.image}`,
+    source,
     newId: trial.newId,
     ...(trial.timeoutMs !== undefined ? { timeoutMs: trial.timeoutMs } : {}),
     ...(trial.now ? { now: trial.now } : {}),

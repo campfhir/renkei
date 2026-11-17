@@ -771,6 +771,13 @@ orchestrator is the only container holding the engine's socket; no
 sandbox does. Code project services run inside each sandbox on an engine
 of its own (Podman) — on Azure as they are, on this host's Docker only
 with “Run sandboxes privileged” (a developer's machine).
+On Azure, leave the page's **Disk image** blank: the orchestrator has the
+sandbox group build the sandbox image for its own release (pulled from
+`docker.io/scotteremiaroden/renkei-sandbox:<commit>`, or the repository the
+page names) and makes sandboxes once it is ready — a few minutes after the
+first save and after each upgrade, nothing on a restart. Until then a call
+is told the sandbox is starting. A sandbox must run the orchestrator's
+release; an image imported by hand from another one fails after it boots.
 **Test connection** on that page makes a real test sandbox from the setup
 and waits up to five minutes for its worker to answer before removing it;
 a reverse proxy in front of the web app needs a read timeout longer than

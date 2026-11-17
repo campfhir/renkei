@@ -15,7 +15,10 @@
  *     a value typed;
  *   - what Save and Test send;
  *   - what a save, a test and a failure leave on screen, and the badge
- *     and the line that say what the orchestrator is doing.
+ *     and the line that say what the orchestrator is doing;
+ *   - the disk image: left to the orchestrator when none is pinned (the
+ *     image repository is then asked for), the line that says which build
+ *     sandboxes boot from, and preparing it again after a failed build.
  *
  * What makes a setup VALID is not decided here: the server checks it
  * (@renkei/sandbox-client orchestrator-config.ts) and its sentence is
@@ -43,7 +46,9 @@ export interface SandboxesDraft {
     sandboxGroup: string;
     region: string;
     endpoint: string;
+    /** Blank: the orchestrator has the image for its build made from `imageRepository`. */
     diskImage: string;
+    imageRepository: string;
     cpu: string;
     memory: string;
     disk: string;
@@ -77,7 +82,7 @@ export interface SandboxesState {
   /** The setup as last read or saved; null when it could not be read. */
   view: SandboxesView | null;
   draft: SandboxesDraft;
-  busy: 'save' | 'test' | null;
+  busy: 'save' | 'test' | 'image' | null;
   notice: string | null;
   error: string | null;
 }
@@ -90,8 +95,10 @@ export type SandboxesAction =
   | { type: 'envNamed'; index: number; name: string }
   | { type: 'envValued'; index: number; value: string }
   | { type: 'envRemoved'; index: number }
-  | { type: 'sent'; what: 'save' | 'test' }
+  | { type: 'sent'; what: 'save' | 'test' | 'image' }
   | { type: 'saved'; view: SandboxesView }
+  /** The orchestrator was asked to prepare the disk image again; the setup as it reads now. */
+  | { type: 'imagePrepared'; view: SandboxesView }
   | { type: 'tested'; ok: boolean; detail: string }
   | { type: 'failed'; message: string };
 
@@ -124,6 +131,7 @@ export function draftOf(view: SandboxesView | null): SandboxesDraft {
       region: azure?.region ?? '',
       endpoint: azure?.endpoint ?? '',
       diskImage: azure?.diskImage ?? '',
+      imageRepository: azure?.imageRepository ?? '',
       cpu: azure?.cpu ?? '2000m',
       memory: azure?.memory ?? '4096Mi',
       disk: azure?.disk ?? '40Gi',
@@ -207,6 +215,15 @@ export function reducer(state: SandboxesState, action: SandboxesAction): Sandbox
         notice: 'Saved.',
         error: null,
       };
+    case 'imagePrepared':
+      // Only what the orchestrator says changes: what is being typed stays.
+      return {
+        ...state,
+        view: action.view,
+        busy: null,
+        notice: null,
+        error: null,
+      };
     case 'tested':
       return {
         ...state,
@@ -230,6 +247,33 @@ export function saveLabel(state: SandboxesState): string {
 
 export function testLabel(state: SandboxesState): string {
   return state.busy === 'test' ? 'Starting a test sandbox…' : 'Test connection';
+}
+
+/** No disk image pinned: the orchestrator makes the one for its build, from the repository asked for. */
+export function leavesImageToOrchestrator(state: SandboxesState): boolean {
+  return state.draft.provider === 'azure' && state.draft.azure.diskImage.trim() === '';
+}
+
+/**
+ * The line about the disk image when the orchestrator made it and
+ * sandboxes boot from it; null otherwise (while it is prepared, or when
+ * it failed, the orchestrator's own line says so).
+ */
+export function imageLine(state: SandboxesState): string | null {
+  const image = state.view?.orchestrator.image;
+  if (!image || image.state !== 'ready') return null;
+  return `Sandboxes boot from the disk image built for build ${image.build}${
+    image.diskImageId ? ` (${image.diskImageId})` : ''
+  }, from ${image.base}.`;
+}
+
+/** After a failed build, an operator may have it prepared again — one thing at a time. */
+export function canPrepareImage(state: SandboxesState): boolean {
+  return state.busy === null && state.view?.orchestrator.image?.state === 'failed';
+}
+
+export function prepareImageLabel(state: SandboxesState): string {
+  return state.busy === 'image' ? 'Asking…' : 'Prepare the disk image again';
 }
 
 /** A service principal is being named: its client secret is then asked for. */

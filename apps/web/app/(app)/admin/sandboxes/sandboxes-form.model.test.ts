@@ -3,11 +3,15 @@ import {
   SUGGESTED_ENV,
   asksEntraAllowed,
   badge,
+  canPrepareImage,
   canSubmit,
   clientSecretPlaceholder,
   envPlaceholder,
+  imageLine,
   init,
+  leavesImageToOrchestrator,
   orchestratorLine,
+  prepareImageLabel,
   reducer,
   requestBody,
   saveLabel,
@@ -34,6 +38,7 @@ const STORED: SandboxesView = {
       region: 'eastus2',
       endpoint: null,
       diskImage: 'renkei-sandbox',
+      imageRepository: 'docker.io/scotteremiaroden/renkei-sandbox',
       cpu: '2000m',
       memory: '4096Mi',
       disk: '40Gi',
@@ -263,5 +268,90 @@ describe('the line that says what the orchestrator is doing', () => {
     const none = line({ wired: false, reachable: false, provider: null, problem: null });
     expect(none.tone).toBe('off');
     expect(none.text).toMatch(/runs no sandbox orchestrator/);
+  });
+});
+
+describe('the disk image sandboxes boot from', () => {
+  const IMAGE = {
+    build: '12112db',
+    base: 'docker.io/scotteremiaroden/renkei-sandbox:12112db66f6bdd6fd42846039b8b9e9432136eb7',
+    diskImageId: 'img-1',
+  };
+  const automatic = (
+    image: Record<string, unknown> | null,
+    problem: string | null = null
+  ): SandboxesView => ({
+    ...STORED,
+    settings: { ...STORED.settings, azure: { ...STORED.settings.azure, diskImage: '' } },
+    orchestrator: {
+      ...WIRED,
+      problem,
+      image: image === null ? null : { ...IMAGE, detail: null, state: 'ready', ...image },
+    },
+  });
+
+  it('is left to the orchestrator when none is pinned, and then asks where the sandbox image comes from', () => {
+    const state = init(automatic({}));
+    expect(leavesImageToOrchestrator(state)).toBe(true);
+    expect(state.draft.azure.imageRepository).toBe('docker.io/scotteremiaroden/renkei-sandbox');
+    expect(leavesImageToOrchestrator(init(STORED))).toBe(false);
+    const pinned = run(init(automatic({})), {
+      type: 'setAzure',
+      patch: { diskImage: 'img-pinned' },
+    });
+    expect(leavesImageToOrchestrator(pinned)).toBe(false);
+    expect(requestBody(pinned).azure).toMatchObject({ diskImage: 'img-pinned' });
+  });
+
+  it('says which release sandboxes boot from once it is ready', () => {
+    expect(imageLine(init(automatic({})))).toBe(
+      `Sandboxes boot from the disk image built for build 12112db (img-1), from ${IMAGE.base}.`
+    );
+    // While it is prepared, or when it failed, the orchestrator's own line says so instead.
+    expect(imageLine(init(automatic({ state: 'preparing' })))).toBeNull();
+    expect(imageLine(init(STORED))).toBeNull();
+  });
+
+  it('can be prepared again only after a failed build, one thing at a time', () => {
+    const failed = init(
+      automatic(
+        { state: 'failed', detail: 'manifest unknown' },
+        'the disk image for build 12112db could not be prepared — manifest unknown'
+      )
+    );
+    expect(canPrepareImage(failed)).toBe(true);
+    expect(orchestratorLine(failed)).toEqual({
+      tone: 'warn',
+      text: 'No sandbox can be made: the disk image for build 12112db could not be prepared — manifest unknown.',
+    });
+    expect(canPrepareImage(init(automatic({})))).toBe(false);
+    expect(canPrepareImage(init(automatic({ state: 'preparing' })))).toBe(false);
+
+    const asking = run(failed, { type: 'sent', what: 'image' });
+    expect(prepareImageLabel(asking)).toBe('Asking…');
+    expect(canPrepareImage(asking)).toBe(false);
+    expect(canSubmit(asking)).toBe(false);
+  });
+
+  it('prepared again shows what the orchestrator says now, and keeps what was being typed', () => {
+    const failed = init(
+      automatic({ state: 'failed', detail: 'manifest unknown' }, 'could not be prepared')
+    );
+    const typed = run(
+      failed,
+      { type: 'setAzure', patch: { cpu: '4000m' } },
+      { type: 'sent', what: 'image' }
+    );
+    const after = run(typed, {
+      type: 'imagePrepared',
+      view: automatic(
+        { state: 'preparing', detail: 'Building' },
+        'the disk image for build 12112db is being prepared'
+      ),
+    });
+    expect(after.busy).toBeNull();
+    expect(after.draft.azure.cpu).toBe('4000m');
+    expect(after.view?.orchestrator.image?.state).toBe('preparing');
+    expect(canPrepareImage(after)).toBe(false);
   });
 });

@@ -39,8 +39,16 @@ export interface AzureSandboxSettings {
   region: string;
   /** The data-plane endpoint, when it is not the region's own. */
   endpoint: string | null;
-  /** The disk image sandboxes boot from: the sandbox image, imported into the group. */
+  /**
+   * The disk image sandboxes boot from, by its id in the group — or blank,
+   * the usual case: the orchestrator then has the group build one from
+   * `imageRepository` at its own commit and uses that, so a sandbox always
+   * runs the orchestrator's build (sandbox-orchestrator disk-image.ts).
+   * An id pins one image whatever the orchestrator's build.
+   */
   diskImage: string;
+  /** Where the group pulls the sandbox image from when `diskImage` is blank; the tag is the commit. */
+  imageRepository: string;
   cpu: string;
   memory: string;
   disk: string;
@@ -102,6 +110,9 @@ export function envSecretKey(name: string): string {
 
 export const AZURE_CLIENT_SECRET_KEY = 'azureClientSecret';
 
+/** The repository the sandbox image is pulled from unless the setup names another. */
+export const DEFAULT_SANDBOX_IMAGE_REPOSITORY = 'docker.io/scotteremiaroden/renkei-sandbox';
+
 export const DEFAULT_ORCHESTRATOR_SETTINGS: SandboxOrchestratorSettings = {
   provider: 'azure',
   callbackUrl: '',
@@ -114,6 +125,7 @@ export const DEFAULT_ORCHESTRATOR_SETTINGS: SandboxOrchestratorSettings = {
     region: '',
     endpoint: null,
     diskImage: '',
+    imageRepository: DEFAULT_SANDBOX_IMAGE_REPOSITORY,
     cpu: '2000m',
     memory: '4096Mi',
     disk: '40Gi',
@@ -169,6 +181,26 @@ const CPU = /^\d{2,6}m$/;
 const SIZE = /^\d{1,6}(Mi|Gi)$/;
 const CIDR = /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/;
 const IDENTITY = /^[^\s@,]+@[^\s@,]+$/;
+/** A registry host, with its port when it has one. */
+const IMAGE_HOST = /^[a-z0-9][a-z0-9.-]{0,252}(:\d{1,5})?$/;
+/** One path component of a repository. */
+const IMAGE_PATH_PART = /^[a-z0-9][a-z0-9._-]{0,127}$/;
+
+/**
+ * A registry path without a tag or digest — the commit is the tag — such
+ * as docker.io/acme/renkei-sandbox. Checked part by part with patterns
+ * that cannot backtrack, since the value comes from a form.
+ */
+function isImageRepository(value: string): boolean {
+  if (value.length > 255) return false;
+  const [host, ...path] = value.split('/');
+  return (
+    host !== undefined &&
+    IMAGE_HOST.test(host) &&
+    path.length > 0 &&
+    path.every((part) => IMAGE_PATH_PART.test(part))
+  );
+}
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -210,6 +242,7 @@ export function orchestratorSettingsOfRow(
       region: text(azure.region),
       endpoint: orNull(azure.endpoint),
       diskImage: text(azure.diskImage),
+      imageRepository: text(azure.imageRepository) || d.azure.imageRepository,
       cpu: text(azure.cpu) || d.azure.cpu,
       memory: text(azure.memory) || d.azure.memory,
       disk: text(azure.disk) || d.azure.disk,
@@ -277,7 +310,12 @@ export function parseOrchestratorInput(body: unknown): OrchestratorInput | strin
     if (azure.endpoint && !/^https:\/\/[^\s/]+/.test(azure.endpoint)) {
       return 'The endpoint must be an https URL.';
     }
-    if (!AZURE_NAME.test(azure.diskImage)) return 'Enter the disk image sandboxes start from.';
+    if (azure.diskImage && !AZURE_NAME.test(azure.diskImage)) {
+      return 'The disk image is its id in the sandbox group; leave it blank to have one built for this release.';
+    }
+    if (!azure.diskImage && !isImageRepository(azure.imageRepository)) {
+      return 'The image repository is a container image without its tag, such as docker.io/acme/renkei-sandbox.';
+    }
     if (!CPU.test(azure.cpu)) return 'CPU is in millicores, such as 2000m.';
     if (!SIZE.test(azure.memory)) return 'Memory is a size such as 4096Mi or 4Gi.';
     if (!SIZE.test(azure.disk)) return 'Disk is a size such as 40Gi.';
