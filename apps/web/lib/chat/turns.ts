@@ -66,6 +66,8 @@ export interface TurnRunnerContext {
   timeZone?: string | null;
   /** Where the person reached the app when they sent it (lib/get-origin.ts), for links a tool hands back. */
   origin?: string | null;
+  /** The agent the person addressed the message to (agent-asks.ts), when they did. */
+  addressedAgentId?: string | null;
 }
 
 export function parseTurnRunnerContext(raw: unknown): TurnRunnerContext | null {
@@ -77,6 +79,8 @@ export function parseTurnRunnerContext(raw: unknown): TurnRunnerContext | null {
     voice: record.voice === true,
     timeZone: typeof record.timeZone === 'string' ? record.timeZone : null,
     origin: typeof record.origin === 'string' ? record.origin : null,
+    addressedAgentId:
+      typeof record.addressedAgentId === 'string' ? record.addressedAgentId : null,
   };
 }
 

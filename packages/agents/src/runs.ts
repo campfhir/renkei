@@ -40,7 +40,8 @@ export interface CreateAgentRunInput {
   /** Resolved model recorded for history; null = org default at claim time. */
   llmModelId: string | null;
   triggerId: string | null;
-  triggerKind: 'event' | 'schedule' | 'agent' | 'api' | 'manual';
+  /** 'chat': a person handed the agent a task from a chat (apps/web/lib/chat/agent-asks.ts). */
+  triggerKind: 'event' | 'schedule' | 'agent' | 'api' | 'manual' | 'chat';
   triggeredBySubject?: string;
   /** Identifiers + small content; callers cap size before handing it over. */
   initialState?: Record<string, unknown>;

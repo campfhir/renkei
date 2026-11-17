@@ -26,6 +26,7 @@ import type { VoiceAvailability } from '@/lib/voice/availability';
 import type { WidgetModelContextOutcome } from './widget-tools';
 import type { ChatTaskView, TaskWaitView } from './tasks/graph';
 import type { TurnView } from './views';
+import type { AgentAskView, AskableAgent, ProjectTeamMember } from './agent-ask-view';
 
 const base = () => `/api/chat`;
 
@@ -155,6 +156,33 @@ export const chatClient = {
   deleteChat: (chatId: string) => sendJsonFull(`${base()}/chats/${chatId}`, 'DELETE'),
 
   /** The chat projects a chat can be moved into. */
+  /** The agents this person may ask from a chat; `projectId` puts its team first. */
+  askableAgents: (projectId: string | null) =>
+    getJson<{ agents: AskableAgent[] }>(
+      `${base()}/agents${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`
+    ),
+
+  /** What the agent a chat_ask_agent call asked is doing, and its reply once it has one. */
+  agentAsk: (chatId: string, toolUseId: string) =>
+    getJson<{ ask: AgentAskView }>(
+      `${base()}/chats/${chatId}/agent-asks/${encodeURIComponent(toolUseId)}`
+    ),
+
+  /** A chat project's team. */
+  projectTeam: (projectId: string) =>
+    getJson<{ team: ProjectTeamMember[] }>(`${base()}/projects/${projectId}/agents`),
+
+  addToProjectTeam: (projectId: string, agentId: string) =>
+    sendJsonFull<{ team: ProjectTeamMember[] }>(`${base()}/projects/${projectId}/agents`, 'POST', {
+      agentId,
+    }),
+
+  removeFromProjectTeam: (projectId: string, agentId: string) =>
+    sendJsonFull<{ team: ProjectTeamMember[] }>(
+      `${base()}/projects/${projectId}/agents/${agentId}`,
+      'DELETE'
+    ),
+
   listProjects: () => getJson<{ projects: ChatSidebarData['projects'] }>(`${base()}/projects`),
 
   moveChat: (chatId: string, projectId: string | null) =>
@@ -162,7 +190,14 @@ export const chatClient = {
 
   sendTurn: (
     chatId: string,
-    input: { text: string; attachmentIds: string[]; llmModelId?: string | null; voice?: boolean }
+    input: {
+      text: string;
+      attachmentIds: string[];
+      llmModelId?: string | null;
+      voice?: boolean;
+      /** The agent the message is addressed to (the composer's @-mention). */
+      agentId?: string | null;
+    }
   ) =>
     sendJsonFull<StartedTurn & { code?: string }>(`${base()}/chats/${chatId}/turns`, 'POST', {
       ...input,

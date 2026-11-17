@@ -212,7 +212,20 @@ export default async function AgentOverviewPage({
               </p>
               {/* Beside the schedule, because "every weekday at 8am" is
                   exactly what makes someone want to fire it once by hand. */}
-              {eventOnly ? null : <RunNowButton agentId={agentId} agentName={agent.name} />}
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {/* Agents in chat (lib/chat/agent-asks.ts): hand it a task the way
+                    you would message a colleague, and read its reply in the chat. */}
+                {agent.enabled ? (
+                  <Link
+                    href={`/chat/new?agent=${encodeURIComponent(agentId)}`}
+                    title={`Start a chat addressed to ${agent.name}: it takes the task and replies there`}
+                    className="rounded-md border border-gray-300 px-2 py-0.5 text-xs hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
+                  >
+                    Ask in a chat
+                  </Link>
+                ) : null}
+                {eventOnly ? null : <RunNowButton agentId={agentId} agentName={agent.name} />}
+              </div>
             </div>
             {agent.triggers.length > 0 ? (
               <ul className="mt-1 space-y-2">

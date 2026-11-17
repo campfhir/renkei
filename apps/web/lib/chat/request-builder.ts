@@ -119,6 +119,12 @@ export interface SystemPromptInput {
    */
   autoMode?: boolean;
   /**
+   * Agents in chat (agent-asks.ts's agentAsksBrief): whom the chat may
+   * hand a task, and what the agents it asked have answered. Null or
+   * absent when there is nobody to ask and nothing asked.
+   */
+  agentsBrief?: string | null;
+  /**
    * The person's IANA zone as their browser reported it (time-zone.ts);
    * null when it did not say. Named so the model reads "today" and "now"
    * in the person's day, not UTC's, and passes it to resolve_date.
@@ -419,6 +425,9 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   }
   if (input.hasDelegate) {
     sections.push(DELEGATE_BRIEF);
+  }
+  if (input.agentsBrief) {
+    sections.push(input.agentsBrief);
   }
   if (input.hasTasks !== false) {
     sections.push(

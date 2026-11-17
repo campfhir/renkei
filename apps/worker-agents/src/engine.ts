@@ -85,6 +85,7 @@ import {
   SUB_AGENT_REPORT_CHARS,
   RESOLVE_TIME_DEF,
   RESOLVE_TIME_TOOL,
+  CHAT_STARTED_TEXT,
   RUN_RESULT_CHARS,
   STAGE_ACTIONS_TOOL,
   TOOL_RESULT_CHARS,
@@ -2534,13 +2535,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
    * Whether a run started from outside the org's own hand (act-approval.ts).
    * A chained run inherits its ROOT's provenance; a chain that cannot be
    * walked reads as external — the fail-closed direction. So does a manual
-   * run pressed by someone other than the owner (an access grantee): it
+   * or chat run started by someone other than the owner (an access
+   * grantee pressing Run, or asking the agent from their chat): it
    * acts on the owner's accounts, and the owner's "accept automatically"
    * was never a decision about what a grantee asks for.
    */
   async function runIsExternallyTriggered(run: RunRow): Promise<boolean> {
     if (
-      run.triggerKind === 'manual' &&
+      (run.triggerKind === 'manual' || run.triggerKind === 'chat') &&
       run.triggeredBySubject !== null &&
       run.triggeredBySubject !== run.ownerSubject
     ) {
@@ -2682,6 +2684,8 @@ function startedByText(triggerKind: string): string {
       return 'Another agent finished and started this run';
     case 'api':
       return 'A system called you through your API trigger';
+    case 'chat':
+      return CHAT_STARTED_TEXT;
     default:
       return 'Your owner started this run by hand';
   }

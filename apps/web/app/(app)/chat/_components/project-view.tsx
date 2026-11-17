@@ -14,6 +14,7 @@
  * through the API and any number may be open at once.
  */
 
+import ProjectTeamCard from './project-team-card';
 import ProjectModel from './project-model';
 import { useCallback, useEffect, useId, useReducer, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
@@ -617,6 +618,10 @@ export default function ProjectView({
                 </div>
               )}
             </section>
+
+            {variant === 'code' ? null : (
+              <ProjectTeamCard className={sectionClass} projectId={project.id} canEdit={canEdit} />
+            )}
 
             <ArtifactsCard
               className={sectionClass}

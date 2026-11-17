@@ -14,6 +14,7 @@ const OPEN: readonly string[] = ['waiting', 'running', 'queued'];
 export function deleteRunRows(tables: MemoryTables, runIds: readonly string[]): void {
   const ids = new Set(runIds);
   tables.delete('agent_run_steps', (r) => ids.has(r.run_id));
+  tables.delete('chat_agent_asks', (r) => ids.has(r.run_id));
   tables.delete('agent_action_batches', (r) => ids.has(r.run_id));
   tables.delete('actionable_items', (r) => r.run_id !== null && ids.has(r.run_id));
   tables.delete('agent_notifications', (r) => r.run_id !== null && ids.has(r.run_id));

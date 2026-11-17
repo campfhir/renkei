@@ -206,6 +206,7 @@ export const EXPECTED_MIGRATIONS = [
   '180-sandboxes',
   '181-sandbox-archives',
   '182-sandbox-subjects',
+  '183-chat-agents',
 ];
 
 export interface MigrationStatus {

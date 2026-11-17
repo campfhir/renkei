@@ -27,6 +27,8 @@ function deleteAgentRows(tables: MemoryTables, agentId: string): void {
     'agent_memories',
     'agent_optimizations',
     'agent_run_log',
+    'chat_agent_asks',
+    'chat_project_agents',
   ] as const) {
     tables.delete(table, ofAgent);
   }

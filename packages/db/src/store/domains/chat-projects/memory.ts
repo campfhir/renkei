@@ -96,6 +96,7 @@ export function memoryChatProjects(tables: MemoryTables): ChatProjectStore {
       if (deleted) {
         // Its memory, references and PR watches go; its chats stay, unfiled.
         tables.delete('chat_project_memories', (r) => r.project_id === wanted);
+        tables.delete('chat_project_agents', (r) => r.project_id === wanted);
         tables.delete('artifact_references', (r) => r.project_id === wanted);
         tables.delete('pr_subscriptions', (r) => r.project_id === wanted);
         tables.update('chats', (r) => r.project_id === wanted, { project_id: null });
