@@ -46,7 +46,7 @@ export function sourceLines(body: string): string[] {
 }
 
 export interface SourceWindow {
-  /** Numbered lines, `  42  code`. */
+  /** The lines: numbered (`  42  code`), or exactly as saved with `lineNumbers: false`. */
   text: string;
   /** 1-based, inclusive. */
   firstLine: number;
@@ -56,6 +56,11 @@ export interface SourceWindow {
   nextStart: number | null;
   /** Set when the window stopped at the size bound before the end asked for. */
   stoppedAtLimit: boolean;
+  /**
+   * Plain windows only: a line too long for any window, cut to fit, its
+   * number and full length — said beside the source, never written into it.
+   */
+  cutLine: { line: number; length: number } | null;
 }
 
 function clipLine(line: string): string {
@@ -66,15 +71,22 @@ function clipLine(line: string): string {
 
 /**
  * Lines `startLine`..`endLine` of `body` (1-based, inclusive, both
- * optional), numbered, stopping early when the next line would take the
+ * optional), numbered unless `lineNumbers` is false, stopping early when the next line would take the
  * window past `maxChars`; always at least one line, so a reader moving by
  * `nextStart` always moves. A start past the end is an error to say back,
  * not an empty window.
+ *
+ * Without line numbers the text is the source exactly as saved, nothing
+ * added — the form to copy from, since a number or a marker in the text
+ * would be read as part of the class. A numbered window cuts an
+ * overlong line in place, saying so on the line; a plain one cuts it only
+ * when it alone overfills the window, and says so in `cutLine`.
  */
 export function sourceWindow(
   body: string,
-  range: { startLine?: number; endLine?: number; maxChars?: number } = {}
+  range: { startLine?: number; endLine?: number; maxChars?: number; lineNumbers?: boolean } = {}
 ): SourceWindow | { error: string } {
+  const numbers = range.lineNumbers ?? true;
   const lines = sourceLines(body);
   const total = lines.length;
   const start = Math.max(1, Math.floor(range.startLine ?? 1));
@@ -90,11 +102,17 @@ export function sourceWindow(
   const out: string[] = [];
   let used = 0;
   let line = start;
+  let cutLine: SourceWindow['cutLine'] = null;
   for (; line <= end; line += 1) {
-    const numbered = `${String(line).padStart(width)}  ${clipLine(lines[line - 1])}`;
-    if (out.length > 0 && used + numbered.length + 1 > maxChars) break;
-    out.push(numbered);
-    used += numbered.length + 1;
+    const source = lines[line - 1];
+    let shown = numbers ? `${String(line).padStart(width)}  ${clipLine(source)}` : source;
+    if (out.length > 0 && used + shown.length + 1 > maxChars) break;
+    if (!numbers && shown.length > maxChars) {
+      cutLine = { line, length: source.length };
+      shown = shown.slice(0, maxChars);
+    }
+    out.push(shown);
+    used += shown.length + 1;
   }
   const lastLine = line - 1;
   const stoppedAtLimit = lastLine < end;
@@ -105,6 +123,7 @@ export function sourceWindow(
     totalLines: total,
     nextStart: stoppedAtLimit ? lastLine + 1 : null,
     stoppedAtLimit,
+    cutLine,
   };
 }
 

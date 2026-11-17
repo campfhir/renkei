@@ -575,6 +575,18 @@ describe('Apex source', () => {
     );
   });
 
+  it('gives the source exactly as saved, without line numbers, to copy from', async () => {
+    const result = await call('salesforce_read_apex', {
+      name: 'BillingService',
+      startLine: 1800,
+      endLine: 1800,
+      lineNumbers: false,
+    });
+    expect(text(result)).toContain('Lines 1800–1800 of 3000.');
+    expect(text(result)).toContain('```apex\n  public void reconcile() { // line 1800\n```');
+    expect(text(result)).not.toContain('not part of the code.)');
+  });
+
   it('names the lines that mention something, to jump to', async () => {
     const result = await call('salesforce_read_apex', {
       name: 'BillingService',

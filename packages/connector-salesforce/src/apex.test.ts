@@ -20,7 +20,45 @@ describe('reading Apex source a window at a time', () => {
       totalLines: 3,
       nextStart: null,
       stoppedAtLimit: false,
+      cutLine: null,
     });
+  });
+
+  it('gives the source exactly as saved, nothing added, without line numbers', () => {
+    const body = 'public class A {\n  Integer x;\n}';
+    const window = sourceWindow(body, { lineNumbers: false });
+    if ('error' in window) throw new Error(window.error);
+    expect(window.text).toBe(body);
+
+    const middle = sourceWindow(classOf(5000), { startLine: 10, endLine: 11, lineNumbers: false });
+    if ('error' in middle) throw new Error(middle.error);
+    expect(middle.text).toBe('// line 10\n// line 11');
+  });
+
+  it('pages plain windows the same way, every line read once', () => {
+    const body = classOf(3000);
+    const read: string[] = [];
+    let start: number | null = 1;
+    while (start !== null) {
+      const window = sourceWindow(body, { startLine: start, maxChars: 4000, lineNumbers: false });
+      if ('error' in window) throw new Error(window.error);
+      read.push(window.text);
+      start = window.nextStart;
+    }
+    expect(read.join('\n')).toBe(body);
+  });
+
+  it('cuts a plain line too long for any window, saying so beside the source, not in it', () => {
+    const long = 'x'.repeat(500);
+    const window = sourceWindow(`a\n${long}\nb`, {
+      startLine: 2,
+      maxChars: 100,
+      lineNumbers: false,
+    });
+    if ('error' in window) throw new Error(window.error);
+    expect(window.text).toBe('x'.repeat(100));
+    expect(window.cutLine).toEqual({ line: 2, length: 500 });
+    expect(window.nextStart).toBe(3);
   });
 
   it('reads the middle of a large class without the start', () => {

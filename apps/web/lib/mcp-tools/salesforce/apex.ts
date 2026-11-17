@@ -90,11 +90,13 @@ export function registerApexReadTools(
     {
       title: 'Salesforce · Read — Read Apex source',
       description:
-        'An Apex class’s or trigger’s source by name, as numbered lines: the whole of a small ' +
-        'one, or a window of a large one (startLine/endLine). Each answer says which lines it ' +
-        'holds of how many and where the next window starts. Pass `find` to get the line numbers ' +
-        'that mention a method, field or text, then read around them. Use this rather than ' +
-        'salesforce_query for Apex source: a query returns the body as one string, cut short.',
+        'An Apex class’s or trigger’s source by name: the whole of a small one, or a window of a ' +
+        'large one (startLine/endLine). Each answer says which lines it holds of how many and ' +
+        'where the next window starts. Lines are numbered for reading; the numbers are not part ' +
+        'of the code — pass lineNumbers: false for the source exactly as saved, to copy or edit. ' +
+        'Pass `find` to get the line numbers that mention a method, field or text, then read ' +
+        'around them. Use this rather than salesforce_query for Apex source: a query returns the ' +
+        'body as one string, cut short.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         name: z.string().min(1).describe('The class or trigger name, e.g. AccountService.'),
@@ -109,6 +111,12 @@ export function registerApexReadTools(
           .min(1)
           .optional()
           .describe('Last line to read (default the end; a window stops sooner when it is full).'),
+        lineNumbers: z
+          .boolean()
+          .optional()
+          .describe(
+            'Default true: each line starts with its number. false: the source exactly as saved, nothing added.'
+          ),
         find: z
           .string()
           .min(2)
@@ -152,7 +160,12 @@ export function registerApexReadTools(
         );
       }
 
-      const window = sourceWindow(body, { startLine: args.startLine, endLine: args.endLine });
+      const lineNumbers = args.lineNumbers ?? true;
+      const window = sourceWindow(body, {
+        startLine: args.startLine,
+        endLine: args.endLine,
+        lineNumbers,
+      });
       if ('error' in window) return errText(`${name}: ${window.error}`);
       const whole = window.firstLine === 1 && window.lastLine === window.totalLines;
       const where = whole
@@ -161,7 +174,26 @@ export function registerApexReadTools(
           (window.nextStart
             ? ` The window is full: call again with startLine ${window.nextStart} for the next part.`
             : '');
-      return textResult([headerOf(found, window.totalLines), where, '', window.text].join('\n'));
+      const cut = window.cutLine
+        ? [
+            `Line ${window.cutLine.line} is ${window.cutLine.length.toLocaleString('en-US')} characters, ` +
+              'longer than one answer holds: only its start is shown, so this window is not the source exactly.',
+          ]
+        : [];
+      // Plain source goes in a fence, so nothing around it reads as code.
+      const source = lineNumbers ? window.text : `\`\`\`apex\n${window.text}\n\`\`\``;
+      return textResult(
+        [
+          headerOf(found, window.totalLines),
+          where,
+          ...(lineNumbers
+            ? ['(The numbers at the start of each line are not part of the code.)']
+            : []),
+          ...cut,
+          '',
+          source,
+        ].join('\n')
+      );
     }
   );
 }
