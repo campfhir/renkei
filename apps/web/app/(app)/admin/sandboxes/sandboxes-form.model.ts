@@ -229,7 +229,7 @@ export function saveLabel(state: SandboxesState): string {
 }
 
 export function testLabel(state: SandboxesState): string {
-  return state.busy === 'test' ? 'Testing…' : 'Test connection';
+  return state.busy === 'test' ? 'Starting a test sandbox…' : 'Test connection';
 }
 
 /** A service principal is being named: its client secret is then asked for. */

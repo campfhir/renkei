@@ -6,6 +6,7 @@ import {
   FakeSandboxProvider,
   Orchestrator,
   OrchestratorError,
+  TrialSandboxes,
   sandboxApiKey,
 } from '@renkei/sandbox-orchestrator';
 import { createOrchestratorServer } from './server';
@@ -31,8 +32,10 @@ async function start() {
   });
   const state: { problem: string | null } = { problem: null };
   const checked: unknown[] = [];
+  const trials = new TrialSandboxes('master');
   const server: Server = createOrchestratorServer({
     apiKeys: ['caller-key'],
+    trials,
     orchestrator: () => {
       if (state.problem) throw new OrchestratorError('provider', state.problem);
       return orchestrator;
@@ -54,7 +57,7 @@ async function start() {
       headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
-  return { base, post, provider, server, state, checked, data };
+  return { base, post, provider, server, state, checked, data, trials };
 }
 
 describe('the orchestrator’s HTTP surface', () => {
@@ -353,5 +356,51 @@ describe('what a sandbox itself may ask of the orchestrator', () => {
     expect((await running.post('/v1/list', {}, ann.key)).status).toBe(401);
     expect((await running.post('/v1/ensure', { key: 'bob' }, ann.key)).status).toBe(401);
     expect((await running.post('/v1/check', {}, ann.key)).status).toBe(401);
+  });
+});
+
+describe('a test sandbox (Test connection)', () => {
+  let running: Awaited<ReturnType<typeof start>>;
+  const id = 'trial-1';
+  const key = sandboxApiKey('master', id);
+  const asTrial = (path: string, presented = key) =>
+    fetch(`${running.base}/sandbox/v1/${path}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${presented}`, 'x-sandbox-id': id },
+      body: '{}',
+    });
+
+  beforeEach(async () => {
+    running = await start();
+  });
+  afterEach(async () => {
+    await new Promise((resolve) => running.server.close(resolve));
+  });
+
+  it('is handed the setup being tried, sealed for it, even before any setup is in force', async () => {
+    running.state.problem = 'sandboxes are not set up yet';
+    const trial = running.trials.register(id, { SANDBOX_ENV_SECRETS_KEY: 'sealing' });
+    const response = await asTrial('bootstrap');
+    expect(response.status).toBe(200);
+    const sealed = String((await record(response)).sealed);
+    expect(openSandboxEnv(key, id, sealed)).toEqual({ SANDBOX_ENV_SECRETS_KEY: 'sealing' });
+    expect(trial.bootstrapped()).toBe(true);
+  });
+
+  it('serves nobody: its data store calls are held to no one’s rows', async () => {
+    running.trials.register(id, {});
+    const store = createRemoteDataStore(
+      createHttpStoreTransport({ url: running.base, sandboxId: id, sandboxKey: key })
+    );
+    await expect(store.connectorConfigs.get('sandbox-orchestrator')).rejects.toThrow(
+      /not a call a sandbox may make/
+    );
+  });
+
+  it('is nothing with a wrong key, or once the test is over', async () => {
+    const trial = running.trials.register(id, {});
+    expect((await asTrial('bootstrap', 'wrong')).status).toBe(401);
+    trial.done();
+    expect((await asTrial('bootstrap')).status).toBe(401);
   });
 });

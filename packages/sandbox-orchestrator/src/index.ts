@@ -22,6 +22,7 @@ export {
   AzureSandboxProvider,
   azureIngressToken,
   createAzureSandboxClient,
+  type AzureCreateRequest,
   type AzureIdentity,
   type AzureProviderOptions,
   type AzureSandboxClient,
@@ -37,4 +38,11 @@ export {
   type ArchiveTransfer,
 } from './archive';
 export { sandboxApiKey } from './keys';
+export {
+  TrialSandboxes,
+  sandboxWorkerEnv,
+  trySandbox,
+  type TrialProbe,
+  type TrySandboxOptions,
+} from './trial';
 export { SYSTEM_ROUTE_KEY, isRouteKey, sandboxKindOf } from './scope';

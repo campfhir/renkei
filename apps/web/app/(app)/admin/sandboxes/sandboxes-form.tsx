@@ -211,8 +211,8 @@ export default function SandboxesForm({ initial }: { initial: SandboxesView | nu
                 {azureText(
                   'diskImage',
                   'Disk image',
-                  'renkei-sandbox',
-                  'The disk image in the group that sandboxes start from: the sandbox image, imported.'
+                  '00000000-0000-0000-0000-000000000000',
+                  'The id of the disk image in the group that sandboxes start from (the sandbox image, imported): the GUID the portal shows for it.'
                 )}
                 {azureText(
                   'vnetConnection',

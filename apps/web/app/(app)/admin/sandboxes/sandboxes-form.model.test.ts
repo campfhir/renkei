@@ -216,7 +216,7 @@ describe('saving and testing', () => {
 
   it('a test that reached the provider says where; one that did not says why, as an error; neither saves', () => {
     const tested = run(init(STORED), { type: 'sent', what: 'test' });
-    expect(testLabel(tested)).toBe('Testing…');
+    expect(testLabel(tested)).toBe('Starting a test sandbox…');
     const reached = run(tested, { type: 'tested', ok: true, detail: 'Reached the sandbox group.' });
     expect(reached.notice).toBe('Reached the sandbox group.');
     expect(reached.error).toBeNull();

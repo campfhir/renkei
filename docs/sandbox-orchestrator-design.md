@@ -320,7 +320,18 @@ Secrets are write-only: the page shows which are stored, never what they
 are, and a blank field keeps the stored one. **Test connection** hands
 the setup about to be saved to the orchestrator, which asks the provider
 whether it answers (the identity, its role and the sandbox group on
-Azure; the engine and the image on Docker) without making a sandbox.
+Azure; the engine and the image on Docker) and then makes a **test
+sandbox** from it the way every sandbox is made
+(`packages/sandbox-orchestrator` `trial.ts`): the same image, size, port
+and environment. It waits — up to five minutes — for that sandbox's
+worker to fetch its sealed environment from the orchestrator address on
+the page and answer `/health` through the provider's ingress, then
+removes it. So a passing test means a first real call will be served; a
+failing one says how far it got (no sandbox made, never called back,
+worker port refused, worker never answered). A test sandbox has no row
+in `sandboxes`; the process running the test lets its bootstrap and
+store calls in (serving no one), and if that process dies mid-test the
+sweep removes it as a machine without a record.
 
 One module says what a valid setup is
 (`packages/sandbox-client/src/orchestrator-config.ts`): the admin routes
@@ -387,8 +398,10 @@ In Azure, once:
    deployment: not the database.
 
 Then on Organization → Sandboxes: the subscription, resource group,
-sandbox group and region; the disk image and the VNet connection by
-name; the orchestrator's address as a sandbox reaches it; the service
+sandbox group and region; the disk image by its id (the GUID the
+portal shows for an imported image: the platform takes the group's own
+images by id and only Microsoft's public ones by name) and the VNet
+connection by name; the orchestrator's address as a sandbox reaches it; the service
 principal's ids and secret (or neither, for a managed identity); the
 identity allowed to call a worker; and the secrets a worker is started
 with. Test connection, then Save.
@@ -408,8 +421,13 @@ reach the processes inside (PID 1 and anything run there), though the
 API does not echo them back on a read; a sandbox runs as root on its own
 kernel.
 
-**What has not**: the sandbox image itself as a disk image (so the real
-worker, its sealed boot and Podman inside the microVM), Entra on the
+Since then: a sandbox created from the renkei sandbox image imported as
+the group's own disk image, referenced by its id (a `name` with
+`isPublic: false` is refused with a 400), reaching `Running` with an
+anonymous worker port.
+
+**What has not**: the real worker's sealed boot and Podman inside the
+microVM, Entra on the
 worker's port with a service identity (Microsoft's documentation
 describes users, and the preview SDK sets allowed emails but not the
 tenant id bearer calls need), opening a preview port to a named person,

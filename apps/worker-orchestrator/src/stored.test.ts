@@ -1,5 +1,9 @@
 import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
-import type { AzureSandboxClient } from '@renkei/sandbox-orchestrator';
+import {
+  TrialSandboxes,
+  type AzureCreateRequest,
+  type AzureSandboxClient,
+} from '@renkei/sandbox-orchestrator';
 import { OrchestratorHost } from './host';
 import { buildFromStored, checkStored, type StoredRow } from './stored';
 
@@ -200,5 +204,60 @@ describe('the orchestrator in force', () => {
     await live.reload();
     expect(live.current()).toBe(first);
     expect(logs.some((line) => line.startsWith('warn:') && line.includes('kept'))).toBe(true);
+  });
+});
+
+describe('Test connection with a test sandbox', () => {
+  /** A sandbox group that makes one sandbox, running at once, and removes it. */
+  function makingGroup() {
+    const created: AzureCreateRequest[] = [];
+    const deleted: string[] = [];
+    const client: AzureSandboxClient = {
+      ...azureClient(),
+      get: async (sandboxId) => ({
+        id: sandboxId,
+        state: 'Running',
+        ports: [{ port: 8092, url: `https://${sandboxId}--8092.eastus2.adcproxy.io` }],
+      }),
+      beginCreate: (body) => {
+        created.push(body);
+        return { pollUntilDone: async () => ({ id: 'az-1', state: 'Running' }) };
+      },
+      delete: async (sandboxId) => {
+        deleted.push(sandboxId);
+      },
+    };
+    return { client, created, deleted };
+  }
+
+  it('makes a sandbox from the disk image, as every sandbox is made, waits for its worker, and removes it', async () => {
+    const group = makingGroup();
+    const trials = new TrialSandboxes('master');
+    const probed: string[] = [];
+    const tried = await checkStored(
+      row(),
+      { azureClient: async () => group.client },
+      {
+        trials,
+        masterKey: 'master',
+        newId: () => 'trial-1',
+        // The worker boots: it fetches its environment, then answers.
+        probe: async (address) => {
+          probed.push(address);
+          trials.sealedEnvironment('trial-1');
+          return { status: 200 };
+        },
+      }
+    );
+    expect(tried.ok).toBe(true);
+    expect(tried.detail).toMatch(
+      /^Reached the sandbox group "renkei-sandbox-group" in PRD_INFRA \(eastus2\)\. Made a test sandbox from the disk image "renkei-sandbox" in renkei-sandbox-group/
+    );
+    expect(group.created[0]?.sourcesRef).toEqual({ diskImage: { id: 'renkei-sandbox' } });
+    expect(group.created[0]?.environment.SANDBOX_ORCHESTRATOR_CALLBACK_URL).toBe(
+      'https://orchestrator.internal:8097'
+    );
+    expect(probed).toEqual(['https://az-1--8092.eastus2.adcproxy.io']);
+    expect(group.deleted).toEqual(['az-1']);
   });
 });

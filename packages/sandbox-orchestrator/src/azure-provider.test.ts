@@ -1,5 +1,6 @@
 import {
   AzureSandboxProvider,
+  azureErrorDetail,
   azureState,
   type AzureCreateRequest,
   type AzureSandbox,
@@ -105,7 +106,7 @@ describe('the Azure provider', () => {
     });
     expect(await provider.create(spec)).toEqual({ providerId: 'az-1' });
     expect(created[0]).toEqual({
-      sourcesRef: { diskImage: { name: 'renkei-sandbox', isPublic: false } },
+      sourcesRef: { diskImage: { id: 'renkei-sandbox' } },
       resources: { cpu: '2000m', memory: '4096Mi', disk: '40Gi' },
       lifecycle: {
         autoSuspend: { enabled: true, interval: 1800, mode: 'Memory' },
@@ -267,5 +268,45 @@ describe('the Azure provider', () => {
       const { client } = group();
       expect(await new AzureSandboxProvider({ ...base, client }).callerHeaders()).toEqual({});
     });
+  });
+
+  it('takes one of Microsoft’s public images by name', async () => {
+    const { client, created } = group();
+    await new AzureSandboxProvider({
+      ...base,
+      diskImage: 'ubuntu',
+      diskImagePublic: true,
+      client,
+    }).create(spec);
+    expect(created[0]?.sourcesRef).toEqual({ diskImage: { name: 'ubuntu', isPublic: true } });
+  });
+});
+
+describe('what the platform said when it refused', () => {
+  it('reads a validation refusal as its reasons', () => {
+    expect(
+      azureErrorDetail({
+        type: 'https://tools.ietf.org/html/rfc9110#section-15.5.1',
+        title: 'One or more validation errors occurred.',
+        status: 400,
+        errors: {
+          SourcesRef: [
+            "'sourcesRef.diskImage.isPublic' must be true when using 'sourcesRef.diskImage.name'",
+          ],
+        },
+      })
+    ).toBe("'sourcesRef.diskImage.isPublic' must be true when using 'sourcesRef.diskImage.name'");
+  });
+
+  it('reads an error object as its code and message', () => {
+    expect(
+      azureErrorDetail({ error: { code: 'QuotaExceeded', message: 'No capacity in westus2.' } })
+    ).toBe('QuotaExceeded: No capacity in westus2.');
+  });
+
+  it('keeps a text body as it came, and says nothing of an empty one', () => {
+    expect(azureErrorDetail('  upstream timed out  ')).toBe('upstream timed out');
+    expect(azureErrorDetail('')).toBeNull();
+    expect(azureErrorDetail(undefined)).toBeNull();
   });
 });

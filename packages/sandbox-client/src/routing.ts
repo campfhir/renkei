@@ -550,9 +550,11 @@ export async function sandboxOrchestratorStatus(): Promise<SandboxOrchestratorSt
 /**
  * Have the orchestrator try a sandbox configuration — the one given
  * (settings and opened secrets, as they would be stored) or, with none,
- * the one stored — by asking its provider whether it answers. The
- * orchestrator is the process that holds the means to ask; no sandbox is
- * made. A failed try is an answer.
+ * the one stored — by asking its provider whether it answers, then making
+ * a test sandbox from it and waiting for its worker to answer (it is
+ * removed after). The orchestrator is the process that holds the means to
+ * ask. That takes minutes on a cold image, hence the long wait here. A
+ * failed try is an answer.
  */
 export async function checkSandboxOrchestrator(
   candidate: { settings: unknown; secrets: Record<string, string> } | null
@@ -573,7 +575,8 @@ export async function checkSandboxOrchestrator(
         'content-type': 'application/json',
       },
       body: JSON.stringify(candidate ?? {}),
-      signal: AbortSignal.timeout(60_000),
+      // The orchestrator gives a test sandbox five minutes to answer.
+      signal: AbortSignal.timeout(6 * 60_000),
     });
     const body: unknown = await response.json().catch(() => null);
     if (response.ok && isRecord(body) && typeof body.detail === 'string') {
