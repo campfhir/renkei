@@ -18,7 +18,10 @@ import {
   DockerSandboxProvider,
   azureIngressToken,
   createAzureSandboxClient,
+  trySandbox,
   type AzureIdentity,
+  type TrialProbe,
+  type TrialSandboxes,
   type AzureSandboxClient,
   type SandboxProvider,
 } from '@renkei/sandbox-orchestrator';
@@ -136,15 +139,30 @@ export async function buildFromStored(
   }
 }
 
+/** What making a test sandbox needs, besides the setup being tried. */
+export interface TrialDeps {
+  trials: TrialSandboxes;
+  masterKey: string;
+  newId: () => string;
+  timeoutMs?: number;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+  probe?: TrialProbe;
+}
+
 /**
  * Try a configuration — the one stored, or one about to be saved — by
- * asking its provider whether it answers: the engine and the image for
- * Docker; the identity, its role and the sandbox group for Azure. A
- * failed try is an answer, in a sentence.
+ * asking its provider whether it answers (the engine and the image for
+ * Docker; the identity, its role and the sandbox group for Azure) and
+ * then, given `trial`, by making a test sandbox from it the way every
+ * sandbox is made and waiting for its worker to answer
+ * (@renkei/sandbox-orchestrator trial.ts). A failed try is an answer, in
+ * a sentence.
  */
 export async function checkStored(
   row: StoredRow,
-  deps: BuildDeps = {}
+  deps: BuildDeps = {},
+  trial?: TrialDeps
 ): Promise<{ ok: boolean; detail: string }> {
   const built = await buildFromStored({ ...row, enabled: true }, deps);
   if (typeof built === 'string') return { ok: false, detail: built };
@@ -171,5 +189,22 @@ export async function checkStored(
       };
     }
   }
-  return { ok: true, detail: `Reached ${where}. No sandbox was made.` };
+  if (!trial) return { ok: true, detail: `Reached ${where}. No sandbox was made.` };
+  const tried = await trySandbox({
+    provider: built.provider,
+    trials: trial.trials,
+    masterKey: trial.masterKey,
+    callbackUrl: built.callbackUrl,
+    env: built.env,
+    source:
+      settings.provider === 'azure'
+        ? `the disk image "${settings.azure.diskImage}" in ${settings.azure.sandboxGroup}`
+        : `the image ${settings.docker.image}`,
+    newId: trial.newId,
+    ...(trial.timeoutMs !== undefined ? { timeoutMs: trial.timeoutMs } : {}),
+    ...(trial.now ? { now: trial.now } : {}),
+    ...(trial.sleep ? { sleep: trial.sleep } : {}),
+    ...(trial.probe ? { probe: trial.probe } : {}),
+  });
+  return tried.ok ? { ok: true, detail: `Reached ${where}. ${tried.detail}` } : tried;
 }

@@ -31,10 +31,12 @@
  *     sharing an engine or a sandbox group, default `renkei`.
  */
 
+import { randomUUID } from 'node:crypto';
 import { getConnectorConfig } from '@renkei/connector-config';
 import { loadKeyring } from '@renkei/crypto';
 import { checkDataStore, closeDataStore, getDataStore } from '@renkei/db';
 import { SANDBOX_ORCHESTRATOR_CONNECTOR } from '@renkei/sandbox-client';
+import { TrialSandboxes } from '@renkei/sandbox-orchestrator';
 import { watchLogLevel } from '@renkei/settings';
 import { schedulePeriodicSweep } from '@renkei/worker-loop';
 import { archiveBlobsOf, archiveRetentionMs, organizationBlobStore } from './archive-blobs';
@@ -137,8 +139,11 @@ async function main(): Promise<void> {
     }
   );
 
+  // Test connection's test sandboxes, known to this process until each is removed.
+  const trials = new TrialSandboxes(masterKey);
   const server = createOrchestratorServer({
     apiKeys,
+    trials,
     orchestrator: () => host.current(),
     status: () => host.status(),
     store: () => getDataStore().sandboxes,
@@ -148,7 +153,7 @@ async function main(): Promise<void> {
       if (!row) {
         return { ok: false, detail: 'Nothing is configured yet: save the sandbox setup first.' };
       }
-      return checkStored(row);
+      return checkStored(row, {}, { trials, masterKey, newId: randomUUID });
     },
   });
   server.listen(port, '0.0.0.0', () => {

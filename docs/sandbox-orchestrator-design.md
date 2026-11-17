@@ -320,7 +320,18 @@ Secrets are write-only: the page shows which are stored, never what they
 are, and a blank field keeps the stored one. **Test connection** hands
 the setup about to be saved to the orchestrator, which asks the provider
 whether it answers (the identity, its role and the sandbox group on
-Azure; the engine and the image on Docker) without making a sandbox.
+Azure; the engine and the image on Docker) and then makes a **test
+sandbox** from it the way every sandbox is made
+(`packages/sandbox-orchestrator` `trial.ts`): the same image, size, port
+and environment. It waits — up to five minutes — for that sandbox's
+worker to fetch its sealed environment from the orchestrator address on
+the page and answer `/health` through the provider's ingress, then
+removes it. So a passing test means a first real call will be served; a
+failing one says how far it got (no sandbox made, never called back,
+worker port refused, worker never answered). A test sandbox has no row
+in `sandboxes`; the process running the test lets its bootstrap and
+store calls in (serving no one), and if that process dies mid-test the
+sweep removes it as a machine without a record.
 
 One module says what a valid setup is
 (`packages/sandbox-client/src/orchestrator-config.ts`): the admin routes

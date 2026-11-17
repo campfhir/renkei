@@ -27,8 +27,11 @@
  *   POST /v1/check      `{ settings?, secrets? }` → `{ ok, detail }`: try a
  *                       configuration — the one given (the Sandboxes
  *                       page, before it saves) or the one stored — by
- *                       asking its provider whether it answers. Makes no
- *                       sandbox.
+ *                       asking its provider whether it answers, then
+ *                       making a test sandbox from it and waiting for
+ *                       its worker to answer (trial.ts in
+ *                       @renkei/sandbox-orchestrator); it is removed
+ *                       after. Takes minutes, not seconds.
  *   ANY  /unavailable/<why>/…   answers every request with a refusal in
  *                       the sandbox worker's error shape. Where the
  *                       client sends a call whose sandbox could not be
@@ -64,6 +67,7 @@ import {
   dispatchStoreCall,
   encodeWire,
   type DataStore,
+  type SandboxKind,
   type SandboxState,
   type SandboxStore,
 } from '@renkei/db';
@@ -72,6 +76,7 @@ import {
   Orchestrator,
   OrchestratorError,
   type OrchestratorErrorType,
+  type TrialSandboxes,
 } from '@renkei/sandbox-orchestrator';
 import { matchApiKey, readBody, sendJson } from '@renkei/worker-kit';
 import { logger } from './logger';
@@ -123,6 +128,13 @@ export interface OrchestratorServerDeps {
   store: () => SandboxStore;
   /** The whole data store, for the calls sandboxes make through this process. */
   dataStore: () => DataStore;
+  /**
+   * The test sandboxes Test connection has made and not yet removed: their
+   * workers' bootstrap and store calls are let in like any sandbox's,
+   * whether or not an orchestrator is in force (the setup being tried may
+   * not be saved yet).
+   */
+  trials?: TrialSandboxes;
   /** Try a configuration: the one given, else the one stored. */
   check: (
     candidate: {
@@ -143,21 +155,39 @@ export function createOrchestratorServer(deps: OrchestratorServerDeps): Server {
     const id = request.headers['x-sandbox-id'];
     const header = request.headers.authorization?.trim() ?? '';
     const key = header.slice(0, 7).toLowerCase() === 'bearer ' ? header.slice(7).trim() : '';
-    // With no orchestrator in force there is no sandbox to be.
-    if (deps.status().problem) return sendError(response, 'unauthorized');
-    // Which sandbox is asking is settled before anything is read. Whatever
-    // was presented goes to the one check that decides: the key must be the
-    // one derived for that id, compared in constant time, and the sandbox
-    // must exist (the orchestrator's `authenticate`). A missing id or key
-    // is simply a pair that does not match.
-    const sandbox = await deps.orchestrator().authenticate(typeof id === 'string' ? id : '', key);
-    if (sandbox === null) return sendError(response, 'unauthorized');
+    const sandboxId = typeof id === 'string' ? id : '';
+    // A test sandbox (Test connection) is known to this process alone, and
+    // serves nobody: its store calls are held to no subjects at all.
+    const trial = deps.trials?.authenticate(sandboxId, key) ?? null;
+    let caller: { id: string; kind: SandboxKind; routeKey: string; subjects: string[] };
+    let sealed: () => string | null;
+    if (trial) {
+      caller = { id: trial.id, kind: trial.kind, routeKey: 'test sandbox', subjects: [] };
+      sealed = () => deps.trials?.sealedEnvironment(trial.id) ?? null;
+    } else {
+      // With no orchestrator in force there is no sandbox to be.
+      if (deps.status().problem) return sendError(response, 'unauthorized');
+      // Which sandbox is asking is settled before anything is read. Whatever
+      // was presented goes to the one check that decides: the key must be the
+      // one derived for that id, compared in constant time, and the sandbox
+      // must exist (the orchestrator's `authenticate`). A missing id or key
+      // is simply a pair that does not match.
+      const sandbox = await deps.orchestrator().authenticate(sandboxId, key);
+      if (sandbox === null) return sendError(response, 'unauthorized');
+      caller = {
+        id: sandbox.id,
+        kind: sandbox.kind,
+        routeKey: sandbox.routeKey,
+        subjects: Orchestrator.servedBy(sandbox),
+      };
+      sealed = () => deps.orchestrator().sealedEnvironment(sandbox.id);
+    }
 
     if (url.pathname === '/sandbox/v1/bootstrap') {
       request.resume();
-      return sendJson(response, 200, {
-        sealed: deps.orchestrator().sealedEnvironment(sandbox.id),
-      });
+      const environment = sealed();
+      if (environment === null) return sendError(response, 'unauthorized');
+      return sendJson(response, 200, { sealed: environment });
     }
     if (url.pathname === '/sandbox/v1/store') {
       const raw = await readBody(request, MAX_STORE_BODY_BYTES);
@@ -183,7 +213,7 @@ export function createOrchestratorServer(deps: OrchestratorServerDeps): Server {
           SANDBOX_STORE_POLICY,
           { domain: body.domain, method: body.method, args: Array.isArray(args) ? args : [] },
           // Held to this sandbox's own scope: the subjects it serves.
-          { kind: sandbox.kind, subjects: Orchestrator.servedBy(sandbox) }
+          { kind: caller.kind, subjects: caller.subjects }
         );
         return sendJson(response, 200, { ok: true, result: encodeWire(result) });
       } catch (error) {
@@ -192,8 +222,8 @@ export function createOrchestratorServer(deps: OrchestratorServerDeps): Server {
             'the sandbox for {scope} asked for {call}, which a sandbox may not; it was refused',
             {
               component: COMPONENT,
-              sandbox: sandbox.id,
-              scope: sandbox.routeKey,
+              sandbox: caller.id,
+              scope: caller.routeKey,
               call: `${body.domain}.${body.method}`,
             }
           );

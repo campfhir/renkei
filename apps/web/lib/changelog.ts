@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-17',
     entries: [
       {
+        kind: 'changed',
+        title: 'Test connection starts a real test sandbox',
+        detail:
+          'On Organization → Sandboxes, Test connection now starts a sandbox from the image and settings on the page, waits for it to come up and answer, then removes it, so a passing test means sandboxes will work. A failing test says how far it got: whether the sandbox was made, called back to the orchestrator address, or answered.',
+      },
+      {
         kind: 'fixed',
         title: 'Azure sandboxes start from your imported image',
         detail:

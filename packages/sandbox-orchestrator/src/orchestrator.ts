@@ -44,12 +44,12 @@ import {
 import { sandboxApiKey } from './keys';
 import {
   SANDBOX_WORKER_PORT,
-  withoutTrailingSlashes,
   type ProviderSandbox,
   type SandboxProvider,
   type SandboxSpec,
 } from './provider';
 import { isRouteKey, sandboxKindOf } from './scope';
+import { sandboxWorkerEnv } from './trial';
 
 export interface OrchestratorLogger {
   info(message: string, attributes?: Record<string, unknown>): void;
@@ -309,15 +309,7 @@ export class Orchestrator {
       kind: row.kind,
       // No secret but the sandbox's own key, and nothing of the database:
       // the rest is asked for, sealed, once the worker is up.
-      env: {
-        SANDBOX_WORKER_API_KEY: sandboxApiKey(this.options.masterKey, row.id),
-        SANDBOX_WORKER_PORT: String(SANDBOX_WORKER_PORT),
-        SANDBOX_ORCHESTRATED: '1',
-        SANDBOX_INSTANCE_ID: row.id,
-        ...(this.options.callbackUrl
-          ? { SANDBOX_ORCHESTRATOR_CALLBACK_URL: withoutTrailingSlashes(this.options.callbackUrl) }
-          : {}),
-      },
+      env: sandboxWorkerEnv(this.options.masterKey, row.id, this.options.callbackUrl),
       idleSuspendSeconds: Math.round(this.idleSuspendMs / 1000),
     };
   }

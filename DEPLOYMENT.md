@@ -771,7 +771,11 @@ orchestrator is the only container holding the engine's socket; no
 sandbox does. Code project services run inside each sandbox on an engine
 of its own (Podman) — on Azure as they are, on this host's Docker only
 with “Run sandboxes privileged” (a developer's machine).
-`docs/sandbox-orchestrator-design.md` has the page's fields, the Azure
+**Test connection** on that page makes a real test sandbox from the setup
+and waits up to five minutes for its worker to answer before removing it;
+a reverse proxy in front of the web app needs a read timeout longer than
+that (nginx: `proxy_read_timeout 360s;`) or the page's request is cut off
+first. `docs/sandbox-orchestrator-design.md` has the page's fields, the Azure
 setup, and the list of what still runs the old way. Run `migrate` first
 (migrations 180 to 182).
 
