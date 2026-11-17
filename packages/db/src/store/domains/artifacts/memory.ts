@@ -28,6 +28,16 @@ function digestMatches(row: Artifact, query: string): boolean {
 }
 
 export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
+  // Postgres stamps a row with now() to the microsecond, so files written
+  // one after another list "oldest first" in the order they were written;
+  // a Date is to the millisecond, and a tie would fall to the random id.
+  // Each file this store makes is stamped at least a millisecond after the
+  // last, so its lists keep that order too.
+  let lastCreated = 0;
+  const createdNow = (): Date => {
+    lastCreated = Math.max(Date.now(), lastCreated + 1);
+    return new Date(lastCreated);
+  };
   const oldestFirst = (rows: Artifact[]) => orderBy(rows, [(r) => r.created_at], [(r) => r.id]);
   const inChat = (selection: ArtifactChatSelection) => {
     if (selection.artifactIds.length === 0) return [];
@@ -304,7 +314,7 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
           ocr_finished_at: null,
           ocr_pages: null,
           ocr_millis: null,
-          created_at: new Date(),
+          created_at: createdNow(),
           updated_at: new Date(),
         })
       );
