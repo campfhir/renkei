@@ -779,10 +779,11 @@ first save and after each upgrade, nothing on a restart. Until then a call
 is told the sandbox is starting. A sandbox must run the orchestrator's
 release; an image imported by hand from another one fails after it boots.
 **Test connection** on that page makes a real test sandbox from the setup
-and waits up to five minutes for its worker to answer before removing it;
-a reverse proxy in front of the web app needs a read timeout longer than
-that (nginx: `proxy_read_timeout 360s;`) or the page's request is cut off
-first. `docs/sandbox-orchestrator-design.md` has the page's fields, the Azure
+and waits for its worker to answer before removing it. It runs on the
+orchestrator as a job the page reads every few seconds — each step shown,
+a Cancel button while it runs — so no request is held open: a locked phone
+or a proxy's idle timeout loses nothing, and the page opened again shows
+the same test. `docs/sandbox-orchestrator-design.md` has the page's fields, the Azure
 setup, and the list of what still runs the old way. Run `migrate` first
 (migrations 180 to 182).
 

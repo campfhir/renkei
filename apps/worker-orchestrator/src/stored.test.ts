@@ -404,6 +404,45 @@ describe('the disk image for this build', () => {
     expect(group.created).toHaveLength(2);
   });
 
+  it('started by Test connection before the setup was saved is taken up by the orchestrator when it is ready', async () => {
+    const group = imageGroup();
+    const preparer = new DiskImagePreparer();
+    const deps = { azureClient: async () => group.client };
+    // The operator clears the disk image and presses Test before saving:
+    // the test starts the preparation and answers that it is under way.
+    const tried = await checkStored(
+      automatic(),
+      deps,
+      { trials: new TrialSandboxes('master'), masterKey: 'master', newId: () => 'trial-1' },
+      { preparer, commit: SHA, testWaitMs: 20, pollMs: 5 }
+    );
+    expect(tried.detail).toMatch(/is being built from/);
+    // Then saves: the orchestrator finds it under way, and waits on it.
+    const logs: string[] = [];
+    const live = new OrchestratorHost({
+      read: async () => automatic(),
+      masterKey: 'master',
+      logger: { info: (m) => void logs.push(m), warn: () => undefined, error: () => undefined },
+      deps,
+      image: { preparer, commit: SHA, pollMs: 5 },
+    });
+    await live.reload();
+    expect(live.maybe()).toBeNull();
+    expect(logs).toContainEqual(expect.stringMatching(/^waiting on the disk image for build/));
+    await live.reload(); // the periodic re-read changes nothing, and adds no second wait
+
+    group.finish();
+    await until(() => live.maybe() !== null);
+    expect(live.status()).toMatchObject({
+      problem: null,
+      image: { state: 'ready', diskImageId: 'img-1' },
+    });
+    expect(logs).toContainEqual(
+      expect.stringMatching(/is ready \(\{diskImage\}\); sandboxes are made from it$/)
+    );
+    expect(group.created).toEqual([BASE]);
+  });
+
   it('cannot be had by a build that does not know its commit, and says to pin one', async () => {
     const live = new OrchestratorHost({
       read: async () => automatic(),

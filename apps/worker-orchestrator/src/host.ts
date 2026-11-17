@@ -58,6 +58,8 @@ export class OrchestratorHost {
   /** The preparation the stored setup is waiting on, by its key; null when it pins its image or is not Azure. */
   private imageKey: string | null = null;
   private lastRow: StoredRow | null = null;
+  /** The preparation this host is waiting on to finish, by key: it is waited on once, however it began. */
+  private awaiting: string | null = null;
   private providerName: string | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
 
@@ -177,17 +179,31 @@ export class OrchestratorHost {
           `the disk image for build ${automatic.plan.build} is being prepared from ${automatic.plan.base}; sandboxes are made once it is ready`,
           'starting'
         );
-        if (!status) {
+        // Waited on whoever began it — this host, or a Test connection
+        // run before the setup was saved — and once: when it ends, the
+        // setup is read again and the image it came to is taken up.
+        if (this.awaiting !== automatic.key) {
+          this.awaiting = automatic.key;
           this.options.logger.info(
-            'preparing the disk image for build {build} from {base}; sandboxes are made once it is ready',
+            status
+              ? 'waiting on the disk image for build {build}, already being prepared from {base}; sandboxes are made once it is ready'
+              : 'preparing the disk image for build {build} from {base}; sandboxes are made once it is ready',
             { component: COMPONENT, build: automatic.plan.build, base: automatic.plan.base }
           );
+          const key = automatic.key;
           void startDiskImage(row, automatic, image.preparer, this.options.deps, {
             ...(image.pollMs ? { pollMs: image.pollMs } : {}),
           })
-            .catch(() => undefined)
+            .then(
+              (id) =>
+                this.options.logger.info(
+                  'the disk image for build {build} is ready ({diskImage}); sandboxes are made from it',
+                  { component: COMPONENT, build: automatic.plan.build, diskImage: id }
+                ),
+              () => undefined
+            )
             .finally(() => {
-              // Ready or failed: read the setup again and act on what the preparation came to.
+              if (this.awaiting === key) this.awaiting = null;
               this.fingerprint = null;
               void this.reload();
             });

@@ -12,7 +12,9 @@ jest.mock('@/lib/access', () => ({ checkAccess: jest.fn(), ROLE_OPERATOR: 'renke
 jest.mock('@/lib/audit-events', () => ({ recordAuditEvent: jest.fn() }));
 jest.mock('@renkei/sandbox-client', () => ({
   ...jest.requireActual('@renkei/sandbox-client'),
-  checkSandboxOrchestrator: jest.fn(),
+  startSandboxCheck: jest.fn(),
+  sandboxCheckStatus: jest.fn(),
+  cancelSandboxCheck: jest.fn(),
   sandboxOrchestratorStatus: jest.fn(),
 }));
 
@@ -21,7 +23,8 @@ import { getConnectorConfig, invalidateConnectorConfigCache } from '@renkei/conn
 import { loadKeyring } from '@renkei/crypto';
 import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { GET, PUT } from './route';
-import { POST as TEST } from './test-connection/route';
+import { GET as TEST_STATUS, POST as TEST } from './test-connection/route';
+import { POST as CANCEL } from './test-connection/cancel/route';
 
 const { checkAccess } = jest.requireMock<{ checkAccess: jest.Mock }>('@/lib/access');
 const { recordAuditEvent } = jest.requireMock<{ recordAuditEvent: jest.Mock }>(
@@ -74,6 +77,7 @@ beforeEach(() => {
   invalidateConnectorConfigCache();
   checkAccess.mockResolvedValue({ subject: 'operator@example.com' });
   client.sandboxOrchestratorStatus!.mockResolvedValue(STATUS);
+  client.sandboxCheckStatus!.mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -194,13 +198,19 @@ describe('PUT /api/admin/sandboxes', () => {
   );
 });
 
-describe('POST /api/admin/sandboxes/test-connection', () => {
-  it('hands the orchestrator the setup about to be saved — typed secrets over stored ones — and answers what it said, storing nothing', async () => {
+describe('Test connection: /api/admin/sandboxes/test-connection', () => {
+  const RUNNING = {
+    id: 'job-1',
+    state: 'running',
+    steps: [{ at: '2026-11-17T06:00:00.000Z', text: 'Reaching the sandbox group.' }],
+    detail: null,
+    startedAt: '2026-11-17T06:00:00.000Z',
+    endedAt: null,
+  };
+
+  it('starts the test of the setup about to be saved — typed secrets over stored ones — as a job, answered at once, storing nothing', async () => {
     await PUT(request('PUT', FORM));
-    client.checkSandboxOrchestrator!.mockResolvedValue({
-      ok: false,
-      detail: 'AuthorizationFailed',
-    });
+    client.startSandboxCheck!.mockResolvedValue(RUNNING);
     const response = await TEST(
       request(
         'POST',
@@ -209,8 +219,8 @@ describe('POST /api/admin/sandboxes/test-connection', () => {
       )
     );
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ok: false, detail: 'AuthorizationFailed' });
-    expect(client.checkSandboxOrchestrator).toHaveBeenCalledWith({
+    expect(await response.json()).toEqual({ job: RUNNING });
+    expect(client.startSandboxCheck).toHaveBeenCalledWith({
       settings: expect.objectContaining({
         azure: expect.objectContaining({ region: 'westus2' }),
       }),
@@ -223,12 +233,32 @@ describe('POST /api/admin/sandboxes/test-connection', () => {
     expect((await storedRow())?.settings).toMatchObject({ azure: { region: 'eastus2' } });
   });
 
-  it('says what is missing rather than trying a setup that could not be saved', async () => {
+  it('answers a setup that could not be saved as a test that ended before it began', async () => {
     const response = await TEST(request('POST', { ...FORM, envValues: {} }, '/test-connection'));
-    expect(await response.json()).toEqual({
-      ok: false,
+    expect((await response.json()).job).toMatchObject({
+      id: 'not-started',
+      state: 'failed',
       detail: 'Enter a value for DELEGATE_WORKER_API_KEY.',
     });
-    expect(client.checkSandboxOrchestrator).not.toHaveBeenCalled();
+    expect(client.startSandboxCheck).not.toHaveBeenCalled();
+  });
+
+  it('reads the test running, and cancels it', async () => {
+    client.sandboxCheckStatus!.mockResolvedValue(RUNNING);
+    expect(await (await TEST_STATUS(request('GET', undefined, '/test-connection'))).json()).toEqual(
+      {
+        job: RUNNING,
+      }
+    );
+    client.cancelSandboxCheck!.mockResolvedValue(RUNNING);
+    const cancelled = await CANCEL(request('POST', { id: 'job-1' }, '/test-connection/cancel'));
+    expect(await cancelled.json()).toEqual({ job: RUNNING });
+    expect(client.cancelSandboxCheck).toHaveBeenCalledWith('job-1');
+  });
+
+  it('is an operator’s only', async () => {
+    checkAccess.mockResolvedValue(null);
+    expect((await TEST_STATUS(request('GET', undefined, '/test-connection'))).status).toBe(401);
+    expect((await CANCEL(request('POST', {}, '/test-connection/cancel'))).status).toBe(401);
   });
 });

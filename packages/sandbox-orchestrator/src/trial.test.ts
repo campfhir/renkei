@@ -38,7 +38,10 @@ function worker(
   return { probe, opened };
 }
 
-function setup(boot: { boots?: boolean; answer?: number } = {}) {
+function setup(
+  boot: { boots?: boolean; answer?: number } = {},
+  extra: { signal?: AbortSignal; onStep?: (step: string) => void } = {}
+) {
   const provider = new FakeSandboxProvider();
   const trials = new TrialSandboxes(MASTER);
   const { probe, opened } = worker(provider, trials, boot);
@@ -55,6 +58,7 @@ function setup(boot: { boots?: boolean; answer?: number } = {}) {
       timeoutMs: 60_000,
       probe,
       ...clock(),
+      ...extra,
     });
   return { provider, trials, opened, run };
 }
@@ -130,5 +134,45 @@ describe('Test connection’s test sandbox', () => {
     const result = await run();
     expect(result.ok).toBe(true);
     expect(result.detail).toContain('Removing the test sandbox (m1) failed: engine busy');
+  });
+
+  it('says each step as it reaches it', async () => {
+    const steps: string[] = [];
+    const { run } = setup({}, { onStep: (step) => steps.push(step) });
+    await run();
+    expect(steps).toEqual([
+      'Making a test sandbox from the disk image "img-1".',
+      'The test sandbox m1 was made; waiting for it to start.',
+      'It is running at http://m1.sandbox.test:8092; waiting for its worker to ask for its environment.',
+      'Its worker answered at http://m1.sandbox.test:8092.',
+      'Removing the test sandbox m1.',
+    ]);
+  });
+
+  it('cancelled while it waits, removes its sandbox and says it was cancelled', async () => {
+    const controller = new AbortController();
+    const { provider, run } = setup(
+      { boots: false },
+      {
+        signal: controller.signal,
+        onStep: (step) => {
+          if (step.startsWith('It is running')) controller.abort();
+        },
+      }
+    );
+    const result = await run();
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(
+      /^The test was cancelled after \d+ s; its sandbox has been removed\.$/
+    );
+    expect(provider.calls).toEqual(['create:trial-1', 'destroy:m1']);
+  });
+
+  it('cancelled before it starts, makes nothing', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const { provider, run } = setup({}, { signal: controller.signal });
+    expect((await run()).ok).toBe(false);
+    expect(provider.calls).toEqual([]);
   });
 });

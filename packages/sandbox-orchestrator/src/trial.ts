@@ -136,6 +136,10 @@ export interface TrySandboxOptions {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   probe?: TrialProbe;
+  /** Cancels the test: the sandbox is removed and the answer says it was cancelled. */
+  signal?: AbortSignal;
+  /** Told each step as it is reached, in a sentence: for the page and the log. */
+  onStep?: (step: string) => void;
 }
 
 const DEFAULT_TIMEOUT_MS = 5 * 60_000;
@@ -165,7 +169,17 @@ export async function trySandbox(
   const seconds = (): number => Math.round((now() - started) / 1000);
   let providerId: string | null = null;
 
+  const step = (text: string): void => options.onStep?.(text);
+  const canceled = (): { ok: false; detail: string } => ({
+    ok: false,
+    detail: `The test was cancelled after ${seconds()} s; its sandbox has been removed.`,
+  });
+  let calledBack = false;
+  let running = false;
+
   const outcome = await (async (): Promise<{ ok: boolean; detail: string }> => {
+    if (options.signal?.aborted) return canceled();
+    step(`Making a test sandbox from ${options.source}.`);
     try {
       ({ providerId } = await options.provider.create({
         sandboxId,
@@ -180,10 +194,12 @@ export async function trySandbox(
       };
     }
 
+    step(`The test sandbox ${providerId} was made; waiting for it to start.`);
     let state: ProviderSandboxState | 'gone';
     let address: string | null;
     let lastStatus = 0;
     for (;;) {
+      if (options.signal?.aborted) return canceled();
       try {
         const seen = await options.provider.inspect(providerId);
         state = seen ? seen.state : 'gone';
@@ -202,6 +218,16 @@ export async function trySandbox(
           } before its worker answered.`,
         };
       }
+      if (state === 'running' && address && !running) {
+        running = true;
+        step(`It is running at ${address}; waiting for its worker to ask for its environment.`);
+      }
+      if (!calledBack && trial.bootstrapped()) {
+        calledBack = true;
+        step(
+          `Its worker fetched its sealed environment from ${callbackUrl}; waiting for it to answer.`
+        );
+      }
       if (state === 'running' && address) {
         let headers: Record<string, string>;
         try {
@@ -214,6 +240,7 @@ export async function trySandbox(
         }
         lastStatus = (await probe(address, headers)).status;
         if (lastStatus >= 200 && lastStatus < 300) {
+          step(`Its worker answered at ${address}.`);
           return {
             ok: true,
             detail: `Made a test sandbox from ${options.source}: it fetched its sealed environment from ${callbackUrl} and its worker answered at ${address} after ${seconds()} s. It has been removed.`,
@@ -253,6 +280,7 @@ export async function trySandbox(
 
   trial.done();
   if (providerId) {
+    step(`Removing the test sandbox ${providerId}.`);
     try {
       await options.provider.destroy(providerId);
     } catch (error) {
