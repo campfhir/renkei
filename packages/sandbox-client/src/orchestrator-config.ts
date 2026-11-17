@@ -181,9 +181,26 @@ const CPU = /^\d{2,6}m$/;
 const SIZE = /^\d{1,6}(Mi|Gi)$/;
 const CIDR = /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/;
 const IDENTITY = /^[^\s@,]+@[^\s@,]+$/;
-/** A registry path without a tag or digest: the commit is the tag. */
-const IMAGE_REPOSITORY =
-  /^[a-z0-9]+([._-][a-z0-9]+)*(\.[a-z0-9-]+)*(:\d+)?(\/[a-z0-9]+([._-][a-z0-9]+)*)+$/;
+/** A registry host, with its port when it has one. */
+const IMAGE_HOST = /^[a-z0-9][a-z0-9.-]{0,252}(:\d{1,5})?$/;
+/** One path component of a repository. */
+const IMAGE_PATH_PART = /^[a-z0-9][a-z0-9._-]{0,127}$/;
+
+/**
+ * A registry path without a tag or digest — the commit is the tag — such
+ * as docker.io/acme/renkei-sandbox. Checked part by part with patterns
+ * that cannot backtrack, since the value comes from a form.
+ */
+function isImageRepository(value: string): boolean {
+  if (value.length > 255) return false;
+  const [host, ...path] = value.split('/');
+  return (
+    host !== undefined &&
+    IMAGE_HOST.test(host) &&
+    path.length > 0 &&
+    path.every((part) => IMAGE_PATH_PART.test(part))
+  );
+}
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -296,7 +313,7 @@ export function parseOrchestratorInput(body: unknown): OrchestratorInput | strin
     if (azure.diskImage && !AZURE_NAME.test(azure.diskImage)) {
       return 'The disk image is its id in the sandbox group; leave it blank to have one built for this release.';
     }
-    if (!azure.diskImage && !IMAGE_REPOSITORY.test(azure.imageRepository)) {
+    if (!azure.diskImage && !isImageRepository(azure.imageRepository)) {
       return 'The image repository is a container image without its tag, such as docker.io/acme/renkei-sandbox.';
     }
     if (!CPU.test(azure.cpu)) return 'CPU is in millicores, such as 2000m.';

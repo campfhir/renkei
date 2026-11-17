@@ -64,6 +64,31 @@ describe('the sandbox setup an operator saves', () => {
     expect(own.settings.azure.imageRepository).toBe('myregistry.azurecr.io/renkei-sandbox');
   });
 
+  it('takes an image repository as a registry path, without its tag, and answers a long hostile one at once', () => {
+    const repository = (imageRepository: string) =>
+      parseOrchestratorInput(form({ azure: { ...AZURE, diskImage: '', imageRepository } }));
+    for (const good of [
+      'docker.io/scotteremiaroden/renkei-sandbox',
+      'myregistry.azurecr.io/renkei-sandbox',
+      'localhost:5000/team/renkei_sandbox',
+    ]) {
+      expect(typeof repository(good)).toBe('object');
+    }
+    for (const bad of [
+      'renkei-sandbox',
+      'docker.io/acme/sandbox:latest',
+      'docker.io/Acme/x',
+      'docker.io//x',
+    ]) {
+      expect(repository(bad)).toMatch(/without its tag/);
+    }
+    // What a backtracking pattern takes seconds over is refused in an instant.
+    const started = Date.now();
+    expect(repository(`0${'.0'.repeat(50_000)}!`)).toMatch(/without its tag/);
+    expect(repository(`a/0${'.0'.repeat(50_000)}!`)).toMatch(/without its tag/);
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
   it('or a Docker engine, which needs none of the Azure fields', () => {
     const input = parsed({
       provider: 'docker',
