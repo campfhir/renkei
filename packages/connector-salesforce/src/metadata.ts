@@ -15,6 +15,7 @@
 
 import { SALESFORCE_API_VERSION } from './api';
 import { isSoqlIdentifier } from './soql';
+import { parseRunTestResult, type ApexTestRun } from './apex-tests';
 
 export const METADATA_NAMESPACE = 'http://soap.sforce.com/2006/04/metadata';
 
@@ -597,6 +598,8 @@ export interface DeployOutcome {
   failures: DeployFailure[];
   /** Salesforce's own message when the deploy as a whole failed. */
   errorMessage?: string;
+  /** The Apex tests it ran, when it ran any. */
+  tests?: ApexTestRun;
 }
 
 const num = (value: unknown): number =>
@@ -624,6 +627,7 @@ export function parseDeployResult(body: unknown): DeployOutcome {
     };
   });
   const errorMessage = str(result.errorMessage);
+  const tests = parseRunTestResult(details);
   return {
     id: str(result.id) || str(outer.id),
     done: flag(result.done),
@@ -634,5 +638,6 @@ export function parseDeployResult(body: unknown): DeployOutcome {
     componentsTotal: num(result.numberComponentsTotal),
     failures,
     ...(errorMessage ? { errorMessage } : {}),
+    ...(tests ? { tests } : {}),
   };
 }
