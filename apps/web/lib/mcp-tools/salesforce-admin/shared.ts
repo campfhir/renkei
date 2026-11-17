@@ -132,8 +132,11 @@ export function apexTestLines(validation: Validation, payload: MetadataPayload):
 }
 
 /** Store the proposal, validate it, and answer with the outcome and the review link. */
+/** What proposing needs of its caller — an MCP tool's context, or a code project's turn. */
+export type ProposalContext = Pick<MCPToolContext, 'subject' | 'agent' | 'origin'>;
+
 export async function proposeAndValidate(
-  context: MCPToolContext,
+  context: ProposalContext,
   access: SalesforceAccess,
   input: {
     kind: string;

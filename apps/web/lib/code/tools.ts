@@ -85,6 +85,7 @@ import {
 import { moreGitTools } from './git-tools';
 import { previewTools } from './preview-tools';
 import { pipelineVariableTools } from './pipeline-tools';
+import { salesforceApexTools } from './salesforce-apex-tools';
 import { DIFF_FENCE_CLOSE, DIFF_FENCE_OPEN } from './diff';
 import { isRecord } from '@renkei/guards';
 
@@ -134,6 +135,12 @@ export interface CodeToolBinding {
    * the code_service_* tools do not exist in the turn.
    */
   servicesEnabled?: boolean;
+  /**
+   * The person holds a Salesforce Admin connection with the Apex
+   * capability (salesforce-apex-access.ts): the code_salesforce_* tools
+   * exist in the turn. Absent, they do not.
+   */
+  salesforceApex?: boolean;
   /**
    * These are a sub-agent's tools, bound to its own worktree
    * (`subagentCheckout` below): no delegating from here, so none is built.
@@ -1231,6 +1238,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
     })
   );
   if (binding.servicesEnabled) tools.push(...serviceTools(target, failed));
+  if (binding.salesforceApex) tools.push(...salesforceApexTools({ target, ref, failed }));
   // One recovery state for the whole turn: the tools share the clone
   // that brings the checkout back, the count of times it was lost, and
   // the refusal once that count is spent.

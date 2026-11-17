@@ -7,7 +7,7 @@ import { getPublicBaseUrl } from '@renkei/settings';
 import type { MCPToolContext } from '../common';
 
 /** The review page's URL, less the request's id: absolute when the deployment knows its address. */
-export function reviewPrefix(context: MCPToolContext): string {
+export function reviewPrefix(context: Pick<MCPToolContext, 'origin'>): string {
   const base = context.origin || getPublicBaseUrl() || '';
   return `${base}/salesforce-admin/changes/`;
 }

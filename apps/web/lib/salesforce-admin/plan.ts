@@ -109,6 +109,8 @@ export interface ComponentView {
   /** 'delete' takes the component out of the org (a destructive deploy). */
   action: 'create' | 'update' | 'delete';
   rows: ViewRow[];
+  /** Source code's change as a unified diff (`@@ -1,4 +1,6 @@`, ` `/`-`/`+` lines): Apex. */
+  diff?: string;
 }
 
 export type Precondition =
@@ -409,6 +411,7 @@ export function readMetadataPayload(value: unknown): MetadataPayload | null {
       value: str(row.value),
       ...(typeof row.from === 'string' ? { from: row.from } : {}),
     })),
+    ...(typeof c.diff === 'string' && c.diff ? { diff: c.diff } : {}),
   }));
   const preconditions = recs(entry.preconditions).flatMap((p): Precondition[] => {
     const object = str(p.object);
