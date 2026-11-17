@@ -51,8 +51,13 @@ const file = (n: number, subject: string, expires = new Date(Date.UTC(2026, 0, 2
 const REFUSED = /scope this sandbox does not serve/;
 
 describe('the wire', () => {
-  it('carries dates, bytes and bigints through JSON and back as they were', () => {
+  it('carries dates, bytes, bigints and maps through JSON and back as they were', () => {
     const value = {
+      settings: new Map<string, unknown>([
+        ['sandbox_services_enabled', true],
+        ['disabled_connectors', ['jira']],
+        ['since', new Date(0)],
+      ]),
       at: new Date('2026-01-02T03:04:05.678Z'),
       bytes: Buffer.from([0, 1, 255]),
       big: 9_007_199_254_740_993n,
@@ -68,7 +73,7 @@ describe('the wire', () => {
   it('drops undefined, as a statement would, and refuses what is not plain data', () => {
     expect(encodeWire({ a: 1, b: undefined })).toEqual({ a: 1 });
     expect(encodeWire(undefined)).toBeNull();
-    expect(() => encodeWire({ at: new Map() })).toThrow(/plain data/);
+    expect(() => encodeWire({ at: new Set() })).toThrow(/plain data/);
   });
 
   it('leaves an ordinary object that merely has a $date among other fields alone', () => {
@@ -158,6 +163,12 @@ describe('a sandbox’s store', () => {
     const { real, remote } = wired();
     await real.settings.set('log_level', 'debug');
     expect(await remote.settings.get('log_level')).toBe('debug');
+    // All of them at once, as the worker reads its feature switches: a Map, across the wire.
+    await real.settings.set('sandbox_services_enabled', true);
+    const all = await remote.settings.all();
+    expect(all).toBeInstanceOf(Map);
+    expect(all.get('log_level')).toBe('debug');
+    expect(all.get('sandbox_services_enabled')).toBe(true);
     await expect(remote.settings.set('log_level', 'error')).rejects.toThrow(
       /settings.set is not a call a sandbox may make/
     );

@@ -33,6 +33,7 @@ import path from 'node:path';
 import type { Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { LLM_STUB_REPLY } from './constants';
+import { pointerReaches } from './support/settle';
 import { addStubModel, removeModel } from './support/stub-model';
 import { createChat, sendForCards, widgetUri, type ToolCard } from './support/tool-cards';
 
@@ -137,7 +138,13 @@ test('a card already on the page stays editable after another card is discarded'
 
     await expect(page.locator('iframe[title="Preview card"]')).toHaveCount(2, COLD);
     const first = page.frameLocator('iframe[title="Preview card"]').first();
-    await first.getByRole('button', { name: 'Discard' }).click(COLD);
+    const discard = first.getByRole('button', { name: 'Discard' });
+    await expect(discard).toBeEnabled(COLD);
+    // The card has just opened and sized itself to its form: until Chrome
+    // routes the pointer to the button as drawn now, a press can land on
+    // what was there before and the card never hears it (AGENTS.md, "Pitfalls").
+    await pointerReaches(page, discard);
+    await discard.click();
     await expect(first.locator('.done-headline')).toHaveText('Discarded', COLD);
     expect(calls).toEqual([
       expect.objectContaining({
