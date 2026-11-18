@@ -208,6 +208,7 @@ export const EXPECTED_MIGRATIONS = [
   '182-sandbox-subjects',
   '183-ci-blocks',
   '184-ci-targets',
+  '185-ci-pipelines',
 ];
 
 export interface MigrationStatus {

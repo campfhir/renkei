@@ -47,6 +47,7 @@ import { artifactScenarios } from './artifacts/scenarios';
 import { codeProjectScenarios } from './code-projects/scenarios';
 import { codeTemplateScenarios } from './code-templates/scenarios';
 import { ciBlockScenarios } from './ci-blocks/scenarios';
+import { ciPipelineScenarios } from './ci-pipelines/scenarios';
 import { ciTargetScenarios } from './ci-targets/scenarios';
 import { chatModelScenarios } from './chat-models/scenarios';
 import { actionableItemScenarios } from './actionable-items/scenarios';
@@ -143,6 +144,7 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...codeProjectScenarios,
   ...codeTemplateScenarios,
   ...ciBlockScenarios,
+  ...ciPipelineScenarios,
   ...ciTargetScenarios,
   ...chatModelScenarios,
   ...actionableItemScenarios,

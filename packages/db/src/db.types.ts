@@ -737,6 +737,18 @@ export interface CiBlockVersions {
   version: number;
 }
 
+export interface CiPipelines {
+  created_at: Generated<Timestamp>;
+  host: string;
+  project_id: string;
+  pull_request_url: string | null;
+  spec: Json;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+  written_at: Timestamp | null;
+  written_text: string | null;
+}
+
 export interface CiTargets {
   created_at: Generated<Timestamp>;
   created_by: string | null;
@@ -1851,6 +1863,7 @@ export interface DB {
   key_delegations: KeyDelegations;
   ci_block_versions: CiBlockVersions;
   ci_blocks: CiBlocks;
+  ci_pipelines: CiPipelines;
   ci_targets: CiTargets;
   coach_mark_progress: CoachMarkProgress;
   code_language_gaps: CodeLanguageGaps;
