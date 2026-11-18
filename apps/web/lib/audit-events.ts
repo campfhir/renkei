@@ -176,6 +176,9 @@ export type AuditAction =
   | 'code.branch_switch'
   /** Every uncommitted change on the checkout discarded (git reset --hard + clean -fd). */
   | 'code.discard_changes'
+  /** A CI building block's draft published as its next version (Organization → Building blocks). */
+  | 'ci.block_published'
+  | 'ci.block_deleted'
   /**
    * A Jira admin change request was applied from its review page — what
    * Renkei changed in Jira's configuration, and on whose click. Recorded

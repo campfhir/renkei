@@ -85,6 +85,9 @@ importers:
       '@renkei/capability-registry':
         specifier: workspace:*
         version: link:../../packages/capability-registry
+      '@renkei/ci-blocks':
+        specifier: workspace:*
+        version: link:../../packages/ci-blocks
       '@renkei/connector-admanager':
         specifier: workspace:*
         version: link:../../packages/connector-admanager
