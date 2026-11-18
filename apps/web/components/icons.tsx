@@ -52,12 +52,12 @@ export const ICONS = {
   /** A ring around a dot — the unread badge, "put it back". */
   unreadDot: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 12h.01',
   folder: 'M3 19V5h6l2 3h10v11z',
-  /** A rocket climbing to the upper right: window, two fins, a flame — Deployments. */
+  /** A rocket climbing to the upper right: window, two swept fins, speed lines — Deployments. */
   deploy:
-    'M17.86 6.14C18.22 9.32 16.8 12.15 14.68 14.27L11.15 17.8L6.2 12.85L9.73 9.32C11.85 7.2 14.68 5.78 17.86 6.14Z' +
-    'M14.15 9.85A1.25 1.25 0 1 0 12.38 11.62A1.25 1.25 0 1 0 14.15 9.85Z' +
-    'M8.67 10.38L4.78 10.73L3.01 12.5L5.84 13.21M13.62 15.33L13.27 19.22L11.5 20.99L10.79 18.16' +
-    'M7.61 14.27C6.2 15.68 5.49 18.51 5.49 18.51C5.49 18.51 8.32 17.8 9.73 16.39',
+    'M18.22 5.78C18.39 8.79 16.8 11.44 14.68 13.56L11.15 17.1L6.9 12.85L10.44 9.32C12.56 7.2 15.21 5.61 18.22 5.78Z' +
+    'M14.33 9.67A1.25 1.25 0 1 0 12.56 11.44A1.25 1.25 0 1 0 14.33 9.67Z' +
+    'M9.73 10.03C7.61 9.32 5.84 10.38 4.08 12.15L6.9 12.85M13.97 14.27C14.68 16.39 13.62 18.16 11.85 19.92L11.15 17.1' +
+    'M9.03 14.97L4.78 19.22M6.2 14.97L4.78 16.39M9.03 17.8L7.61 19.22',
   /** Git, one glyph per verb: for the code tools' calls in a chat. */
   gitClone: 'M4 5h16v14H4zM12 9v6M9 12l3 3 3-3',
   gitCommit: 'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM3 12h6M15 12h6',
