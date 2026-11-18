@@ -13,6 +13,33 @@ export function postgresCiPipelines(db: () => Kysely<DB>): CiPipelineStore {
         .executeTakeFirst();
       return row ? ciPipelineFromRow(row) : null;
     },
+    async list() {
+      const rows = await db()
+        .selectFrom('ci_pipelines')
+        .selectAll()
+        .orderBy('project_id')
+        .execute();
+      return rows.map(ciPipelineFromRow);
+    },
+    async findByRepoKey(host, repoKey) {
+      const rows = await db()
+        .selectFrom('ci_pipelines')
+        .selectAll()
+        .where('host', '=', host)
+        .where('repo_key', '=', repoKey)
+        .orderBy('updated_at', 'desc')
+        .orderBy('project_id')
+        .execute();
+      return rows.map(ciPipelineFromRow);
+    },
+    async setRepoKey(projectId, repoKey) {
+      const result = await db()
+        .updateTable('ci_pipelines')
+        .set({ repo_key: repoKey })
+        .where('project_id', '=', projectId)
+        .executeTakeFirst();
+      return Number(result.numUpdatedRows ?? 0) > 0;
+    },
     async save(projectId, input) {
       const spec = JSON.stringify(input.spec ?? null);
       await db()

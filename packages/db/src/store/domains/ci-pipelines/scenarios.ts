@@ -20,6 +20,7 @@ const fixture = {
       written_text: '# Built in Renkei\nname: Pipeline\n',
       written_at: at(30),
       pull_request_url: 'https://github.com/acme/sync-worker/pull/7',
+      repo_key: 'acme/sync-worker',
       updated_by: 'ann',
       created_at: at(10),
       updated_at: at(20),
@@ -33,10 +34,40 @@ const kept = (record: CiPipelineRecord | null) =>
     spec: record.spec,
     writtenText: record.writtenText,
     pullRequestUrl: record.pullRequestUrl,
+    repoKey: record.repoKey,
     updatedBy: record.updatedBy,
   };
 
 export const ciPipelineScenarios: Scenario<DataStore>[] = [
+  {
+    method: 'ciPipelines.list',
+    name: 'every pipeline, by project',
+    fixture,
+    run: async (store) => {
+      await store.ciPipelines.save(PROJECT.annChat, { host: 'bitbucket', spec, updatedBy: 'ann' });
+      return (await store.ciPipelines.list()).map(kept);
+    },
+  },
+  {
+    method: 'ciPipelines.findByRepoKey',
+    name: 'by host and repository, the last saved first',
+    fixture,
+    run: async (store) => [
+      (await store.ciPipelines.findByRepoKey('github', 'acme/sync-worker')).map((r) => r.projectId),
+      await store.ciPipelines.findByRepoKey('bitbucket', 'acme/sync-worker'),
+      await store.ciPipelines.findByRepoKey('github', 'acme/other'),
+    ],
+  },
+  {
+    method: 'ciPipelines.setRepoKey',
+    name: 'records the repository, and refuses a project with no pipeline',
+    fixture,
+    run: async (store) => [
+      await store.ciPipelines.setRepoKey(PROJECT.annCode, '8f2c1a9e-0000-4000-8000-00000000abcd'),
+      await store.ciPipelines.setRepoKey(PROJECT.annChat, 'x'),
+      (await store.ciPipelines.get(PROJECT.annCode))?.repoKey,
+    ],
+  },
   {
     method: 'ciPipelines.get',
     name: 'one, and none',

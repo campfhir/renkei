@@ -737,11 +737,30 @@ export interface CiBlockVersions {
   version: number;
 }
 
+export interface CiDeployments {
+  actor: string | null;
+  branch: string | null;
+  commit_sha: string;
+  created_at: Generated<Timestamp>;
+  detail: string | null;
+  environment: string;
+  finished_at: Timestamp | null;
+  id: Generated<string>;
+  project_id: string;
+  run_id: string;
+  run_url: string | null;
+  started_at: Timestamp;
+  status: string;
+  target: string | null;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface CiPipelines {
   created_at: Generated<Timestamp>;
   host: string;
   project_id: string;
   pull_request_url: string | null;
+  repo_key: string | null;
   spec: Json;
   updated_at: Generated<Timestamp>;
   updated_by: string;
@@ -1863,6 +1882,7 @@ export interface DB {
   key_delegations: KeyDelegations;
   ci_block_versions: CiBlockVersions;
   ci_blocks: CiBlocks;
+  ci_deployments: CiDeployments;
   ci_pipelines: CiPipelines;
   ci_targets: CiTargets;
   coach_mark_progress: CoachMarkProgress;

@@ -209,6 +209,7 @@ export const EXPECTED_MIGRATIONS = [
   '183-ci-blocks',
   '184-ci-targets',
   '185-ci-pipelines',
+  '186-ci-deployments',
 ];
 
 export interface MigrationStatus {

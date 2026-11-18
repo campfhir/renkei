@@ -1,3 +1,4 @@
+import { orderBy } from '../../memory/order';
 import { toJson, type MemoryTables } from '../../memory/tables';
 import { ciPipelineFromRow } from './record';
 import type { CiPipelineStore } from './types';
@@ -7,6 +8,23 @@ export function memoryCiPipelines(tables: MemoryTables): CiPipelineStore {
     async get(projectId) {
       const row = tables.first('ci_pipelines', (r) => r.project_id === projectId);
       return row ? ciPipelineFromRow(row) : null;
+    },
+    async list() {
+      return orderBy(tables.select('ci_pipelines'), [(r) => r.project_id]).map(ciPipelineFromRow);
+    },
+    async findByRepoKey(host, repoKey) {
+      return orderBy(
+        tables.select('ci_pipelines').filter((r) => r.host === host && r.repo_key === repoKey),
+        [(r) => r.updated_at, 'desc'],
+        [(r) => r.project_id]
+      ).map(ciPipelineFromRow);
+    },
+    async setRepoKey(projectId, repoKey) {
+      const wanted = projectId;
+      return (
+        tables.update('ci_pipelines', (r) => r.project_id === wanted, { repo_key: repoKey })
+          .length > 0
+      );
     },
     async save(projectId, input) {
       const wanted = projectId;
@@ -25,6 +43,7 @@ export function memoryCiPipelines(tables: MemoryTables): CiPipelineStore {
         written_text: null,
         written_at: null,
         pull_request_url: null,
+        repo_key: null,
         updated_by: input.updatedBy,
         created_at: now,
         updated_at: now,
