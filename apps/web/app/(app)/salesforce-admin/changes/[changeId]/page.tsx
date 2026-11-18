@@ -23,6 +23,8 @@ import { SALESFORCE_ADMIN_KIND } from '@/lib/salesforce-kinds';
 import LocalTime from '@/components/local-time';
 import { ChangeStatePill, ValidationPill, validationState } from '../change-status';
 import ChangeActions, { RefreshWhileRunning } from './change-actions';
+import DiffView from '../../../code/_components/diff-view';
+import { apexDiffText, apexTestsView } from './apex-review.model';
 
 /** A component's Metadata API type, as the review page names it. */
 const TYPE_LABELS: Record<string, string> = {
@@ -41,7 +43,75 @@ const TYPE_LABELS: Record<string, string> = {
   ReportType: 'report type',
   ReportFolder: 'report folder',
   Report: 'report',
+  ApexClass: 'Apex class',
+  ApexTrigger: 'Apex trigger',
 };
+
+/** An Apex change's tests: which ran, what failed, each class's coverage, and what that allows. */
+function ApexTests({ view }: { view: NonNullable<ReturnType<typeof apexTestsView>> }) {
+  return (
+    <div
+      className="mt-3 border-t border-gray-200 pt-3 dark:border-gray-800"
+      data-testid="change-apex-tests"
+    >
+      <h3 className="mb-1 font-semibold">Apex tests</h3>
+      <p className="mb-1 text-gray-600 dark:text-gray-400">
+        Every validation and deploy runs{' '}
+        <span className="font-mono text-xs">{view.tests.join(', ')}</span>. It deploys only when
+        every test passes and each class and trigger it changes is at least {view.threshold}%
+        covered.
+      </p>
+      {view.state === 'pending' ? (
+        <p className="text-gray-600 dark:text-gray-400">No results yet.</p>
+      ) : (
+        <>
+          <p
+            className={
+              view.failures.length > 0 || view.ran === 0 ? 'text-red-700 dark:text-red-400' : ''
+            }
+          >
+            {view.passed} of {view.ran} test{view.ran === 1 ? '' : 's'} passed.
+          </p>
+          {view.failures.length > 0 && (
+            <ul className="mt-1 space-y-1">
+              {view.failures.map((failure) => (
+                <li key={failure.test} className="break-words">
+                  <span className="font-mono text-xs">{failure.test}</span>: {failure.message}
+                  {failure.trace && (
+                    <span className="block font-mono text-[11px] text-gray-500">
+                      {failure.trace}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {view.coverage.length > 0 && (
+            <ul className="mt-1 space-y-0.5">
+              {view.coverage.map((row) => (
+                <li key={`${row.kind}:${row.name}`} className="flex justify-between gap-3">
+                  <span className="min-w-0 font-mono text-xs break-all">{row.name}</span>
+                  <span
+                    className={`shrink-0 ${row.enough ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}
+                  >
+                    {row.percent}% covered
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p
+            className={`mt-2 font-medium ${view.state === 'deploys' ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}
+          >
+            {view.state === 'deploys'
+              ? 'The tests allow it to deploy.'
+              : 'The tests do not allow it to deploy. Propose it again once they pass.'}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
 
 const OUTCOME_LABELS: Record<OperationResult['outcome'], string> = {
   done: 'Done',
@@ -123,6 +193,7 @@ export default async function SalesforceAdminChangePage({
   const state = stateOf(change);
   const payload = readMetadataPayload(change.payload);
   const validation = change.validation;
+  const apexTests = apexTestsView(validation, payload);
   const results = change.results;
   // The apply route asks this again on the click; asking now says why
   // Apply is off before anyone presses it.
@@ -293,6 +364,7 @@ export default async function SalesforceAdminChangePage({
               </ul>
             </>
           )}
+          {apexTests && <ApexTests view={apexTests} />}
         </section>
       )}
 
@@ -375,6 +447,11 @@ export default async function SalesforceAdminChangePage({
                     </React.Fragment>
                   ))}
                 </dl>
+                {apexDiffText(component) && (
+                  <div className="mt-2" data-testid="change-apex-diff">
+                    <DiffView diff={apexDiffText(component) ?? ''} openAll />
+                  </div>
+                )}
               </li>
             ))}
           </ol>

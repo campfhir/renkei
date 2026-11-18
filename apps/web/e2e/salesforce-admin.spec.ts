@@ -36,14 +36,16 @@
  * once with a code, and the callback stores the grant as production does.
  *
  * Not reachable here: the proposals (validated, failed, access, picklist,
- * production-gated) and a running deploy. A salesforce_admin_propose_* tool
+ * production-gated, Apex from a code project) and a running deploy. A salesforce_admin_propose_* tool
  * reads the org's live metadata and runs Salesforce's check-only deploy
  * through the grant, server-side, at the org's own My Domain — which the
  * delegate lets an admin token reach and nothing else; no stand-in for
  * Salesforce's API exists, and one that answers describes, SOQL and the
  * Metadata API's deploys is not a small addition. The review pages'
- * rendering of proposals is unit-tested beside lib/salesforce-admin, the
- * deploy itself by lib/salesforce-admin/apply.test.ts against a fake org.
+ * rendering of proposals is unit-tested beside lib/salesforce-admin (an
+ * Apex change's diff and tests: apex-review.model.test.ts beside the
+ * page), the deploy itself by lib/salesforce-admin/apply.test.ts against a
+ * fake org, and the Apex tools by lib/code/salesforce-apex-tools.test.ts.
  *
  * Connector configs are organization-wide: the `salesforce-admin` row is
  * this spec's alone on the server, its two orgs are removed again through
