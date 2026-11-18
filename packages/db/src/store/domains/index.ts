@@ -49,6 +49,7 @@ import { artifacts } from './artifacts';
 import { codeProjects } from './code-projects';
 import { codeTemplates } from './code-templates';
 import { ciBlocks } from './ci-blocks';
+import { ciTargets } from './ci-targets';
 import { chatModels } from './chat-models';
 import { actionableItems } from './actionable-items';
 import { firstRun } from './first-run';
@@ -140,6 +141,7 @@ export const DOMAINS = {
   codeProjects,
   codeTemplates,
   ciBlocks,
+  ciTargets,
   chatModels,
   actionableItems,
   firstRun,

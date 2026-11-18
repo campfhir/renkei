@@ -737,6 +737,17 @@ export interface CiBlockVersions {
   version: number;
 }
 
+export interface CiTargets {
+  created_at: Generated<Timestamp>;
+  created_by: string | null;
+  description: string | null;
+  id: Generated<string>;
+  kind: Generated<string>;
+  labels: Json;
+  name: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface CoachMarkProgress {
   completed_at: Timestamp | null;
   completed_count: Generated<number>;
@@ -1840,6 +1851,7 @@ export interface DB {
   key_delegations: KeyDelegations;
   ci_block_versions: CiBlockVersions;
   ci_blocks: CiBlocks;
+  ci_targets: CiTargets;
   coach_mark_progress: CoachMarkProgress;
   code_language_gaps: CodeLanguageGaps;
   code_project_templates: CodeProjectTemplates;
