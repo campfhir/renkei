@@ -102,6 +102,17 @@ export function adminSections(): AdminSection[] {
       ],
     },
     {
+      label: 'CI and deployments',
+      areas: [
+        {
+          href: `${admin}/ci-blocks`,
+          label: 'Building blocks',
+          detail:
+            'The pipeline steps code projects build from — written once, for Bitbucket Pipelines and GitHub Actions.',
+        },
+      ],
+    },
+    {
       label: 'Usage',
       areas: [
         {
