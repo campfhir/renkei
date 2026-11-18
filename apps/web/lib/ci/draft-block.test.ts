@@ -29,12 +29,10 @@ const good = {
 beforeEach(() => {
   registerDataStore(createMemoryDataStore());
   complete.mockReset();
-  jest
-    .mocked(resolveAgentLlm)
-    .mockResolvedValue({
-      ok: true,
-      val: { provider: { complete }, maxOutputTokens: 8000 },
-    } as never);
+  jest.mocked(resolveAgentLlm).mockResolvedValue({
+    ok: true,
+    val: { provider: { complete }, maxOutputTokens: 8000 },
+  } as never);
 });
 afterEach(() => resetDataStore());
 

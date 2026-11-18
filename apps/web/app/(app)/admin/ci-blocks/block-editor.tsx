@@ -32,8 +32,10 @@ import {
   type BlockDetailView,
 } from './block-editor.model';
 
-const input =
-  'w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
+/** A field sized by its row; `input` fills its column. */
+const field =
+  'rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
+const input = `w-full ${field}`;
 const label = 'flex flex-col gap-1 text-xs font-semibold text-gray-700 dark:text-gray-300';
 const secondary =
   'rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900';
@@ -368,7 +370,7 @@ export default function BlockEditor({
             ) : null}
           </div>
 
-          <fieldset className="space-y-1">
+          <fieldset className="min-w-0 space-y-1">
             <legend className="text-xs font-semibold text-gray-700 dark:text-gray-300">
               Inputs a pipeline fills in
             </legend>
@@ -401,6 +403,7 @@ export default function BlockEditor({
                           <select
                             aria-label={`Input ${index + 1} type`}
                             className={input}
+                            style={{ minWidth: '6.5rem' }}
                             value={row.type}
                             onChange={(e) =>
                               dispatch({
@@ -467,7 +470,7 @@ export default function BlockEditor({
             </button>
           </fieldset>
 
-          <fieldset className="space-y-1">
+          <fieldset className="min-w-0 space-y-1">
             <legend className="text-xs font-semibold text-gray-700 dark:text-gray-300">
               Variables and secrets it reads
             </legend>
@@ -475,7 +478,7 @@ export default function BlockEditor({
               <div key={index} className="flex flex-wrap items-center gap-2">
                 <input
                   aria-label={`Variable ${index + 1} name`}
-                  className={`${input} w-48 flex-none font-mono`}
+                  className={`${field} w-48 flex-none font-mono`}
                   value={row.name}
                   placeholder="REGISTRY_TOKEN"
                   onChange={(e) =>
@@ -494,7 +497,7 @@ export default function BlockEditor({
                 </label>
                 <input
                   aria-label={`Variable ${index + 1} description`}
-                  className={`${input} min-w-0 flex-1`}
+                  className={`${field} min-w-0 flex-1`}
                   value={row.description}
                   placeholder="What it is"
                   onChange={(e) =>
@@ -533,7 +536,7 @@ export default function BlockEditor({
                 }
               />
             </label>
-            <fieldset className="space-y-1">
+            <fieldset className="min-w-0 space-y-1">
               <legend className="text-xs font-semibold text-gray-700 dark:text-gray-300">
                 Artifacts it leaves
               </legend>
@@ -541,7 +544,7 @@ export default function BlockEditor({
                 <div key={index} className="flex gap-1.5">
                   <input
                     aria-label={`Artifact ${index + 1} name`}
-                    className={`${input} w-24 flex-none font-mono`}
+                    className={`${field} w-24 flex-none font-mono`}
                     value={row.name}
                     placeholder="dist"
                     onChange={(e) =>
@@ -550,7 +553,7 @@ export default function BlockEditor({
                   />
                   <input
                     aria-label={`Artifact ${index + 1} paths`}
-                    className={`${input} min-w-0 flex-1 font-mono`}
+                    className={`${field} min-w-0 flex-1 font-mono`}
                     value={row.paths}
                     placeholder="dist, build/report.xml"
                     onChange={(e) =>
@@ -577,7 +580,7 @@ export default function BlockEditor({
             </fieldset>
           </div>
 
-          <fieldset className="space-y-1">
+          <fieldset className="min-w-0 space-y-1">
             <legend className="text-xs font-semibold text-gray-700 dark:text-gray-300">
               Caches
             </legend>
@@ -585,7 +588,7 @@ export default function BlockEditor({
               <div key={index} className="flex flex-wrap gap-1.5">
                 <input
                   aria-label={`Cache ${index + 1} name`}
-                  className={`${input} w-24 flex-none font-mono`}
+                  className={`${field} w-24 flex-none font-mono`}
                   value={row.name}
                   placeholder="npm"
                   onChange={(e) =>
@@ -594,7 +597,7 @@ export default function BlockEditor({
                 />
                 <input
                   aria-label={`Cache ${index + 1} directory`}
-                  className={`${input} w-40 flex-none font-mono`}
+                  className={`${field} w-40 flex-none font-mono`}
                   value={row.path}
                   placeholder="~/.npm"
                   onChange={(e) =>
@@ -603,7 +606,7 @@ export default function BlockEditor({
                 />
                 <input
                   aria-label={`Cache ${index + 1} key files`}
-                  className={`${input} min-w-0 flex-1 font-mono`}
+                  className={`${field} min-w-0 flex-1 font-mono`}
                   value={row.keyFiles}
                   placeholder="package-lock.json"
                   onChange={(e) =>
@@ -632,6 +635,7 @@ export default function BlockEditor({
           <label className={label}>
             Commands
             <textarea
+              aria-label="Commands"
               className={`${input} font-mono text-xs`}
               rows={9}
               spellCheck={false}

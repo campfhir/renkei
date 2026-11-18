@@ -12,6 +12,7 @@
 import { getDataStore, type CiBlockRecord } from '@renkei/db';
 import { BLOCK_KINDS, readBlockDefinition, type BlockKind } from '@renkei/ci-blocks';
 import { isRecord } from '@renkei/guards';
+import { getIdentityDisplay } from '@/lib/identity';
 
 export const BLOCK_KEY = /^[a-z][a-z0-9-]{1,79}$/;
 
@@ -61,6 +62,13 @@ export interface BlockPayload {
 
 const blocks = () => getDataStore().ciBlocks;
 
+/** Who published, as people know them: a name, else an email; the starter blocks are Renkei's own. */
+async function personName(subject: string): Promise<string> {
+  if (subject === 'renkei') return 'Renkei (a starter block)';
+  const identity = await getIdentityDisplay(subject);
+  return identity?.displayName || identity?.email || subject;
+}
+
 function summaryOf(record: CiBlockRecord, definition: unknown): BlockSummary {
   const def = isRecord(definition) ? definition : {};
   const runsOn = isRecord(def.runsOn) ? def.runsOn : {};
@@ -109,11 +117,13 @@ export async function getBlock(id: string): Promise<BlockDetail | null> {
     latestVersion: record.latestVersion,
     draft: record.draft,
     published: versions[0]?.definition ?? null,
-    versions: versions.map((v) => ({
-      version: v.version,
-      publishedBy: v.publishedBy,
-      publishedAt: v.publishedAt.toISOString(),
-    })),
+    versions: await Promise.all(
+      versions.map(async (v) => ({
+        version: v.version,
+        publishedBy: await personName(v.publishedBy),
+        publishedAt: v.publishedAt.toISOString(),
+      }))
+    ),
   };
 }
 
