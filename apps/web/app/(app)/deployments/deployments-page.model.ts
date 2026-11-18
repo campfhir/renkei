@@ -41,6 +41,8 @@ export interface AppView {
 /** What GET /api/deployments answers. */
 export interface OverviewData {
   apps: AppView[];
+  /** Code projects the person can open whose pipeline is not built yet. */
+  unbuilt: { projectId: string; name: string; repo: string; host: 'bitbucket' | 'github' }[];
   recent: (DeploymentView & { projectId: string; app: string })[];
   targets: { name: string; online: number; total: number }[];
 }
@@ -278,4 +280,16 @@ export function targetLines(state: OverviewState): { name: string; text: string;
 
 export function projectChoices(state: OverviewState): { id: string; name: string }[] {
   return (state.data?.apps ?? []).map((app) => ({ id: app.projectId, name: app.name }));
+}
+
+/** The code projects with no pipeline yet, each a link to building one. */
+export function unbuiltApps(
+  state: OverviewState
+): { projectId: string; name: string; detail: string; href: string }[] {
+  return (state.data?.unbuilt ?? []).map((p) => ({
+    projectId: p.projectId,
+    name: p.name,
+    detail: `${HOST_LABEL[p.host]} · ${p.repo}`,
+    href: `/deployments/${p.projectId}/pipeline`,
+  }));
 }

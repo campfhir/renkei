@@ -15,7 +15,7 @@
 import type { ReactNode } from 'react';
 import ExternalLink from '@/components/external-link';
 import type { PipelineVariable } from '@/lib/code/bitbucket-pipelines';
-import Pill from './pill';
+import Pill from '@/app/(app)/code/_components/pill';
 import {
   outcomeLines,
   runStatePill,

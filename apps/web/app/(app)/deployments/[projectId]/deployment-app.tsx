@@ -10,7 +10,6 @@
 
 import { useCallback, useEffect, useReducer, useState } from 'react';
 import Link from 'next/link';
-import BackLink from '@/components/back-link';
 import ExternalLink from '@/components/external-link';
 import LocalTime from '@/components/local-time';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
@@ -85,8 +84,7 @@ export default function DeploymentApp({ projectId }: { projectId: string }) {
   const question = mergeQuestion(state);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-4">
-      <BackLink href="/deployments" label="Deployments" />
+    <div className="space-y-4">
       {!app && state.error ? (
         <p role="alert" className="text-sm text-red-600 dark:text-red-400">
           {state.error}
@@ -95,22 +93,6 @@ export default function DeploymentApp({ projectId }: { projectId: string }) {
       {!app && !state.error ? <p className="text-sm text-gray-500">Reading deployments…</p> : null}
       {app ? (
         <>
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <h1 className="font-mono text-xl font-bold">{app.name}</h1>
-            {app.stack ? (
-              <span className={`rounded px-1.5 text-xs ${PILL.none}`}>{app.stack}</span>
-            ) : null}
-            <span className="text-sm text-gray-500">
-              {HOST_LABEL[app.host]} · <span className="font-mono">{app.repo}</span>
-            </span>
-            <Link
-              href={`/code/${app.projectId}/pipeline-builder`}
-              className="text-sm text-blue-600 hover:underline dark:text-blue-400"
-            >
-              Open the code project’s pipeline
-            </Link>
-          </div>
-
           {state.notice ? (
             <p
               role="status"
@@ -126,6 +108,25 @@ export default function DeploymentApp({ projectId }: { projectId: string }) {
             >
               {state.error}
             </p>
+          ) : null}
+
+          {!app.hasPipeline || app.environments.length === 0 ? (
+            <section aria-label="No pipeline yet" className={`${card} space-y-2`}>
+              <h2 className="text-sm font-semibold">
+                {app.hasPipeline ? 'Nothing deploys yet' : 'No pipeline yet'}
+              </h2>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                {app.hasPipeline
+                  ? 'The pipeline has no environment: add one on the Pipeline tab, a branch that deploys somewhere.'
+                  : 'Build this project’s pipeline from the organization’s blocks. Each deploy step it runs reports here: what runs where, and promoting one environment to the next.'}
+              </p>
+              <Link
+                href={`/deployments/${app.projectId}/pipeline`}
+                className="inline-block rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                {app.hasPipeline ? 'Open the pipeline' : 'Build its pipeline'}
+              </Link>
+            </section>
           ) : null}
 
           <section aria-label="Environments" className="grid grid-cols-1 gap-3 sm:grid-cols-2">

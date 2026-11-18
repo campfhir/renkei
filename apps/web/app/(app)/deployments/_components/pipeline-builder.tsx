@@ -1,7 +1,9 @@
 'use client';
 
 /**
- * A code project's pipeline builder (/code/[projectId]/pipeline-builder):
+ * A code project's pipeline builder, the "Pipeline" tab of its app under
+ * Deployments (/deployments/[projectId]/pipeline; the layout draws the
+ * app's header and tabs):
  * what was found in the repository, the pipeline as rows of the
  * organization's blocks — on every pull request, then each environment's
  * branch — or the file it writes, the checks before it runs, and Save and
@@ -11,7 +13,6 @@
 
 import { useCallback, useEffect, useReducer, type Dispatch } from 'react';
 import Link from 'next/link';
-import BackLink from '@/components/back-link';
 import ExternalLink from '@/components/external-link';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import {
@@ -72,13 +73,9 @@ const chip =
 
 export default function PipelineBuilder({
   projectId,
-  projectName,
-  repoFullName,
   host,
 }: {
   projectId: string;
-  projectName: string;
-  repoFullName: string;
   host: 'bitbucket' | 'github';
 }) {
   const [state, dispatch] = useReducer(builderReducer, initialBuilder);
@@ -149,18 +146,8 @@ export default function PipelineBuilder({
   const hostName = host === 'github' ? 'GitHub' : 'Bitbucket';
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
-        <BackLink href={`/code/${projectId}`} label={projectName} />
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-sm font-semibold">Pipeline</h1>
-          <p className="truncate text-xs text-gray-500">
-            {hostName} · <span className="font-mono">{repoFullName}</span>
-          </p>
-        </div>
-      </header>
-
-      <div className="mx-auto max-w-6xl space-y-4 p-4">
+    <div>
+      <div className="space-y-4">
         {state.busy === 'load' && !data ? (
           <p className="text-sm text-gray-500">Reading the repository…</p>
         ) : null}
@@ -731,7 +718,7 @@ function ChecksPanel({
   host: 'bitbucket' | 'github';
 }) {
   const list = checks(state);
-  const variablesHref = `/code/${projectId}/${host === 'github' ? 'actions' : 'pipelines'}`;
+  const variablesHref = `/deployments/${projectId}/runs`;
   return (
     <section aria-labelledby="before-it-runs" className={`${cardClass} space-y-2`}>
       <h2 id="before-it-runs" className="text-sm font-semibold">

@@ -21,6 +21,7 @@ import {
   recentItems,
   rows,
   targetLines,
+  unbuiltApps,
   type OverviewData,
 } from './deployments-page.model';
 import { DOT, NOTE, PILL, card } from './tones';
@@ -50,6 +51,7 @@ export default function DeploymentsPage() {
   const ready = readyToPromote(state);
   const recent = recentItems(state, now);
   const targets = targetLines(state);
+  const unbuilt = unbuiltApps(state);
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
@@ -110,11 +112,18 @@ export default function DeploymentsPage() {
           <h2 className="text-sm font-semibold">Nothing reports here yet</h2>
           <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
             A code project’s deployments show here once its pipeline is built from blocks and runs:
-            every deploy step tells Renkei how it went. Open a project in{' '}
-            <Link href="/code" className="text-blue-600 hover:underline dark:text-blue-400">
-              Code
-            </Link>{' '}
-            and build its pipeline.
+            every deploy step tells Renkei how it went.{' '}
+            {unbuilt.length > 0 ? (
+              'Build one for a project below.'
+            ) : (
+              <>
+                Make a code project in{' '}
+                <Link href="/code" className="text-blue-600 hover:underline dark:text-blue-400">
+                  Code
+                </Link>{' '}
+                first.
+              </>
+            )}
           </p>
         </section>
       ) : null}
@@ -265,6 +274,29 @@ export default function DeploymentsPage() {
             </section>
           </aside>
         </div>
+      ) : null}
+      {unbuilt.length > 0 ? (
+        <section aria-labelledby="no-pipeline-yet" className={`${card} space-y-2`}>
+          <h2 id="no-pipeline-yet" className="text-sm font-semibold">
+            Code projects without a pipeline
+          </h2>
+          <ul className="divide-y divide-gray-100 dark:divide-gray-800">
+            {unbuilt.map((p) => (
+              <li key={p.projectId} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
+                <span className="min-w-0 flex-[1_1_14rem]">
+                  <span className="font-mono text-sm font-semibold break-all">{p.name}</span>
+                  <span className="block text-xs break-all text-gray-500">{p.detail}</span>
+                </span>
+                <Link
+                  href={p.href}
+                  className="text-sm text-blue-600 hover:underline dark:text-blue-400"
+                >
+                  Build its pipeline
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
     </div>
   );

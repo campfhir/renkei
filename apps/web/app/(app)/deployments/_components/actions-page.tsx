@@ -1,7 +1,8 @@
 'use client';
 
 /**
- * A GitHub code project's Actions page — the Bitbucket Pipelines page
+ * A GitHub code project's runs and variables, the "Runs & variables" tab
+ * of its app under Deployments — the Bitbucket one
  * (pipelines-page.tsx) for GitHub, drawn from the same parts
  * (pipeline-parts.tsx): the recent runs; the setup — whether GitHub runs
  * Actions for the repository at all, and the workflow files on the
@@ -9,8 +10,7 @@
  * pipeline templates — and the variables runs get, the repository's and
  * each deployment environment's, each set edited as one text box,
  * `KEY=value` a line, applied as a difference. Read on open and after
- * every change, with the person's own GitHub grant. Its summary card on
- * the project page is actions-summary.tsx.
+ * every change, with the person's own GitHub grant.
  *
  * Secrets are the one thing that differs: GitHub takes them only sealed
  * to a repository key, so they are listed by name, read-only, shown as
@@ -18,15 +18,12 @@
  * the plain variables itself (lib/code/pipeline-tools.ts) and can write a
  * workflow file; the switch and secrets are the person's.
  *
- * The same body opens as a modal from a code chat's overflow menu
- * (`presentation="modal"`, via pipelines-modal.tsx). What the page
+ * The app's header and tabs are its layout's. What the page
  * decides — the requests, when Commit can be pressed, the words after a
  * change — is actions-page.model.ts.
  */
 
 import { useCallback, useEffect, useReducer } from 'react';
-import Link from 'next/link';
-import BackLink from '@/components/back-link';
 import ExternalLink from '@/components/external-link';
 import LocalTime from '@/components/local-time';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
@@ -34,7 +31,7 @@ import type { VariablesApplied } from '@/lib/code/bitbucket-pipelines';
 import { actionsSecretsUrl, actionsUrl } from '@/lib/code/github-actions-urls';
 import type { HostPipelineRun } from '@/lib/code/repo-host';
 import type { PipelineTemplate } from '@/lib/code/pipeline-templates';
-import Pill, { type PillTone } from './pill';
+import Pill, { type PillTone } from '@/app/(app)/code/_components/pill';
 import VariableGroup, {
   StatusPill,
   cardClass,
@@ -101,20 +98,15 @@ const GITHUB_WORDS: VariableWords = {
 
 export default function ActionsPage({
   projectId,
-  projectName,
   repoFullName,
   branch,
   canEdit,
-  presentation = 'page',
 }: {
   projectId: string;
-  projectName: string;
   repoFullName: string;
   /** The project's branch; empty for the repository's default. */
   branch: string;
   canEdit: boolean;
-  /** A page of its own, or the body of a modal (no back link or page header). */
-  presentation?: 'page' | 'modal';
 }) {
   const url = `/api/code/projects/${projectId}/actions`;
   const [state, dispatch] = useReducer(actionsReducer, initialActions);
@@ -225,7 +217,6 @@ export default function ActionsPage({
   const secretsUrl = actionsSecretsUrl(repoFullName);
   const branchLabel = labelOfBranch(branch);
   const canSet = canConfigure(state, canEdit);
-  const modal = presentation === 'modal';
 
   const refreshButton = (
     <button
@@ -261,45 +252,22 @@ export default function ActionsPage({
   });
 
   return (
-    <div className={modal ? '' : 'min-h-0 flex-1 overflow-y-auto'}>
-      {modal ? (
-        <div className="flex items-center gap-2 border-b border-gray-200 px-4 py-2 dark:border-gray-800">
-          <p className="min-w-0 flex-1 truncate text-xs text-gray-500">
-            <span className="font-mono">{repoFullName}</span>
-            {setup ? (
-              <>
-                {' '}
-                <StatusPill enabled={setup.enabled} />
-              </>
-            ) : null}
-          </p>
-          {refreshButton}
-          {hostLink}
-        </div>
-      ) : (
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
-          <BackLink href={`/code/${projectId}`} label={projectName} />
-          <div className="min-w-0 flex-1">
-            <h1 className="flex items-center gap-2 text-sm font-semibold">
-              <span className="truncate">Actions</span>
-              {setup ? <StatusPill enabled={setup.enabled} /> : null}
-            </h1>
-            <p className="truncate text-xs text-gray-500">
-              {projectName} · <span className="font-mono">{repoFullName}</span>
-            </p>
-          </div>
-          <Link
-            href={`/code/${projectId}/pipeline-builder`}
-            className="text-xs font-medium whitespace-nowrap text-blue-600 hover:underline dark:text-blue-400"
-          >
-            Build from blocks
-          </Link>
-          {refreshButton}
-          {hostLink}
-        </header>
-      )}
+    <div>
+      <div className="flex items-center gap-2">
+        <p className="min-w-0 flex-1 truncate text-xs text-gray-500">
+          GitHub Actions
+          {setup ? (
+            <>
+              {' '}
+              <StatusPill enabled={setup.enabled} />
+            </>
+          ) : null}
+        </p>
+        {refreshButton}
+        {hostLink}
+      </div>
 
-      <div className={`mx-auto space-y-4 p-4 ${modal ? 'max-w-none' : 'max-w-6xl'}`}>
+      <div className="mt-3 space-y-4">
         <p className="text-xs text-gray-500">
           How GitHub builds and deploys this repository. A chat in the project can write workflow
           files, run or cancel workflows, and read and set the plain variables; the switch and
@@ -321,7 +289,7 @@ export default function ActionsPage({
         {setup ? (
           <div
             aria-busy={busy}
-            className={`grid grid-cols-[minmax(0,1fr)] gap-4 lg:items-start ${modal ? 'xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]' : 'lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]'}`}
+            className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:items-start xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]"
           >
             <div className="space-y-4">
               <RunsCard runs={setup.runs} error={setup.runsError} />

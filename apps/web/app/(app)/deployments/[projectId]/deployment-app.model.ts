@@ -36,6 +36,8 @@ export interface Promotion {
 
 /** What GET /api/deployments/[projectId] answers. */
 export interface AppData extends AppView {
+  /** False until the project's pipeline is built in Renkei. */
+  hasPipeline: boolean;
   history: DeploymentView[];
   promotions: Promotion[];
 }

@@ -1,21 +1,18 @@
 'use client';
 
 /**
- * A Bitbucket code project's Pipelines page: the recent runs, the setup
+ * A Bitbucket code project's runs and variables, the "Runs & variables"
+ * tab of its app under Deployments: the recent runs, the setup
  * — whether Bitbucket runs pipelines for the repository at all, and
  * whether a `bitbucket-pipelines.yml` is on the branch, with an editor
  * that starts one from the org's pipeline templates and commits it, or
  * edits the one there — and the variables the runs get, the repository's
  * and each deployment environment's, each set edited as one text box,
  * `KEY=value` a line, and applied as a difference. Read on open and after
- * every change, with the person's own Bitbucket grant. Its summary card
- * on the project page is pipelines-summary.tsx; its GitHub counterpart,
- * drawn from the same parts (pipeline-parts.tsx), is actions-page.tsx.
- *
- * The same body opens as a modal from a code chat's overflow menu
- * (`presentation="modal"`, via pipelines-modal.tsx): no back link or page
- * header, a slim toolbar instead, so a person can look at or change the
- * setup beside the conversation that is drafting it.
+ * every change, with the person's own Bitbucket grant. Its GitHub
+ * counterpart, drawn from the same parts (pipeline-parts.tsx), is
+ * actions-page.tsx. The app's header and tabs are its layout's; this
+ * draws a slim toolbar under them.
  *
  * A run can be started from here too, on the scope the chat's trigger
  * tool stands on. A chat can also write the YAML (a file, committed like
@@ -33,8 +30,6 @@
  */
 
 import { useCallback, useEffect, useReducer, type Dispatch } from 'react';
-import Link from 'next/link';
-import BackLink from '@/components/back-link';
 import ExternalLink from '@/components/external-link';
 import LocalTime from '@/components/local-time';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
@@ -97,20 +92,15 @@ const BITBUCKET_WORDS: VariableWords = {
 
 export default function PipelinesPage({
   projectId,
-  projectName,
   repoFullName,
   branch,
   canEdit,
-  presentation = 'page',
 }: {
   projectId: string;
-  projectName: string;
   repoFullName: string;
   /** The project's branch; empty for the repository's default. */
   branch: string;
   canEdit: boolean;
-  /** A page of its own, or the body of a modal (no back link or page header). */
-  presentation?: 'page' | 'modal';
 }) {
   const url = `/api/code/projects/${projectId}/pipelines`;
   const [state, dispatch] = useReducer(pipelinesReducer, initialPipelines);
@@ -265,48 +255,24 @@ export default function PipelinesPage({
       Open on Bitbucket
     </ExternalLink>
   ) : null;
-  const modal = presentation === 'modal';
 
   return (
-    <div className={modal ? '' : 'min-h-0 flex-1 overflow-y-auto'}>
-      {modal ? (
-        <div className="flex items-center gap-2 border-b border-gray-200 px-4 py-2 dark:border-gray-800">
-          <p className="min-w-0 flex-1 truncate text-xs text-gray-500">
-            <span className="font-mono">{repoFullName}</span>
-            {setup ? (
-              <>
-                {' '}
-                <StatusPill enabled={setup.enabled} />
-              </>
-            ) : null}
-          </p>
-          {refreshButton}
-          {hostLink}
-        </div>
-      ) : (
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
-          <BackLink href={`/code/${projectId}`} label={projectName} />
-          <div className="min-w-0 flex-1">
-            <h1 className="flex items-center gap-2 text-sm font-semibold">
-              <span className="truncate">Pipelines</span>
-              {setup ? <StatusPill enabled={setup.enabled} /> : null}
-            </h1>
-            <p className="truncate text-xs text-gray-500">
-              {projectName} · <span className="font-mono">{repoFullName}</span>
-            </p>
-          </div>
-          <Link
-            href={`/code/${projectId}/pipeline-builder`}
-            className="text-xs font-medium whitespace-nowrap text-blue-600 hover:underline dark:text-blue-400"
-          >
-            Build from blocks
-          </Link>
-          {refreshButton}
-          {hostLink}
-        </header>
-      )}
+    <div>
+      <div className="flex items-center gap-2">
+        <p className="min-w-0 flex-1 truncate text-xs text-gray-500">
+          Bitbucket Pipelines
+          {setup ? (
+            <>
+              {' '}
+              <StatusPill enabled={setup.enabled} />
+            </>
+          ) : null}
+        </p>
+        {refreshButton}
+        {hostLink}
+      </div>
 
-      <div className={`mx-auto space-y-4 p-4 ${modal ? 'max-w-none' : 'max-w-6xl'}`}>
+      <div className="mt-3 space-y-4">
         <p className="text-xs text-gray-500">
           How Bitbucket builds and deploys this repository. A chat in the project can write the
           pipeline file, start or stop runs, and read and set the plain variables; the switch and
@@ -328,7 +294,7 @@ export default function PipelinesPage({
         {setup ? (
           <div
             aria-busy={busy}
-            className={`grid grid-cols-[minmax(0,1fr)] gap-4 lg:items-start ${modal ? 'xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]' : 'lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]'}`}
+            className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:items-start xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]"
           >
             <div className="space-y-4">
               <RunsCard

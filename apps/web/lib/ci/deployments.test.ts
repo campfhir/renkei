@@ -144,6 +144,31 @@ describe('what runs where', () => {
   });
 });
 
+describe('projects without a pipeline', () => {
+  it('are offered for building one, and their app opens empty', async () => {
+    const id = await getDataStore().chatProjects.create({
+      ownerSubject: ADA,
+      name: 'intake-api',
+      description: null,
+      toolConfig: null,
+      repo: { provider: GITHUB, fullName: 'acme/intake-api', branch: 'main' },
+    });
+    await project(ADA, 'sync-worker');
+    const overview = await deploymentsOverview(ADA);
+    expect(overview.apps.map((a) => a.name)).toEqual(['sync-worker']);
+    expect(overview.unbuilt).toEqual([
+      { projectId: id, name: 'intake-api', repo: 'acme/intake-api', host: 'github' },
+    ]);
+    expect(await deploymentDetail(caller, id)).toMatchObject({
+      name: 'intake-api',
+      hasPipeline: false,
+      environments: [],
+      promotions: [],
+      history: [],
+    });
+  });
+});
+
 describe('promoting', () => {
   const repo = '/repos/acme/sync-worker';
   const compare = {

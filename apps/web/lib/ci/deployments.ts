@@ -16,6 +16,7 @@ import { readPipelineSpec, type Host, type PipelineSpec } from '@renkei/ci-block
 import { ATLASSIAN_BITBUCKET, GITHUB } from '@renkei/provider-grants';
 import { resolveResourceAccess } from '@/lib/chat/access';
 import { getProjectRow, type ProjectRow } from '@/lib/chat/projects';
+import { loadChatSidebar } from '@/lib/chat/sidebar';
 import { bitbucketHostAdapter } from '@/lib/code/repo-host-bitbucket';
 import { githubHostAdapter } from '@/lib/code/repo-host-github';
 import type { RepoHostAdapter } from '@/lib/code/repo-host';
@@ -58,6 +59,8 @@ export interface AppView {
 
 export interface DeploymentsOverview {
   apps: AppView[];
+  /** Code projects on Bitbucket or GitHub the person can open whose pipeline is not built yet. */
+  unbuilt: { projectId: string; name: string; repo: string; host: Host }[];
   recent: (DeploymentView & { projectId: string; app: string })[];
   targets: { name: string; online: number; total: number }[];
 }
@@ -80,6 +83,8 @@ export interface Promotion {
 }
 
 export interface AppDetail extends AppView {
+  /** False until the project's pipeline is built (or saved) in Renkei. */
+  hasPipeline: boolean;
   history: DeploymentView[];
   promotions: Promotion[];
 }
@@ -120,14 +125,19 @@ interface Visible {
 }
 
 /** The pipelines whose projects the person can open, by project name. */
-async function visiblePipelines(subject: string, only?: string): Promise<Visible[]> {
+async function visiblePipelines(
+  subject: string,
+  only?: string,
+  options: { withoutEnvironments?: boolean } = {}
+): Promise<Visible[]> {
   const pipelines = (await getDataStore().ciPipelines.list()).filter(
     (p) => !only || p.projectId === only
   );
   const out: Visible[] = [];
   for (const pipeline of pipelines) {
     const spec = readPipelineSpec(pipeline.spec);
-    if (!spec.ok || spec.value.environments.length === 0) continue;
+    if (!spec.ok || (spec.value.environments.length === 0 && !options.withoutEnvironments))
+      continue;
     const access = await resolveResourceAccess(subject, 'chat_project', pipeline.projectId);
     if (!access) continue;
     const project = await getProjectRow(pipeline.projectId);
@@ -190,8 +200,10 @@ export async function deploymentsOverview(subject: string): Promise<DeploymentsO
     builderTargets(),
   ]);
   const names = new Map(visible.map((v) => [v.project.id, v.project.name]));
+  const built = new Set((await getDataStore().ciPipelines.list()).map((p) => p.projectId));
   return {
     apps: visible.map((item) => appOf(item, deployments, stacks)),
+    unbuilt: await unbuiltProjects(subject, built),
     recent: deployments.slice(0, 20).map((d) => ({
       ...view(d),
       projectId: d.projectId,
@@ -260,8 +272,8 @@ export async function deploymentDetail(
   caller: Caller,
   projectId: string
 ): Promise<AppDetail | null> {
-  const [item] = await visiblePipelines(caller.subject, projectId);
-  if (!item) return null;
+  const [item] = await visiblePipelines(caller.subject, projectId, { withoutEnvironments: true });
+  if (!item) return unbuiltDetail(caller.subject, projectId);
   const [history, stacks] = await Promise.all([
     getDataStore().ciDeployments.recent([item.project.id], HISTORY),
     stackNames(),
@@ -269,7 +281,50 @@ export async function deploymentDetail(
   const promotions = await Promise.all(
     pairs(item.spec).map((pair) => promotionOf(item, caller, pair))
   );
-  return { ...appOf(item, history, stacks), history: history.map(view), promotions };
+  return {
+    ...appOf(item, history, stacks),
+    hasPipeline: true,
+    history: history.map(view),
+    promotions,
+  };
+}
+
+/** A code project the person can open whose pipeline is not built yet: its app, empty. */
+async function unbuiltDetail(subject: string, projectId: string): Promise<AppDetail | null> {
+  const access = await resolveResourceAccess(subject, 'chat_project', projectId);
+  const project = access ? await getProjectRow(projectId) : null;
+  const host = project?.repo ? hostOfProvider(project.repo.provider) : null;
+  if (!access || !project?.repo || !host) return null;
+  return {
+    projectId: project.id,
+    name: project.name,
+    repo: project.repo.fullName,
+    host,
+    stack: null,
+    canEdit: access.role !== 'viewer',
+    environments: [],
+    hasPipeline: false,
+    history: [],
+    promotions: [],
+  };
+}
+
+/** The code projects the person can open, on either host, with no pipeline built yet. */
+async function unbuiltProjects(
+  subject: string,
+  built: Set<string>
+): Promise<DeploymentsOverview['unbuilt']> {
+  const sidebar = await loadChatSidebar(subject);
+  const out: DeploymentsOverview['unbuilt'] = [];
+  for (const listed of sidebar.code.projects) {
+    if (built.has(listed.id)) continue;
+    const project = await getProjectRow(listed.id);
+    const host = project?.repo ? hostOfProvider(project.repo.provider) : null;
+    if (project?.repo && host) {
+      out.push({ projectId: project.id, name: project.name, repo: project.repo.fullName, host });
+    }
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export type PromoteOutcome =

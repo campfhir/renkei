@@ -18,11 +18,9 @@
  * requests (pulls-summary.tsx / pulls-page.tsx) and its recent commits
  * (commits-summary.tsx / commits-page.tsx), both read through the
  * host-agnostic RepoHostAdapter (lib/code/repo-host.ts); a card for its
- * CI — Bitbucket Pipelines (pipelines-summary.tsx / pipelines-page.tsx:
- * the switch, the config file, the variables) or, for a GitHub project,
- * its Actions counterpart (actions-summary.tsx / actions-page.tsx: the
- * switch, the workflow files, the variables, secrets by name), drawn
- * from the same parts (pipeline-parts.tsx); and a card summarizing
+ * pipeline and deployments, which live under Deployments
+ * (/deployments/[projectId]: what runs where, the pipeline built from
+ * blocks, the host's runs and variables) — a link card here; a card summarizing
  * its services — the containers beside the checkout — opening its
  * Services page (services-summary.tsx, services-page.tsx); and last the
  * environment: the names of the variables the project's commands run
@@ -31,6 +29,7 @@
  */
 
 import { useEffect, useState, type ReactNode } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import type {
@@ -39,9 +38,8 @@ import type {
   CodeProjectView,
 } from '@/lib/code/project-view';
 import ExternalLink from '@/components/external-link';
+import { Icon, ICONS } from '@/components/icons';
 import LocalTime from '@/components/local-time';
-import PipelinesSummary from './pipelines-summary';
-import ActionsSummary from './actions-summary';
 import ServicesSummaryCard from './services-summary';
 import PullsSummary from './pulls-summary';
 import CommitsSummary from './commits-summary';
@@ -178,24 +176,35 @@ export function CodeRail({
     <>
       <PullsSummary href={`/code/${projectId}/pulls`} projectId={projectId} />
       <CommitsSummary href={`/code/${projectId}/commits`} projectId={projectId} />
-      {isGitHub ? (
-        <ActionsSummary
-          href={`/code/${projectId}/actions`}
-          projectId={projectId}
-          branch={code.branch}
-        />
-      ) : (
-        <PipelinesSummary
-          href={`/code/${projectId}/pipelines`}
-          projectId={projectId}
-          branch={code.branch}
-        />
-      )}
+      <DeploymentsCard projectId={projectId} host={isGitHub ? 'GitHub' : 'Bitbucket'} />
       {code.enabled ? (
         <ServicesSummaryCard href={`/code/${projectId}/services`} projectId={projectId} />
       ) : null}
       {environment}
     </>
+  );
+}
+
+/** Where the project's pipeline, runs, variables and deployments are: its app under Deployments. */
+function DeploymentsCard({ projectId, host }: { projectId: string; host: string }) {
+  return (
+    <section className={sectionClass} aria-labelledby="code-deployments">
+      <div className="flex items-center gap-2">
+        <h2 id="code-deployments" className="text-sm font-semibold">
+          Pipeline and deployments
+        </h2>
+        <Link
+          href={`/deployments/${projectId}`}
+          className="ml-auto flex items-center gap-1 text-xs font-medium whitespace-nowrap text-blue-600 hover:underline dark:text-blue-400"
+        >
+          Open in Deployments
+          <Icon path={ICONS.arrowRight} className="h-3.5 w-3.5" />
+        </Link>
+      </div>
+      <p className="text-xs text-gray-500">
+        Its pipeline built from blocks, its {host} runs and variables, and what it deployed where.
+      </p>
+    </section>
   );
 }
 

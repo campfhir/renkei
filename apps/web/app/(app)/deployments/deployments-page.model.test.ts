@@ -7,6 +7,7 @@ import {
   rows,
   runLabel,
   targetLines,
+  unbuiltApps,
   type DeploymentView,
   type OverviewAction,
   type OverviewData,
@@ -90,6 +91,7 @@ const data: OverviewData = {
       ],
     },
   ],
+  unbuilt: [{ projectId: 'p3', name: 'intake-api', repo: 'acme/intake-api', host: 'github' }],
   recent: [
     {
       ...deploy({
@@ -185,6 +187,17 @@ describe('the rest of the page', () => {
         'Pipelines #387 · target onprem-app · from develop',
         '2h ago',
       ],
+    ]);
+  });
+
+  it('offers to build a pipeline for each code project without one', () => {
+    expect(unbuiltApps(loaded)).toEqual([
+      {
+        projectId: 'p3',
+        name: 'intake-api',
+        detail: 'GitHub · acme/intake-api',
+        href: '/deployments/p3/pipeline',
+      },
     ]);
   });
 

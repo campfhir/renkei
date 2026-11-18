@@ -91,7 +91,7 @@ export function adminSections(): AdminSection[] {
           href: `${admin}/pipeline-templates`,
           label: 'Pipeline templates',
           detail:
-            'The starting pipeline files offered on a code project’s Pipelines page when its repository has none.',
+            'The starting pipeline files offered on a code project’s Runs & variables tab, under Deployments, when its repository has none.',
         },
         {
           href: `${admin}/code-services`,

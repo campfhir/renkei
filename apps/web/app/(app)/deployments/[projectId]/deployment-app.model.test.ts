@@ -52,6 +52,7 @@ const data: AppData = {
   host: 'bitbucket',
   stack: 'Node',
   canEdit: true,
+  hasPipeline: true,
   environments: [
     { name: 'dev', branch: 'develop', latest: dev, running: dev },
     { name: 'production', branch: 'main', latest: prod, running: prod },
