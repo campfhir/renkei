@@ -19,12 +19,7 @@
  * (by a hash of its metadata), a permission set created under the name.
  */
 
-import {
-  soqlString,
-  type ApexKind,
-  type ApexUnit,
-  type PackageMember,
-} from '@renkei/connector-salesforce';
+import { soqlString, type PackageMember } from '@renkei/connector-salesforce';
 import {
   rec,
   recs,
@@ -37,8 +32,6 @@ import {
 } from '@/lib/mcp-tools/salesforce/client';
 import { entityKey, fingerprintOf, toolingQuery } from './tooling';
 import { listRecordTypes, wholeComponentFingerprint } from './whole-components';
-import { APEX_KIND, readLiveApex } from './apex';
-import { apexTestsVerdict, type Validation } from './change-requests';
 
 export { entityKey, fingerprintOf, toolingQuery } from './tooling';
 
@@ -77,9 +70,6 @@ export function applyScopesFor(kind: string, payload?: MetadataPayload | null): 
     case SECURITY_KIND:
       scopes.add('sfa-security');
       break;
-    case APEX_KIND:
-      scopes.add('sfa-apex');
-      break;
     default:
       scopes.add('sfa-schema');
   }
@@ -110,8 +100,6 @@ export interface ComponentView {
   /** 'delete' takes the component out of the org (a destructive deploy). */
   action: 'create' | 'update' | 'delete';
   rows: ViewRow[];
-  /** Source code's change as a unified diff (`@@ -1,4 +1,6 @@`, ` `/`-`/`+` lines): Apex. */
-  diff?: string;
 }
 
 export type Precondition =
@@ -138,10 +126,7 @@ export type Precondition =
   | { kind: 'report-type-absent'; name: string }
   | { kind: 'report-folder-absent'; folder: string }
   /** A report's developer name in a folder (by the folder's developer name). */
-  | { kind: 'report-absent'; folder: string; name: string }
-  /** A class or trigger of the org's own, by a hash of its source and status (apex.ts). */
-  | { kind: 'apex-unchanged'; type: ApexKind; name: string; fingerprint: string }
-  | { kind: 'apex-absent'; type: ApexKind; name: string };
+  | { kind: 'report-absent'; folder: string; name: string };
 
 /** Components read whole and written back whole, checked by a hash on apply. */
 export type WholeComponent =
@@ -282,28 +267,6 @@ export interface MetadataPayload {
   components: ComponentView[];
   preconditions: Precondition[];
   dataSteps: DataStep[];
-  /**
-   * An Apex change's test classes: every validation and deploy of it runs
-   * them (RunSpecifiedTests), in a sandbox as in production.
-   */
-  apexTests?: string[];
-  /** The classes and triggers it writes, test classes left out: each must be 80% covered. */
-  apexMeasured?: ApexUnit[];
-}
-
-/**
- * Whether a change carries Apex whose validation is done and whose tests
- * do not allow a deploy — what the validation badge says in place of
- * "Validated" (validation-state.model.ts).
- */
-export function apexTestsShort(change: {
-  validation: Validation | null;
-  payload: unknown;
-}): boolean {
-  const validation = change.validation;
-  if (!validation || 'error' in validation || !validation.done) return false;
-  const verdict = apexTestsVerdict(validation, readMetadataPayload(change.payload));
-  return verdict !== null && !verdict.ok;
 }
 
 /** Whether a payload deploys anything, or is data steps alone. */
@@ -427,7 +390,6 @@ export function readMetadataPayload(value: unknown): MetadataPayload | null {
       value: str(row.value),
       ...(typeof row.from === 'string' ? { from: row.from } : {}),
     })),
-    ...(typeof c.diff === 'string' && c.diff ? { diff: c.diff } : {}),
   }));
   const preconditions = recs(entry.preconditions).flatMap((p): Precondition[] => {
     const object = str(p.object);
@@ -465,14 +427,6 @@ export function readMetadataPayload(value: unknown): MetadataPayload | null {
         return [{ kind: 'report-folder-absent', folder: str(p.folder) }];
       case 'report-absent':
         return [{ kind: 'report-absent', folder: str(p.folder), name: str(p.name) }];
-      case 'apex-unchanged':
-      case 'apex-absent': {
-        const type = p.type === 'class' || p.type === 'trigger' ? p.type : null;
-        if (!type) return [];
-        return p.kind === 'apex-absent'
-          ? [{ kind: 'apex-absent', type, name: str(p.name) }]
-          : [{ kind: 'apex-unchanged', type, name: str(p.name), fingerprint }];
-      }
       default:
         return [];
     }
@@ -493,23 +447,7 @@ export function readMetadataPayload(value: unknown): MetadataPayload | null {
       edit: grant.edit === true,
     });
   }
-  const apexTests = Array.isArray(entry.apexTests)
-    ? entry.apexTests.filter((name): name is string => typeof name === 'string')
-    : [];
-  const apexMeasured = recs(entry.apexMeasured).flatMap((u): ApexUnit[] =>
-    (u.kind === 'class' || u.kind === 'trigger') && typeof u.name === 'string'
-      ? [{ kind: u.kind, name: u.name }]
-      : []
-  );
-  const payload: MetadataPayload = {
-    files,
-    members,
-    components,
-    preconditions,
-    dataSteps,
-    ...(apexTests.length > 0 ? { apexTests } : {}),
-    ...(apexTests.length > 0 ? { apexMeasured } : {}),
-  };
+  const payload = { files, members, components, preconditions, dataSteps };
   return deploys(payload) || dataSteps.length > 0 ? payload : null;
 }
 
@@ -1045,23 +983,6 @@ export async function brokenPreconditions(
           broken.push(
             `The layout “${precondition.layout}” exists now — someone created it since this was proposed.`
           );
-        }
-        break;
-      }
-      case 'apex-unchanged':
-      case 'apex-absent': {
-        const what = `The Apex ${precondition.type} ${precondition.name}`;
-        const live = await readLiveApex(context, access, {
-          kind: precondition.type,
-          name: precondition.name,
-        });
-        if (typeof live === 'string') broken.push(`Could not check ${what}: ${live}`);
-        else if (precondition.kind === 'apex-absent') {
-          if (live) broken.push(`${what} exists now — someone created it since this was proposed.`);
-        } else if (!live) {
-          broken.push(`${what} is gone — someone deleted it since this was proposed.`);
-        } else if (live.fingerprint !== precondition.fingerprint) {
-          moved(what);
         }
         break;
       }

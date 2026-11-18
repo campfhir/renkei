@@ -11,7 +11,6 @@
  */
 
 import * as salesforce from '@/lib/salesforce-admin/change-requests';
-import { apexTestsShort } from '@/lib/salesforce-admin/plan';
 import * as jira from '@/lib/jira-admin/change-requests';
 import { listSalesforceConnectors } from '@/lib/salesforce-app';
 import { SALESFORCE_ADMIN_KIND } from '@/lib/salesforce-kinds';
@@ -40,8 +39,6 @@ export interface ChangeRow {
   step: string | null;
   /** Salesforce's check-only deploy, for a Salesforce proposal; null otherwise. */
   validation: salesforce.Validation | null;
-  /** A Salesforce Apex proposal whose tests do not allow a deploy (plan.ts, apexTestsShort). */
-  testsShort: boolean;
 }
 
 interface ChangeSource {
@@ -89,7 +86,6 @@ const SALESFORCE: ChangeSource = {
       agentId: change.agentId,
       step: change.step,
       validation: change.kind === salesforce.REQUEST_KIND ? null : change.validation,
-      testsShort: change.kind !== salesforce.REQUEST_KIND && apexTestsShort(change),
     }));
   },
   async countAwaitingReview() {
@@ -120,7 +116,6 @@ const JIRA: ChangeSource = {
       agentId: change.agentId,
       step: change.step,
       validation: null,
-      testsShort: false,
     }));
   },
   countAwaitingReview: () => jira.countAwaitingReview(),

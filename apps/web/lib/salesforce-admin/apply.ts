@@ -20,11 +20,7 @@
  */
 
 import { getOrgSettings } from '@renkei/settings';
-import {
-  APEX_COVERAGE_PERCENT,
-  takesChanges,
-  type DeployOutcome,
-} from '@renkei/connector-salesforce';
+import { takesChanges, type DeployOutcome } from '@renkei/connector-salesforce';
 import { resolveAudience } from '@/lib/connectors/audience';
 import { buildProjection } from '@/lib/mcp-tools/projection';
 import { resolveConnectorAvailability } from '@/lib/mcp-tools/registry';
@@ -47,7 +43,6 @@ import {
   recordDeployStarted,
   setValidation,
   validationFrom,
-  apexTestsVerdict,
   validationPassed,
   type ApplyResults,
   type ChangeRequest,
@@ -112,7 +107,7 @@ export async function waitReporting(
 export async function applyGate(
   subject: string,
   roles: readonly string[],
-  change: Pick<ChangeRequest, 'connectorKey' | 'validation' | 'payload'>
+  change: Pick<ChangeRequest, 'connectorKey' | 'validation'>
 ): Promise<Gate> {
   const settingsResult = await getOrgSettings();
   if (!settingsResult.ok) {
@@ -160,19 +155,6 @@ export async function applyGate(
     return {
       ok: false,
       reason: `${connector.name} is a production org that does not take change requests. Build in a sandbox, or ask an organization admin to allow changes on this connector.`,
-    };
-  }
-  // An Apex change's tests say why before Salesforce's own verdict does:
-  // a validation that failed only on its tests has nothing else to fix.
-  const tests = apexTestsVerdict(change.validation, readMetadataPayload(change.payload));
-  const validated =
-    change.validation !== null && 'deployId' in change.validation && change.validation.done;
-  if (validated && tests && !tests.ok) {
-    return {
-      ok: false,
-      reason:
-        `Its Apex tests do not allow a deploy (every test must pass, and each class and trigger it changes be ${APEX_COVERAGE_PERCENT}% covered): ` +
-        tests.problems.join(' '),
     };
   }
   if (!validationPassed(change.validation)) {
@@ -654,12 +636,7 @@ export async function applyChangeRequest(
   let quick = false;
   let started = validatedId ? await quickDeploy(context, access, validatedId) : null;
   if (started?.ok) quick = true;
-  if (!started) {
-    started = await startDeploy(context, access, payload.files, {
-      checkOnly: false,
-      tests: payload.apexTests,
-    });
-  }
+  if (!started) started = await startDeploy(context, access, payload.files, { checkOnly: false });
   if (!started.ok) {
     const results = {
       operations: [checked, { label: 'Deploy', outcome: 'failed' as const, detail: started.error }],

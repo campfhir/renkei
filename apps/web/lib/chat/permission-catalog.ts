@@ -74,8 +74,6 @@ export function codeActTools(): ActToolEntry[] {
     repoFullName: '',
     repoProvider: '',
     origin: '',
-    // Listed whether or not this person has the capability: the catalog is of tools that exist.
-    salesforceApex: true,
   });
   return dedupe(actNamesOf([...bound, codeDelegateTool(bound)]));
 }

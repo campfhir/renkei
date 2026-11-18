@@ -16,12 +16,6 @@ import { soqlContains, soqlString } from './soql';
 
 export type ApexKind = 'class' | 'trigger';
 
-/** One class or trigger, by name. */
-export interface ApexUnit {
-  kind: ApexKind;
-  name: string;
-}
-
 /** The sObject that holds each kind's source. */
 export const APEX_OBJECT: Record<ApexKind, 'ApexClass' | 'ApexTrigger'> = {
   class: 'ApexClass',

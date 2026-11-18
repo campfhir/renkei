@@ -21,14 +21,7 @@
  */
 
 import { getDataStore, type SalesforceChangeRecord } from '@renkei/db';
-import {
-  apexTestVerdict,
-  type ApexTestRun,
-  type ApexTestVerdict,
-  type ApexUnit,
-  type DeployFailure,
-  type DeployOutcome,
-} from '@renkei/connector-salesforce';
+import type { DeployFailure, DeployOutcome } from '@renkei/connector-salesforce';
 import { isUuid } from '@/lib/uuid';
 
 /** How long a proposal can wait for its review. */
@@ -67,8 +60,6 @@ export type Validation =
       status: string;
       failures: DeployFailure[];
       errorMessage?: string;
-      /** The Apex tests it ran, for a change that carries Apex. */
-      tests?: ApexTestRun;
       checkedAt: string;
     }
   | { error: string; checkedAt: string };
@@ -178,34 +169,6 @@ function failuresOf(value: unknown): DeployFailure[] {
   });
 }
 
-const numberOf = (value: unknown): number => (typeof value === 'number' ? value : 0);
-const textOf = (value: unknown): string => (typeof value === 'string' ? value : '');
-
-/** A stored test run, as validationFrom wrote it. */
-function testRunOf(value: unknown): ApexTestRun | undefined {
-  if (value === undefined || value === null) return undefined;
-  const entry = record(value);
-  const rows = (raw: unknown) => (Array.isArray(raw) ? raw.map(record) : []);
-  return {
-    run: numberOf(entry.run),
-    failures: rows(entry.failures).map((failure) => ({
-      className: textOf(failure.className),
-      method: textOf(failure.method),
-      message: textOf(failure.message),
-      ...(typeof failure.stackTrace === 'string' ? { stackTrace: failure.stackTrace } : {}),
-    })),
-    coverage: rows(entry.coverage).map((coverage) => ({
-      name: textOf(coverage.name),
-      type: textOf(coverage.type),
-      lines: numberOf(coverage.lines),
-      uncovered: numberOf(coverage.uncovered),
-    })),
-    warnings: Array.isArray(entry.warnings)
-      ? entry.warnings.filter((w) => typeof w === 'string')
-      : [],
-  };
-}
-
 function validationOf(value: unknown): Validation | null {
   if (value === null || value === undefined) return null;
   const entry = record(value);
@@ -218,7 +181,6 @@ function validationOf(value: unknown): Validation | null {
     status: typeof entry.status === 'string' ? entry.status : '',
     failures: failuresOf(entry.failures),
     ...(typeof entry.errorMessage === 'string' ? { errorMessage: entry.errorMessage } : {}),
-    ...(entry.tests ? { tests: testRunOf(entry.tests) } : {}),
     checkedAt,
   };
 }
@@ -232,24 +194,8 @@ export function validationFrom(outcome: DeployOutcome, now = new Date()): Valida
     status: outcome.status,
     failures: outcome.failures,
     ...(outcome.errorMessage ? { errorMessage: outcome.errorMessage } : {}),
-    ...(outcome.tests ? { tests: outcome.tests } : {}),
     checkedAt: now.toISOString(),
   };
-}
-
-/**
- * For a change that carries Apex, whether its validation's tests let it
- * deploy (every test passed, each changed class and trigger 80% covered);
- * null for a change without Apex. Salesforce asks no coverage of a sandbox
- * and 75% across the org of production, so its own success is not enough.
- */
-export function apexTestsVerdict(
-  validation: Validation | null,
-  payload: { apexTests?: string[]; apexMeasured?: ApexUnit[] } | null
-): ApexTestVerdict | null {
-  if (!payload?.apexTests?.length) return null;
-  const tests = validation && 'deployId' in validation ? validation.tests : undefined;
-  return apexTestVerdict(tests, payload.apexMeasured ?? []);
 }
 
 /** Whether the validation passed — the only state a request may be applied in. */

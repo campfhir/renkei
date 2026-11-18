@@ -42,7 +42,6 @@ import { codeProjectTarget } from './scope';
 import { codeTools, type CheckoutRecovery } from './tools';
 import type { ResourceRole } from '@/lib/chat/access';
 import { codePreviewHost } from './preview-host-server';
-import { salesforceApexAvailable } from './salesforce-apex-access';
 import {
   CLONE_WAIT_MS,
   awaitClone,
@@ -135,8 +134,6 @@ export interface CodeTurnContext {
     clonedNow: boolean;
     /** The code_service_* tools are in the turn: containers may be started beside the checkout. */
     servicesEnabled: boolean;
-    /** The code_salesforce_* tools are in the turn (salesforce-apex-access.ts). */
-    salesforceApex?: boolean;
   };
   /** The clone to run before the model speaks; null when the checkout is already usable. */
   prelude: PreludeStep | null;
@@ -205,11 +202,10 @@ export async function codeProjectContext(
   // The org's roster, read once per turn: the orchestrator picks a
   // sub-agent's model from it per task (delegate.ts) — the same enabled
   // rows the composer's own picker offers.
-  const [env, subagentModels, previewHost, salesforceApex] = await Promise.all([
+  const [env, subagentModels, previewHost] = await Promise.all([
     sbEnvList(target),
     listChatModels(),
     codePreviewHost(),
-    salesforceApexAvailable(actor.subject).catch(() => false),
   ]);
   const envNames = env.ok ? env.val.map((variable) => variable.name) : [];
   const allTools = codeTools({
@@ -222,7 +218,6 @@ export async function codeProjectContext(
     ...(previewHost ? { previewHost } : {}),
     recover: (lostId) => recoverCheckout(project, actor.chat, actor, target, lostId),
     servicesEnabled,
-    ...(salesforceApex ? { salesforceApex: true } : {}),
     ...(actor.auto ? { auto: true } : {}),
     subagentModels: subagentModels.map(({ id, label, provider, model, isDefault }) => ({
       id,
@@ -286,14 +281,7 @@ export async function codeProjectContext(
     };
     return {
       tools,
-      prompt: {
-        ...base,
-        envNames,
-        clonedNow,
-        ready: true,
-        notReady: null,
-        ...(salesforceApex ? { salesforceApex: true } : {}),
-      },
+      prompt: { ...base, envNames, clonedNow, ready: true, notReady: null },
       prelude,
     };
   }
@@ -306,7 +294,6 @@ export async function codeProjectContext(
       clonedNow,
       ready: true,
       notReady: null,
-      ...(salesforceApex ? { salesforceApex: true } : {}),
     },
     prelude: null,
   };

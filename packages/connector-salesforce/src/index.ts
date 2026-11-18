@@ -33,31 +33,6 @@ export {
   type SalesforceOrg,
 } from './orgs';
 export {
-  APEX_METADATA_TYPE,
-  SFDX_SOURCE_ROOT,
-  apexMetaXml,
-  apexPackage,
-  apexSourcePath,
-  apexUnitOfPath,
-  isTestClass,
-  lineDiff,
-  readApexMeta,
-  unifiedDiff,
-  type ApexStatus,
-  type ApexUpsert,
-  type DiffLine,
-} from './apex-deploy';
-export {
-  APEX_COVERAGE_PERCENT,
-  apexTestVerdict,
-  coveragePercent,
-  parseRunTestResult,
-  type ApexCoverage,
-  type ApexTestFailure,
-  type ApexTestRun,
-  type ApexTestVerdict,
-} from './apex-tests';
-export {
   APEX_FIND_HITS,
   APEX_LINE_CHARS,
   APEX_OBJECT,
@@ -69,7 +44,6 @@ export {
   sourceLines,
   sourceWindow,
   type ApexKind,
-  type ApexUnit,
   type SourceHit,
   type SourceWindow,
 } from './apex';

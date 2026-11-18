@@ -45,8 +45,6 @@ export interface SystemPromptInput {
       clonedNow?: boolean;
       /** The code_service_* tools are in the turn: containers may be started beside the checkout. */
       servicesEnabled?: boolean;
-      /** The code_salesforce_* tools are in the turn: Apex can be pulled, tested and proposed. */
-      salesforceApex?: boolean;
     } | null;
   } | null;
   /** Memory carried across every chat this person owns; null inside a project. */
@@ -224,13 +222,6 @@ The sandbox the commands run in has the internet and a full toolchain (Python 3 
 const SERVICES_BRIEF = `When the project's tests or commands need a service — a database, a cache, a message broker — start one beside the checkout with code_service_start from an image the organization allows (a refusal names what is allowed; do not work around it, tell the person). Set the container's own variables in env with a throwaway password, and export what the project expects (DATABASE_URL, REDIS_URL) as templates over {host} and {port}; those variables are then set for every code_run command, over the project's .env. Wait for the service to be ready (its logs, or a readiness command such as pg_isready) before running tests against it, and stop it with code_service_stop when the work is done. code_services lists what is running. When reading a service's logs, ask for what you need rather than everything: match narrows to lines that match a word or pattern ("error|fatal"), since to lines after a stamp from an earlier answer or a duration ("5m"); without a name every service's lines come interleaved.`;
 
 /**
- * Apex: the repository holds it in the Salesforce DX layout and the
- * change request is the only way it reaches an org
- * (code/salesforce-apex-tools.ts).
- */
-const SALESFORCE_APEX_BRIEF = `Salesforce Apex lives in this repository in the Salesforce DX layout (classes/Foo.cls beside Foo.cls-meta.xml, under the package directory sfdx-project.json names, usually force-app/main/default); the repository is for a feature or project, and any of the person's Salesforce Admin orgs (sandboxes and production) can be pulled from or tested in. Pull the classes and triggers you need with code_salesforce_retrieve_apex (from whichever org has them), edit them with the code_* file tools, and write a test class for what you change. Run the tests in an org with code_salesforce_test_apex (a validation that changes nothing) until every test passes and each class and trigger you change is at least 80% covered — nothing deploys short of that, in a sandbox or in production. Then commit and push, and propose it with code_salesforce_propose_apex: that is the only way Apex reaches an org, as a change request an operator approves on its review page. To take Apex out, switch a trigger off (deactivateTriggers) rather than delete it; a class can only be deleted (deleteClasses), and its source stays in the repository. Prove a change in a sandbox before proposing it to production.`;
-
-/**
  * Previews: the project's own server, run in the checkout and served by
  * this app, so what the chat built can be opened in a browser — and the
  * one place the model is told to hand the person a link.
@@ -397,7 +388,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
         `This is a code project on the repository ${code.repoFullName}` +
           (code.branch ? ` (branch ${code.branch})` : '') +
           (code.ready
-            ? `.${code.clonedNow ? ' It is being cloned into the sandbox as this turn’s first step; that step’s result says whether the checkout is usable.' : ''}${code.envNames.length ? ` Its environment sets: ${code.envNames.join(', ')}.` : ' It has no environment variables.'}\n\n${CODE_BRIEF}\n\n${PREVIEWS_BRIEF}${code.servicesEnabled ? `\n\n${SERVICES_BRIEF}` : ''}${code.salesforceApex ? `\n\n${SALESFORCE_APEX_BRIEF}` : ''}`
+            ? `.${code.clonedNow ? ' It is being cloned into the sandbox as this turn’s first step; that step’s result says whether the checkout is usable.' : ''}${code.envNames.length ? ` Its environment sets: ${code.envNames.join(', ')}.` : ' It has no environment variables.'}\n\n${CODE_BRIEF}\n\n${PREVIEWS_BRIEF}${code.servicesEnabled ? `\n\n${SERVICES_BRIEF}` : ''}`
             : `. Its checkout is not usable right now (${code.notReady ?? 'not ready'}), so the code_* tools are not available in this turn; say so if the person asks for work in the repository.`)
       );
     }

@@ -819,42 +819,6 @@ shows what it finds:
 These are warnings, not refusals: the admin may intend them. Anything the check cannot parse is
 reported as "not checked", never as clean.
 
-### Apex, from code projects
-
-Apex is code, so it is written where code is written: in a code project, whose repository holds it
-in the Salesforce DX layout (`force-app/main/default/classes/Foo.cls` beside its `-meta.xml`) for a
-feature or a project rather than for one org. Git is its history. It reaches an org only as a
-change request, the same as everything else here. Three code project tools
-(`apps/web/lib/code/salesforce-apex-tools.ts`), offered when the person's admin connection has the
-**Apex** capability, which is off by default and which a connector admin must put in the
-connector's ceiling before anyone can choose it:
-
-- `code_salesforce_retrieve_apex` pulls classes and triggers from any of the person's admin orgs
-  into the checkout, to start from what is live or catch up with an edit made in Setup;
-- `code_salesforce_test_apex` sends the repository's classes and triggers to a sandbox or
-  production as a check-only deploy that runs the named test classes (`RunSpecifiedTests`), so
-  Salesforce compiles and tests and nothing changes, and reports failures, coverage and the verdict;
-- `code_salesforce_propose_apex` makes them a change request: one component per class with its
-  diff against the org (the review page draws it with the code project's diff view), an
-  `apex-unchanged`/`apex-absent` precondition each, and the test classes in the payload.
-
-**Tests decide, in a sandbox as in production.** Every validation and every deploy of an Apex change
-runs its named test classes, and it may be applied only when every test passed and each class and
-trigger it writes (test classes and switched-off triggers aside) is at least **80%** covered
-(`apexTestVerdict`, `packages/connector-salesforce/src/apex-tests.ts`). That is stricter than
-Salesforce's own 75% across the org, which it asks of production alone; a sandbox validation
-Salesforce passes at 60% still cannot be applied. The review page shows the tests, each class's
-coverage against the bar, and the verdict, and `applyGate` refuses short of it.
-
-**Taking Apex out.** A trigger is switched off (deployed with status `Inactive`, its source kept),
-which production allows. A class cannot be switched off in production, so it is deleted, in
-`destructiveChangesPost.xml` so a change that also removes the last reference deploys together; the
-validation fails if anything still uses it, and the repository keeps its source. Commenting a class
-out is not offered: its callers stop compiling and coverage falls.
-
-Still absent: anonymous Apex ("No generic request tool, no anonymous Apex" above). Nothing runs
-Apex except Salesforce's own tests, in a validation.
-
 ### Admin scope picker
 
 | Option                                | Tools                                                                                | Default |
@@ -866,7 +830,6 @@ Apex except Salesforce's own tests, in a validation.
 | Propose field-update automation       | stamp rules                                                                          | on      |
 | Propose permission sets               | permission set                                                                       | on      |
 | Propose user access                   | assignments                                                                          | off     |
-| Write and deploy Apex                 | code project tools: retrieve, test, propose Apex                                     | off     |
 | Propose whole applications            | application, promote                                                                 | on      |
 
 ## Reference documents
@@ -888,11 +851,11 @@ same change.
 
 ## Not in this version
 
-- **Lightning Web Components and free-form Flow authoring.** Generating Flow XML is possible but
-  the review page cannot honestly show a non-developer what a 300-line Flow does. The one
+- **Apex, triggers, Lightning Web Components, and free-form Flow authoring.** Generating code
+  and Flow XML is possible but the review page cannot honestly show a non-developer what a
+  300-line Flow does, and production Apex needs tests that would themselves be generated. The one
   exception is `salesforce_admin_propose_stamp_rules`' fixed shape, which reads as a table. Other
   Flows are readable; activating or deactivating an existing version is a small change request.
-  (Apex and triggers are built, from code projects: "Apex, from code projects" above.)
 - **User management** — creating users, freezing, resetting passwords, licences. The ADManager
   Plus connector's territory in spirit; a stage of its own if wanted.
 - **Bulk data loads** (Bulk API 2.0) — imports and mass updates beyond Composite's 200 records,

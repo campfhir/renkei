@@ -65,13 +65,6 @@ export function salesforceAdminScopeFor(toolName: string): string[] {
     case 'salesforce_admin_propose_profile':
       return ['sfa-read', 'sfa-security'];
 
-    // Apex, from a code project (lib/code/salesforce-apex-tools.ts): its
-    // own capability, off by default.
-    case 'code_salesforce_retrieve_apex':
-    case 'code_salesforce_test_apex':
-    case 'code_salesforce_propose_apex':
-      return ['sfa-read', 'sfa-apex'];
-
     default:
       // A new tool missing its mapping registers for nobody — the loud,
       // fail-closed direction; the registration test names it.
