@@ -176,6 +176,8 @@ export type AuditAction =
   | 'code.branch_switch'
   /** Every uncommitted change on the checkout discarded (git reset --hard + clean -fd). */
   | 'code.discard_changes'
+  /** Apex from the checkout proposed to a Salesforce org as a change request (the code pane's Apex panel). */
+  | 'code.salesforce_apex_proposed'
   /**
    * A Jira admin change request was applied from its review page — what
    * Renkei changed in Jira's configuration, and on whose click. Recorded

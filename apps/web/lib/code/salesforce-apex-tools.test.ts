@@ -40,7 +40,17 @@ jest.mock('@renkei/sandbox-client', () => ({
   sbWorkspaceRead: jest.fn(),
   sbWorkspaceWrite: jest.fn(),
   sbWorkspaceGitStatus: jest.fn(),
+  sbWorkspaceFind: jest.fn(),
+  clientFailure: (error: { message?: string }) => ({
+    status: 502,
+    message: error.message ?? 'failed',
+  }),
 }));
+jest.mock('./salesforce-apex-access', () => ({
+  APEX_SCOPE: 'sfa-apex',
+  salesforceApexAvailable: jest.fn(),
+}));
+jest.mock('@/lib/salesforce-grants', () => ({ listSalesforceConnections: jest.fn() }));
 
 import JSZip from 'jszip';
 import { authedFetch } from '@renkei/delegate-client';
@@ -56,12 +66,26 @@ import {
   TEST_TOOL,
   salesforceApexTools,
 } from './salesforce-apex-tools';
+import {
+  apexPanelStatus,
+  apexTestStatus,
+  proposeApex,
+  searchOrgApex,
+  startApexTests,
+} from './salesforce-apex';
 
 const sandbox = jest.requireMock<{
   sbWorkspaceRead: jest.Mock;
   sbWorkspaceWrite: jest.Mock;
   sbWorkspaceGitStatus: jest.Mock;
+  sbWorkspaceFind: jest.Mock;
 }>('@renkei/sandbox-client');
+const apexAccess = jest.requireMock<{ salesforceApexAvailable: jest.Mock }>(
+  './salesforce-apex-access'
+);
+const grants = jest.requireMock<{ listSalesforceConnections: jest.Mock }>(
+  '@/lib/salesforce-grants'
+);
 const client = jest.requireMock<{ resolveSalesforceAccess: jest.Mock }>(
   '@/lib/mcp-tools/salesforce/client'
 );
@@ -278,6 +302,25 @@ beforeEach(() => {
       conflicts: [],
     },
   }));
+  sandbox.sbWorkspaceFind.mockImplementation(async (_target: unknown, input: { glob: string }) => {
+    const pattern =
+      input.glob === '**/classes/*.cls' ? /\/classes\/[^/]+\.cls$/ : /\/triggers\/[^/]+\.trigger$/;
+    return {
+      ok: true,
+      val: { paths: [...repo.keys()].filter((p) => pattern.test(p)), truncated: false },
+    };
+  });
+  apexAccess.salesforceApexAvailable.mockResolvedValue(true);
+  grants.listSalesforceConnections.mockResolvedValue([
+    {
+      accountId: 'a',
+      connector: 'uat',
+      displayName: 'Ada',
+      username: 'ada',
+      instanceUrl: UAT,
+      requestedScopes: ['sfa-read', 'sfa-apex'],
+    },
+  ]);
   store.createChangeRequest.mockImplementation(async (input: Record<string, unknown>) => ({
     id: '11111111-2222-4333-8444-555555555555',
     ...input,
@@ -483,5 +526,128 @@ describe('proposing Apex as a change request', () => {
     expect(result.isError).toBe(true);
     expect(result.text).toContain('does not take change requests');
     expect(requests).toHaveLength(0);
+  });
+});
+
+describe('what the code pane’s Apex panel starts from', () => {
+  const checkout = { target: { subject: 'code-project:p1' }, workspaceId: 'ws-1' };
+  const caller = { subject: 'ada', origin: 'https://renkei.test' };
+
+  it('is not offered for a repository without Apex, nor to someone without the capability', async () => {
+    repo.set('README.md', '# hello');
+    expect(await apexPanelStatus(checkout, caller)).toMatchObject({
+      available: true,
+      present: false,
+    });
+    repo.set(`${ROOT}/classes/BillingService.cls`, BILLING);
+    apexAccess.salesforceApexAvailable.mockResolvedValue(false);
+    expect(await apexPanelStatus(checkout, caller)).toMatchObject({
+      available: false,
+      present: true,
+      orgs: [],
+    });
+  });
+
+  it('lists the orgs the capability reaches, what changed, and the test classes there are', async () => {
+    repo.set(`${ROOT}/classes/BillingService.cls`, BILLING_EDITED);
+    repo.set(`${ROOT}/classes/BillingServiceTest.cls`, BILLING_TEST);
+    repo.set(`${ROOT}/classes/TestDataFactory.cls`, 'public class TestDataFactory {}');
+    repo.set(`${ROOT}/triggers/AccountTrigger.trigger`, TRIGGER);
+    changes = [
+      ` M ${ROOT}/classes/BillingService.cls`,
+      `?? ${ROOT}/classes/BillingServiceTest.cls`,
+    ];
+    const status = await apexPanelStatus(checkout, caller);
+    expect(status).toMatchObject({
+      available: true,
+      present: true,
+      root: ROOT,
+      orgs: [{ key: 'uat', name: 'UAT', sandbox: true, takesChanges: true }],
+      changed: [
+        { kind: 'class', name: 'BillingService', status: 'modified' },
+        { kind: 'class', name: 'BillingServiceTest', status: 'new' },
+      ],
+      // A helper whose name says Test is not a test class without the annotation.
+      testClasses: ['BillingServiceTest'],
+    });
+    expect('units' in status ? status.units.map((u) => u.name).sort() : []).toEqual([
+      'AccountTrigger',
+      'BillingService',
+      'BillingServiceTest',
+      'TestDataFactory',
+    ]);
+  });
+
+  it('leaves out an org whose connection lacks the capability', async () => {
+    repo.set(`${ROOT}/classes/BillingService.cls`, BILLING);
+    grants.listSalesforceConnections.mockResolvedValue([
+      {
+        accountId: 'a',
+        connector: 'uat',
+        displayName: 'Ada',
+        username: 'ada',
+        instanceUrl: UAT,
+        requestedScopes: ['sfa-read'],
+      },
+    ]);
+    expect(await apexPanelStatus(checkout, caller)).toMatchObject({ orgs: [] });
+  });
+
+  it('searches the org’s own classes and triggers by name', async () => {
+    const result = await searchOrgApex(caller, { org: 'UAT', query: 'Bill_ing' });
+    expect(result).toMatchObject({ where: 'UAT (sandbox)', entries: [] });
+    const queries = requests
+      .filter((r) => r.path.endsWith('/query'))
+      .map((r) => new URLSearchParams(r.query).get('q'));
+    expect(queries).toEqual([
+      "SELECT Name, Status FROM ApexClass WHERE Name LIKE '%Bill\\_ing%' AND NamespacePrefix = null ORDER BY Name LIMIT 50",
+      "SELECT Name, Status, TableEnumOrId FROM ApexTrigger WHERE Name LIKE '%Bill\\_ing%' AND NamespacePrefix = null ORDER BY Name LIMIT 50",
+    ]);
+  });
+
+  it('starts a run, then reads how it ended, held to what it sent', async () => {
+    live.set('BillingService', { kind: 'class', body: BILLING, status: 'Active' });
+    repo.set(`${ROOT}/classes/BillingService.cls`, BILLING_EDITED);
+    changes = [` M ${ROOT}/classes/BillingService.cls`];
+    const started = await startApexTests(checkout, caller, {
+      org: 'UAT',
+      tests: ['BillingServiceTest'],
+      names: [],
+    });
+    expect(started).toMatchObject({
+      deployId: DEPLOY,
+      sent: [{ name: 'BillingService', kind: 'class', addedTest: false }],
+      measured: [{ kind: 'class', name: 'BillingService' }],
+    });
+    const report = await apexTestStatus(caller, {
+      org: 'UAT',
+      deployId: DEPLOY,
+      measured: [{ kind: 'class', name: 'BillingService' }],
+      waitMs: 0,
+    });
+    expect(report).toMatchObject({
+      done: true,
+      ok: true,
+      coverage: [{ unit: { kind: 'class', name: 'BillingService' }, percent: 90 }],
+      problems: [],
+    });
+  });
+
+  it('answers a proposal with its id and review link', async () => {
+    live.set('BillingService', { kind: 'class', body: BILLING, status: 'Active' });
+    repo.set(`${ROOT}/classes/BillingService.cls`, BILLING_EDITED);
+    changes = [` M ${ROOT}/classes/BillingService.cls`];
+    const proposed = await proposeApex(checkout, caller, {
+      org: 'UAT',
+      tests: ['BillingServiceTest'],
+      names: [],
+      deactivateTriggers: [],
+      deleteClasses: [],
+    });
+    expect(proposed).toMatchObject({
+      changeId: '11111111-2222-4333-8444-555555555555',
+      url: 'https://renkei.test/salesforce-admin/changes/11111111-2222-4333-8444-555555555555',
+      title: 'Apex: BillingService',
+    });
   });
 });
