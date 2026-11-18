@@ -285,7 +285,7 @@ export default function BlockEditor({
           <h2 className="text-sm font-semibold">
             Definition <span className="font-normal text-gray-500">— the same on every host</span>
           </h2>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <div className="grid grid-cols-1 items-start gap-x-3 gap-y-3 sm:grid-cols-2">
             <label className={label}>
               Name
               <input
@@ -296,10 +296,7 @@ export default function BlockEditor({
               />
             </label>
             <label className={label}>
-              Key{' '}
-              <span className="font-normal text-gray-500">
-                how pipelines name it{state.blockId ? '; fixed once created' : ''}
-              </span>
+              Key
               <input
                 className={`${input} font-mono`}
                 value={form.key}
@@ -308,6 +305,9 @@ export default function BlockEditor({
                 maxLength={80}
                 onChange={(e) => dispatch({ type: 'field', field: 'key', value: e.target.value })}
               />
+              <span className="font-normal text-gray-500">
+                How pipelines name it{state.blockId ? '; fixed once created' : ''}.
+              </span>
             </label>
             <label className={`${label} sm:col-span-2`}>
               Description
@@ -523,10 +523,9 @@ export default function BlockEditor({
             </button>
           </fieldset>
 
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <div className="grid grid-cols-1 items-start gap-x-3 gap-y-3 sm:grid-cols-2">
             <label className={label}>
-              Artifacts it takes{' '}
-              <span className="font-normal text-gray-500">from earlier blocks, by name</span>
+              Artifacts it takes
               <input
                 className={`${input} font-mono`}
                 value={form.consumes}
@@ -535,6 +534,7 @@ export default function BlockEditor({
                   dispatch({ type: 'field', field: 'consumes', value: e.target.value })
                 }
               />
+              <span className="font-normal text-gray-500">From earlier blocks, by name.</span>
             </label>
             <fieldset className="min-w-0 space-y-1">
               <legend className="text-xs font-semibold text-gray-700 dark:text-gray-300">
