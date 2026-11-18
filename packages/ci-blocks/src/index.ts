@@ -1,8 +1,10 @@
 export {
   BLOCK_KINDS,
   INPUT_TYPES,
+  placeholderPattern,
   placeholdersIn,
   readBlockDefinition,
+  trimDashes,
   type BlockArtifact,
   type BlockCache,
   type BlockDefinition,

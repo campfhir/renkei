@@ -44,6 +44,13 @@ const HOST_ENV: Record<Host, { commit: string; branch: string; run: string; toke
   },
 };
 
+/**
+ * A body for inside the shell's double quotes: backslashes first, then the
+ * quotes, so neither ends the string early. `$` is left as it is: the body's
+ * variables are meant to expand.
+ */
+const shellDoubleQuoted = (value: string) => value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+
 /** Single quotes for the shell; the names that reach here are letters, digits, . _ - and /. */
 const quoted = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
 
@@ -71,7 +78,7 @@ export function reportCommand(
           `  renkei_token=$(curl -sS "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=${encodeURIComponent(to.audience)}" -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" | sed -n 's/.*"value":"\\([^"]*\\)".*/\\1/p')`,
         ]
       : []),
-    `  curl -sS --max-time 15 -o /dev/null -w 'Renkei took the report (%{http_code})\\n' -X POST ${quoted(to.url)} -H "Authorization: Bearer ${env.token}" -H 'Content-Type: application/json' -d "${body.replace(/"/g, '\\"')}" || echo 'Renkei could not be reached; the deploy goes on' >&2`,
+    `  curl -sS --max-time 15 -o /dev/null -w 'Renkei took the report (%{http_code})\\n' -X POST ${quoted(to.url)} -H "Authorization: Bearer ${env.token}" -H 'Content-Type: application/json' -d "${shellDoubleQuoted(body)}" || echo 'Renkei could not be reached; the deploy goes on' >&2`,
     'else',
     "  echo 'curl is not installed, so Renkei was not told of this deploy' >&2",
     'fi',

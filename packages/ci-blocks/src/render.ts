@@ -21,7 +21,7 @@
  */
 
 import { stringify } from 'yaml';
-import type { BlockDefinition, Read } from './definition';
+import { placeholderPattern, type BlockDefinition, type Read } from './definition';
 
 export type Host = 'bitbucket' | 'github';
 
@@ -84,7 +84,7 @@ export function substitute(
   values: Record<string, string>,
   environment: string | undefined
 ): string {
-  return commands.replace(/\$\{([^}]*)\}/g, (whole, raw: string) => {
+  return commands.replace(placeholderPattern(), (whole, raw: string) => {
     const name = raw.trim();
     if (name === 'commit' || name === 'branch' || name === 'repo')
       return HOST_VARIABLES[host][name];

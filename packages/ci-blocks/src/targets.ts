@@ -16,6 +16,7 @@
  */
 
 import { isRecord } from '@renkei/guards';
+import { trimDashes } from './definition';
 import type { Host } from './render';
 
 /**
@@ -214,11 +215,10 @@ const BITBUCKET_DEFAULT_LABELS = new Set([
 export function targetFromRunner(runner: Runner): { name: string; labels: TargetLabels } {
   const defaults = runner.host === 'github' ? GITHUB_DEFAULT_LABELS : BITBUCKET_DEFAULT_LABELS;
   const own = runner.labels.find((label) => !defaults.has(label.toLowerCase()));
-  const name = (own ?? runner.name)
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 50);
+  const name = trimDashes((own ?? runner.name).toLowerCase().replace(/[^a-z0-9-]+/g, '-')).slice(
+    0,
+    50
+  );
   const labels: TargetLabels = { bitbucket: [], github: [] };
   labels[runner.host] = runner.labels;
   return { name: /^[a-z]/.test(name) ? name : `runner-${name}`, labels };

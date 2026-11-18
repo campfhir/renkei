@@ -83,7 +83,22 @@ const ARTIFACT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const IMAGE = /^[a-z0-9][a-z0-9._\-/:@]{0,199}$/;
 /** Names a host keeps for itself and a block may not shadow. */
 const RESERVED_VARIABLE = /^(BITBUCKET_|GITHUB_|RUNNER_|CI$|HOME$|PATH$|RENKEI_)/;
-const PLACEHOLDER = /\$\{([^}]*)\}/g;
+/**
+ * `${name}`. The name excludes `$`, `{` and `}` and is bounded, so each try
+ * stops at the next `$` and a long run of `${${…` is read in linear time.
+ */
+export function placeholderPattern(): RegExp {
+  return /\$\{([^${}]{0,120})\}/g;
+}
+
+/** Text with the dashes at either end taken off, without a backtracking pattern. */
+export function trimDashes(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value[start] === '-') start += 1;
+  while (end > start && value[end - 1] === '-') end -= 1;
+  return value.slice(start, end);
+}
 const SIMPLE_PLACEHOLDERS = new Set(['commit', 'branch', 'repo', 'env']);
 
 export type Read<T> = { ok: true; value: T } | { ok: false; errors: string[] };
@@ -94,7 +109,7 @@ const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
 /** The placeholders a block's commands use, in order of first use. */
 export function placeholdersIn(commands: string): string[] {
   const seen = new Set<string>();
-  for (const match of commands.matchAll(PLACEHOLDER)) seen.add(match[1].trim());
+  for (const match of commands.matchAll(placeholderPattern())) seen.add(match[1].trim());
   return [...seen];
 }
 

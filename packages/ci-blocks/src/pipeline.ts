@@ -20,7 +20,7 @@
 
 import { Document, isMap, isScalar, isSeq } from 'yaml';
 import { isRecord } from '@renkei/guards';
-import type { BlockDefinition, Read } from './definition';
+import { trimDashes, type BlockDefinition, type Read } from './definition';
 import { renderBitbucketStep, renderGithubJob, type BlockUse, type Host } from './render';
 import { BITBUCKET_OUTCOME, GITHUB_OUTCOME, reportCommand, type ReportTo } from './report';
 import type { Runner, TargetLabels } from './targets';
@@ -168,13 +168,7 @@ export function readPipelineSpec(value: unknown): Read<PipelineSpec> {
 
 /** Letters, digits and -: for a GitHub job's id. */
 function slug(value: string): string {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 40) || 'step'
-  );
+  return trimDashes(value.toLowerCase().replace(/[^a-z0-9]+/g, '-')).slice(0, 40) || 'step';
 }
 
 interface Part {
