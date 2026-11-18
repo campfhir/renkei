@@ -85,8 +85,9 @@ export default function PipelineBuilder({
   const url = `/api/code/projects/${projectId}/pipeline-builder`;
 
   const load = useCallback(
-    async (notice?: string) => {
+    async (notice?: string, live: () => boolean = () => true) => {
       const result = await getJson<BuilderData>(url);
+      if (!live()) return;
       if (result.data)
         dispatch({ type: 'loaded', data: result.data, ...(notice ? { notice } : {}) });
       else dispatch({ type: 'failed', error: result.error ?? 'The pipeline could not be read.' });
@@ -94,7 +95,12 @@ export default function PipelineBuilder({
     [url]
   );
   useEffect(() => {
-    void load();
+    // A load an unmount (or React's second dev-mode run) superseded is dropped.
+    let live = true;
+    void load(undefined, () => live);
+    return () => {
+      live = false;
+    };
   }, [load]);
 
   const save = async () => {
@@ -384,7 +390,7 @@ function PartHeader({
         aria-label={`Branch that deploys ${environment}`}
         value={part.branch ?? ''}
         onChange={(e) => dispatch({ type: 'setBranch', environment, branch: e.target.value })}
-        className={`${inputClass} w-40 font-mono`}
+        className="w-40 rounded-md border border-gray-300 bg-white px-2 py-1.5 font-mono text-sm dark:border-gray-700 dark:bg-gray-900"
       />
       <p className="text-xs text-gray-500">{part.detail}</p>
       <button

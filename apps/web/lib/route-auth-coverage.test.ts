@@ -44,6 +44,8 @@ const SESSION_GUARDS = [
   'codeProjectContext',
   // lib/code/pipelines-access.ts: codeProjectContext plus the Bitbucket grant, for a project's Pipelines routes.
   'pipelinesProjectContext',
+  // lib/ci/pipeline-builder-access.ts: codeProjectContext plus the host and, for a write, the editor role.
+  'builderContext',
 ];
 
 /**

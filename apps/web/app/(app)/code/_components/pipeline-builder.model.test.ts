@@ -332,6 +332,13 @@ describe('environments', () => {
 });
 
 describe('saving and the pull request', () => {
+  it('a reload that lands after an edit keeps the edit', () => {
+    const edited = run([{ type: 'removeStep', step: { part: null, index: 0 } }], loaded);
+    const reloaded = run([{ type: 'loaded', data }], edited);
+    expect(reloaded.spec?.checks).toEqual([]);
+    expect(canSave(reloaded)).toBe(true);
+  });
+
   it('a save keeps the pipeline, and a reload after it keeps what is on screen', () => {
     const edited = run([{ type: 'removeStep', step: { part: null, index: 0 } }], loaded);
     const saved = run([{ type: 'sent', busy: 'save' }, { type: 'saved' }], edited);

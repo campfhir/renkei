@@ -1667,6 +1667,89 @@ function handleGitHubActions(request, url, response) {
   return error(response, 404, 'not_found', 'Not Found');
 }
 
+/**
+ * The pipeline builder's repositories (`acme/pipeline-demo-*`,
+ * pipeline-builder.spec.ts): their branches, the pull requests opened on
+ * them, and a commit through the src endpoint kept on the branch it names
+ * — so the file the builder puts on its own branch is not on main until
+ * the pull request merges. The rest (variables, environments, the file on
+ * main) is handleBitbucket's, by repository.
+ */
+const PIPELINE_DEMO = new Map();
+
+function pipelineDemoOf(fullName) {
+  if (!PIPELINE_DEMO.has(fullName)) {
+    PIPELINE_DEMO.set(fullName, {
+      branches: new Map([
+        ['main', 'a1b2c3d4e5f6'],
+        ['develop', 'f6e5d4c3b2a1'],
+      ]),
+      files: new Map(),
+      pulls: [],
+    });
+  }
+  return PIPELINE_DEMO.get(fullName);
+}
+
+function handlePipelineDemo(request, url, response) {
+  const match =
+    /^\/bitbucket\/2\.0\/repositories\/(acme)\/(pipeline-demo-[^/]+)\/(refs\/branches|pullrequests|src)$/.exec(
+      url.pathname
+    );
+  if (!match) return null;
+  const fullName = `${match[1]}/${match[2]}`;
+  const state = pipelineDemoOf(fullName);
+  if (match[3] === 'refs/branches') {
+    return json(response, 200, {
+      values: [...state.branches].map(([name, hash]) => ({ name, target: { hash } })),
+    });
+  }
+  if (match[3] === 'pullrequests' && request.method === 'GET') {
+    const wanted = (url.searchParams.get('state') ?? 'OPEN').toUpperCase();
+    return json(response, 200, { values: state.pulls.filter((pr) => pr.state === wanted) });
+  }
+  if (match[3] === 'pullrequests' && request.method === 'POST') {
+    void readBody(request).then((body) => {
+      const id = state.pulls.length + 1;
+      const pr = {
+        id,
+        title: body.title ?? '',
+        description: body.description ?? '',
+        state: 'OPEN',
+        source: body.source,
+        destination: body.destination,
+        author: { display_name: 'E2E Dev' },
+        updated_on: new Date().toISOString(),
+        links: { html: { href: `https://bitbucket.org/${fullName}/pull-requests/${id}` } },
+      };
+      state.pulls.push(pr);
+      json(response, 201, pr);
+    });
+    return;
+  }
+  if (match[3] === 'src' && request.method === 'POST') {
+    const chunks = [];
+    request.on('data', (chunk) => chunks.push(chunk));
+    request.on('end', () => {
+      const form = new URLSearchParams(Buffer.concat(chunks).toString('utf8'));
+      const branch = form.get('branch') ?? 'main';
+      const parents = form.get('parents');
+      if (!state.branches.has(branch)) {
+        // Bitbucket makes a branch it does not know from the parent named.
+        if (!parents) return error(response, 400, 'bad_request', `No branch ${branch}`);
+        state.branches.set(branch, parents);
+      }
+      state.files.set(branch, form.get('bitbucket-pipelines.yml') ?? '');
+      state.branches.set(branch, `c${String(state.files.size).padStart(11, '0')}`);
+      if (branch === 'main') pipelinesOf(fullName).configFile = state.files.get(branch);
+      response.writeHead(201);
+      response.end();
+    });
+    return;
+  }
+  return null;
+}
+
 function handleBitbucket(request, url, response) {
   const path = url.pathname.slice('/bitbucket/2.0'.length);
   const pipelinesConfig = /^\/repositories\/([^/]+)\/([^/]+)\/pipelines_config$/.exec(path);
@@ -3217,6 +3300,9 @@ const server = createServer((request, response) => {
   ) {
     if (handleCiRunners(request, url, response) !== null) return;
     return error(response, 404, 'not_found', 'Not Found');
+  }
+  if (url.pathname.startsWith('/bitbucket/2.0/repositories/acme/pipeline-demo-')) {
+    if (handlePipelineDemo(request, url, response) !== null) return;
   }
   if (url.pathname.startsWith('/bitbucket/2.0/')) return handleBitbucket(request, url, response);
   // GitHub, stood in for (the app is pointed at /github with

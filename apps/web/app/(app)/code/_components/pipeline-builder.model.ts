@@ -169,16 +169,26 @@ export function builderReducer(state: BuilderState, action: BuilderAction): Buil
   switch (action.type) {
     case 'sent':
       return { ...state, busy: action.busy, error: null, problems: [], notice: null };
-    case 'loaded':
+    case 'loaded': {
+      // A reload after a save or pull request keeps what is on screen, and
+      // so does one that lands after the person started editing.
+      const keep = spec !== null && (Boolean(action.notice) || isDirty(state));
       return {
         ...state,
         data: action.data,
-        // A reload after a save or pull request keeps what is on screen.
-        spec: action.notice && spec ? spec : action.data.spec,
-        saved: action.notice && spec ? spec : action.data.suggested ? null : action.data.spec,
+        spec: keep ? spec : action.data.spec,
+        saved:
+          action.notice && spec
+            ? spec
+            : keep
+              ? state.saved
+              : action.data.suggested
+                ? null
+                : action.data.spec,
         busy: null,
         notice: action.notice ?? null,
       };
+    }
     case 'failed':
       return { ...state, busy: null, error: action.error, problems: action.problems ?? [] };
     case 'view':
