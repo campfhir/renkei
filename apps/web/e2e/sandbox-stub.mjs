@@ -1506,6 +1506,87 @@ function handleActionsVariables(request, response, list, name) {
   return error(response, 405, 'method_not_allowed');
 }
 
+/**
+ * Self-hosted runners for the Targets page (ci-targets.spec.ts), on an
+ * organization or workspace named `e2e-ci-*`: two on each host. GitHub's
+ * through a GitHub App's installation token (the JWT is not checked, as
+ * nothing here holds the App's public key; the token it returns is what
+ * the runner list requires); Bitbucket's through its workspace's UUID and
+ * the endpoint its own autoscaler uses.
+ */
+const CI_RUNNERS = {
+  github: [
+    {
+      id: 101,
+      name: 'workers-02',
+      os: 'linux',
+      status: 'online',
+      busy: true,
+      labels: [{ name: 'self-hosted' }, { name: 'Linux' }, { name: 'onprem-workers' }],
+    },
+    {
+      id: 102,
+      name: 'build-mac-01',
+      os: 'macos',
+      status: 'online',
+      busy: false,
+      labels: [{ name: 'self-hosted' }, { name: 'macOS' }, { name: 'ARM64' }],
+    },
+  ],
+  bitbucket: [
+    {
+      uuid: '{e2e-runner-1}',
+      name: 'workers-01',
+      labels: ['self.hosted', 'linux', 'onprem-workers'],
+      state: { status: 'ONLINE' },
+    },
+    {
+      uuid: '{e2e-runner-2}',
+      name: 'dmz-edge-01',
+      labels: ['self.hosted', 'linux', 'dmz'],
+      state: { status: 'OFFLINE' },
+    },
+  ],
+};
+
+function handleCiRunners(request, url, response) {
+  const gh = /^\/github\/orgs\/(e2e-ci-[^/]+)\/(installation|actions\/runners)$/.exec(url.pathname);
+  if (gh && gh[2] === 'installation')
+    return json(response, 200, { id: 9001, account: { login: gh[1] } });
+  if (
+    request.method === 'POST' &&
+    url.pathname === '/github/app/installations/9001/access_tokens'
+  ) {
+    return json(response, 201, {
+      token: 'ghs_e2e_installation',
+      expires_at: '2099-01-01T00:00:00Z',
+    });
+  }
+  if (gh && gh[2] === 'actions/runners') {
+    if (request.headers.authorization !== 'Bearer ghs_e2e_installation')
+      return error(response, 401, 'unauthorized');
+    return json(response, 200, {
+      total_count: CI_RUNNERS.github.length,
+      runners: CI_RUNNERS.github,
+    });
+  }
+  const workspace = /^\/bitbucket\/2\.0\/workspaces\/(e2e-ci-[^/]+)$/.exec(url.pathname);
+  if (workspace)
+    return json(response, 200, {
+      uuid: `{${workspace[1]}}`,
+      slug: workspace[1],
+      name: workspace[1],
+    });
+  if (
+    /^\/bitbucket\/internal\/workspaces\/%7Be2e-ci-[^/]+%7D\/pipelines-config\/runners$/.test(
+      url.pathname
+    )
+  ) {
+    return json(response, 200, { pagelen: 100, values: CI_RUNNERS.bitbucket });
+  }
+  return null;
+}
+
 /** GitHub's REST API as far as the Actions page and its chat tools reach. */
 function handleGitHubActions(request, url, response) {
   const path = url.pathname.slice('/github'.length);
@@ -3137,6 +3218,15 @@ const server = createServer((request, response) => {
   // Bitbucket, stood in for: the app is pointed here with
   // BITBUCKET_API_BASE_URL, so the picker's browsing and a project page's
   // README are exercised without the network.
+  // CI runners for the Targets page, on e2e-ci-* organizations and workspaces.
+  if (
+    /^\/(github\/orgs\/e2e-ci-|github\/app\/installations\/|bitbucket\/2\.0\/workspaces\/e2e-ci-|bitbucket\/internal\/)/.test(
+      url.pathname
+    )
+  ) {
+    if (handleCiRunners(request, url, response) !== null) return;
+    return error(response, 404, 'not_found', 'Not Found');
+  }
   if (url.pathname.startsWith('/bitbucket/2.0/')) return handleBitbucket(request, url, response);
   // GitHub, stood in for (the app is pointed at /github with
   // GITHUB_API_BASE_URL); the connect flow's token and identity are the
