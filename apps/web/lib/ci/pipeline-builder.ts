@@ -19,6 +19,7 @@ import { getDataStore } from '@renkei/db';
 import {
   HOST_LABEL,
   PIPELINE_FILE,
+  REPORT_PATH,
   partName,
   readBlockDefinition,
   readPipelineSpec,
@@ -29,6 +30,7 @@ import {
   type HostFacts,
   type PipelineBlock,
   type PipelineSpec,
+  type ReportTo,
 } from '@renkei/ci-blocks';
 import { ATLASSIAN_BITBUCKET, GITHUB } from '@renkei/provider-grants';
 import type { ProjectRow } from '@/lib/chat/projects';
@@ -79,6 +81,16 @@ export interface BuilderPage {
   /** What could not be read from the host, in its words. */
   unread: string[];
   pullRequestUrl: string | null;
+  /** Where each deploy step reports; null when Renkei's own address is unknown. */
+  report: ReportTo | null;
+}
+
+/** Where a pipeline's deploy steps report: this Renkei's report endpoint, and its address as the audience. */
+export function reportTo(origin: string): ReportTo | null {
+  const base = origin.replace(/\/+$/, '');
+  return /^https?:\/\/[^/\s]+$/.test(base)
+    ? { url: `${base}${REPORT_PATH}`, audience: base }
+    : null;
 }
 
 export function hostOf(provider: string): Host | null {
@@ -276,6 +288,7 @@ export async function builderPage(caller: Caller, project: CodeRepoProject): Pro
     facts: hostRead.facts,
     unread: hostRead.unread,
     pullRequestUrl: saved?.pullRequestUrl ?? null,
+    report: reportTo(caller.origin),
   };
 }
 
@@ -491,6 +504,7 @@ export async function openPipelinePullRequest(
     host,
     block: (key, version) => blocks.find((b) => b.key === key && b.version === version) ?? null,
     target: (name) => targets.find((t) => t.name === name)?.labels ?? null,
+    report: reportTo(caller.origin),
   });
   if (!rendered.ok) {
     return {

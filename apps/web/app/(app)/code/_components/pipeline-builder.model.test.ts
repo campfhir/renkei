@@ -111,6 +111,10 @@ const data: BuilderData = {
   },
   unread: [],
   pullRequestUrl: null,
+  report: {
+    url: 'https://renkei.example/api/deployments/report',
+    audience: 'https://renkei.example',
+  },
   canEdit: true,
   project: { name: 'sync-worker', repo: 'acme/sync-worker', branch: 'main' },
 };
@@ -146,6 +150,10 @@ describe('the suggested pipeline', () => {
     expect(canSave(loaded)).toBe(true);
     expect(canOpenPullRequest(loaded)).toBe(true);
     expect(fileText(loaded)).toMatchObject({ ok: true });
+    // Each deploy reports to Renkei, with a token GitHub signs.
+    const text = fileText(loaded);
+    expect(text?.ok && text.value).toContain('id-token: write');
+    expect(text?.ok && text.value).toContain('https://renkei.example/api/deployments/report');
     expect(pullRequestNote(loaded)).toBe(
       'Merging it starts the pipeline on the branches it names.'
     );

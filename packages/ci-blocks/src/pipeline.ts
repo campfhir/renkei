@@ -22,6 +22,7 @@ import { Document, isMap, isScalar, isSeq } from 'yaml';
 import { isRecord } from '@renkei/guards';
 import type { BlockDefinition, Read } from './definition';
 import { renderBitbucketStep, renderGithubJob, type BlockUse, type Host } from './render';
+import { BITBUCKET_OUTCOME, GITHUB_OUTCOME, reportCommand, type ReportTo } from './report';
 import type { Runner, TargetLabels } from './targets';
 
 export interface PipelineStep {
@@ -63,6 +64,8 @@ export interface PipelineContext {
   block: (key: string, version: number) => PipelineBlock | null;
   /** A target's labels by its name, or null when there is no such target. */
   target: (name: string) => TargetLabels | null;
+  /** Where each deploy step reports to (report.ts); none writes no reports. */
+  report?: ReportTo | null;
 }
 
 export const PIPELINE_FILE: Record<Host, string> = {
@@ -246,7 +249,37 @@ function marker(rendered: RenderedStep): string {
   return ` block: ${rendered.block.key}@v${rendered.block.version}${target}`;
 }
 
-function bitbucketFile(parts: { part: Part; steps: RenderedStep[] }[], errors: string[]): string {
+/** A Bitbucket deploy step that reports: signed with its own OIDC token, before and after. */
+function bitbucketReporting(
+  step: unknown,
+  report: ReportTo,
+  environment: string,
+  target: string | null
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const given = isRecord(step) ? step : {};
+  for (const [key, value] of Object.entries(given)) {
+    if (key === 'script') {
+      out.oidc = true;
+      out.script = [
+        reportCommand('bitbucket', report, environment, target, 'started', ''),
+        ...(Array.isArray(value) ? value : []),
+      ];
+      out['after-script'] = [
+        `${BITBUCKET_OUTCOME}\n${reportCommand('bitbucket', report, environment, target, '$renkei_status', '$renkei_detail')}`,
+      ];
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+function bitbucketFile(
+  parts: { part: Part; steps: RenderedStep[] }[],
+  errors: string[],
+  report: ReportTo | null
+): string {
   const caches: Record<string, unknown> = {};
   const markers: { path: (string | number)[]; text: string }[] = [];
   const pipelines: Record<string, unknown> = {};
@@ -262,6 +295,14 @@ function bitbucketFile(parts: { part: Part; steps: RenderedStep[] }[], errors: s
         return;
       }
       Object.assign(caches, out.value.caches);
+      if (report && part.environment && rendered.block.definition.kind === 'deploy') {
+        out.value.step.step = bitbucketReporting(
+          out.value.step.step,
+          report,
+          part.environment.name,
+          rendered.step.target ?? null
+        );
+      }
       const path = part.environment
         ? ['pipelines', 'branches', part.environment.branch, items.length]
         : ['pipelines', 'pull-requests', '**', items.length];
@@ -285,9 +326,43 @@ function bitbucketFile(parts: { part: Part; steps: RenderedStep[] }[], errors: s
   return doc.toString({ lineWidth: 0 });
 }
 
+/** A GitHub deploy job that reports: allowed an OIDC token, before its step and always after. */
+function githubReporting(
+  job: Record<string, unknown>,
+  report: ReportTo,
+  environment: string,
+  target: string | null,
+  title: string
+): Record<string, unknown> {
+  const steps = Array.isArray(job.steps) ? [...job.steps] : [];
+  const main = steps.findIndex((step) => isRecord(step) && step.name === title);
+  steps.splice(main < 0 ? steps.length : main, 0, {
+    name: 'Tell Renkei the deploy started',
+    run: reportCommand('github', report, environment, target, 'started', ''),
+  });
+  steps.push({
+    name: 'Tell Renkei how the deploy went',
+    if: 'always()',
+    env: { RENKEI_JOB_STATUS: '${{ job.status }}' },
+    run: `${GITHUB_OUTCOME}\n${reportCommand('github', report, environment, target, '$renkei_status', '$renkei_detail')}`,
+  });
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(job)) {
+    if (key === 'steps') {
+      // Naming permissions takes every other away: checkout still needs to read.
+      out.permissions = { contents: 'read', 'id-token': 'write' };
+      out.steps = steps;
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
 function githubFile(
   parts: { part: Part; steps: RenderedStep[]; ids: string[] }[],
-  errors: string[]
+  errors: string[],
+  report: ReportTo | null
 ): string {
   const jobs: Record<string, unknown> = {};
   const markers: { id: string; text: string }[] = [];
@@ -304,7 +379,17 @@ function githubFile(
         return;
       }
       const { name, ...rest } = out.value.job;
-      jobs[out.value.id] = { name, if: condition, ...rest };
+      const job: Record<string, unknown> = { name, if: condition, ...rest };
+      jobs[out.value.id] =
+        report && part.environment && rendered.block.definition.kind === 'deploy'
+          ? githubReporting(
+              job,
+              report,
+              part.environment.name,
+              rendered.step.target ?? null,
+              rendered.use.title
+            )
+          : job;
       markers.push({ id: out.value.id, text: marker(rendered) });
     });
   }
@@ -331,8 +416,8 @@ export function renderPipeline(spec: PipelineSpec, context: PipelineContext): Re
   const errors: string[] = [];
   const text =
     context.host === 'bitbucket'
-      ? bitbucketFile(resolved.value, errors)
-      : githubFile(resolved.value, errors);
+      ? bitbucketFile(resolved.value, errors, context.report ?? null)
+      : githubFile(resolved.value, errors, context.report ?? null);
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value: text };
 }
 
@@ -527,6 +612,15 @@ export function pipelineChecks(
   }
   if (spec.checks.length === 0) {
     add('warn', 'Pull requests run nothing: add a block that tests or builds.');
+  }
+  const deploys = spec.environments.some((e) =>
+    e.steps.some((step) => blocks.at(step.block, step.version)?.definition.kind === 'deploy')
+  );
+  if (deploys) {
+    add(
+      'ok',
+      `Each deploy tells Renkei how it went, signed by ${hostName} with OpenID Connect: no token is stored anywhere.`
+    );
   }
 
   // What the pull request replaces.

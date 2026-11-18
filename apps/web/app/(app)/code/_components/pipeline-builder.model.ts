@@ -25,6 +25,7 @@ import {
   type PipelineSpec,
   type PipelineStep,
   type Read,
+  type ReportTo,
 } from '@renkei/ci-blocks';
 
 /** What GET /api/code/projects/[id]/pipeline-builder answers. */
@@ -39,6 +40,8 @@ export interface BuilderData {
   facts: HostFacts;
   unread: string[];
   pullRequestUrl: string | null;
+  /** Where each deploy step reports to; null writes no reports. */
+  report: ReportTo | null;
   canEdit: boolean;
   project: { name: string; repo: string; branch: string };
 }
@@ -345,6 +348,7 @@ function context(data: BuilderData) {
     block: (key: string, version: number) =>
       data.blocks.find((b) => b.key === key && b.version === version) ?? null,
     target: (name: string) => data.targets.find((t) => t.name === name)?.labels ?? null,
+    report: data.report,
   };
 }
 

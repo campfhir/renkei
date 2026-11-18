@@ -233,6 +233,11 @@ describe('before it runs', () => {
         'targets',
       ],
       ['ok', 'Every block’s inputs are filled in, and the file is written for GitHub.', null],
+      [
+        'ok',
+        'Each deploy tells Renkei how it went, signed by GitHub with OpenID Connect: no token is stored anywhere.',
+        null,
+      ],
       ['ok', '.github/workflows/pipeline.yml is a new file on main.', null],
     ]);
   });

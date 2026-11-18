@@ -235,6 +235,7 @@ describe('on GitHub', () => {
     const saved = await getDataStore().ciPipelines.get(project(GITHUB).id);
     expect(saved?.pullRequestUrl).toBe('https://github.com/acme/sync-worker/pull/7');
     expect(saved?.writtenText).toContain('production-deploy-systemd:');
+    expect(saved?.writtenText).toContain('https://renkei.example/api/deployments/report');
 
     // While it is open, opening again adds a commit to it and opens nothing new.
     const again = host({
