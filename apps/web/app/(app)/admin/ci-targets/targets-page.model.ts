@@ -11,6 +11,23 @@
 import { splitLabels, targetFromRunner, targetProblems, type Runner } from '@renkei/ci-blocks';
 
 export type HostKey = 'bitbucket' | 'github';
+
+/**
+ * How the Bitbucket account signs in: the Bitbucket connector's OAuth
+ * consumer, an OAuth consumer of its own (both by client credentials), a
+ * workspace access token, or a bot account's API token.
+ */
+export type BitbucketAuth = 'connector' | 'oauth' | 'bearer' | 'basic';
+export const BITBUCKET_AUTH_CHOICES: { value: BitbucketAuth; label: string }[] = [
+  { value: 'connector', label: 'The Bitbucket connector’s OAuth consumer' },
+  { value: 'oauth', label: 'An OAuth consumer’s key and secret' },
+  { value: 'bearer', label: 'A workspace access token' },
+  { value: 'basic', label: 'A bot account’s API token' },
+];
+
+export function bitbucketAuthOf(value: string): BitbucketAuth {
+  return BITBUCKET_AUTH_CHOICES.find((choice) => choice.value === value)?.value ?? 'bearer';
+}
 export const HOST_NAMES: Record<HostKey, string> = { bitbucket: 'Bitbucket', github: 'GitHub' };
 
 /** What GET /api/admin/ci-targets answers. */
@@ -18,11 +35,14 @@ export interface TargetsPageData {
   accounts: {
     bitbucket: {
       workspace: string;
-      auth: 'bearer' | 'basic';
+      auth: BitbucketAuth;
       email: string;
+      clientId: string;
       hasToken: boolean;
     } | null;
     github: { org: string; appId: string; hasKey: boolean } | null;
+    /** Whether the Bitbucket connector has an OAuth consumer registered. */
+    bitbucketConsumer: boolean;
   };
   hosts: Record<
     HostKey,
@@ -44,13 +64,18 @@ export interface AccountForm {
   host: HostKey;
   /** Bitbucket: the workspace; GitHub: the organization. */
   account: string;
-  auth: 'bearer' | 'basic';
+  auth: BitbucketAuth;
   email: string;
+  /** Bitbucket: an OAuth consumer's key, for `oauth`. */
+  clientId: string;
   appId: string;
-  /** The token or private key; blank keeps the stored one. */
+  /** The token, consumer secret or private key; blank keeps the stored one. */
   secret: string;
-  /** Whether a secret is stored already. */
+  /** Whether a secret is stored already, for the way the account signs in now (`storedAuth`). */
   hasSecret: boolean;
+  storedAuth: BitbucketAuth | null;
+  /** Bitbucket: whether the connector has an OAuth consumer to sign in with. */
+  consumer: boolean;
 }
 
 export interface TargetForm {
@@ -80,7 +105,10 @@ export type TargetsPageAction =
   | { type: 'loaded'; data: TargetsPageData; notice?: string }
   | { type: 'failed'; error: string; problems?: string[] }
   | { type: 'openAccount'; host: HostKey }
-  | { type: 'accountField'; patch: Partial<Omit<AccountForm, 'host' | 'hasSecret'>> }
+  | {
+      type: 'accountField';
+      patch: Partial<Omit<AccountForm, 'host' | 'hasSecret' | 'storedAuth' | 'consumer'>>;
+    }
   | { type: 'closeAccount' }
   | { type: 'newTarget' }
   | { type: 'editTarget'; id: string }
@@ -126,20 +154,28 @@ export function targetsPageReducer(
           ? {
               host: 'bitbucket',
               account: accounts?.bitbucket?.workspace ?? '',
-              auth: accounts?.bitbucket?.auth ?? 'bearer',
+              // A new account signs in as an OAuth consumer: the connector's when there is one.
+              auth:
+                accounts?.bitbucket?.auth ?? (accounts?.bitbucketConsumer ? 'connector' : 'oauth'),
               email: accounts?.bitbucket?.email ?? '',
+              clientId: accounts?.bitbucket?.auth === 'oauth' ? accounts.bitbucket.clientId : '',
               appId: '',
               secret: '',
               hasSecret: accounts?.bitbucket?.hasToken ?? false,
+              storedAuth: accounts?.bitbucket?.auth ?? null,
+              consumer: accounts?.bitbucketConsumer ?? false,
             }
           : {
               host: 'github',
               account: accounts?.github?.org ?? '',
               auth: 'bearer',
               email: '',
+              clientId: '',
               appId: accounts?.github?.appId ?? '',
               secret: '',
               hasSecret: accounts?.github?.hasKey ?? false,
+              storedAuth: null,
+              consumer: false,
             };
       return { ...state, account: form, target: null, error: null, notice: null, problems: [] };
     }
@@ -239,10 +275,13 @@ export function accountCards(data: TargetsPageData, now: number): AccountCard[] 
       host: 'bitbucket',
       title: bitbucket ? `Bitbucket workspace ${bitbucket.workspace}` : 'Bitbucket',
       how: bitbucket
-        ? bitbucket.auth === 'basic'
-          ? `Bot account ${bitbucket.email}, with an API token.`
-          : 'Workspace access token.'
-        : 'A workspace access token, or a bot account’s API token, that can read the workspace’s runners.',
+        ? {
+            connector: 'The Bitbucket connector’s OAuth consumer, by client credentials.',
+            oauth: `OAuth consumer ${bitbucket.clientId}, by client credentials.`,
+            bearer: 'Workspace access token.',
+            basic: `Bot account ${bitbucket.email}, with an API token.`,
+          }[bitbucket.auth]
+        : 'An OAuth consumer with Runners: Read, by client credentials — or a workspace access token, or a bot account’s API token.',
       ...status('bitbucket'),
     },
     {
@@ -256,24 +295,41 @@ export function accountCards(data: TargetsPageData, now: number): AccountCard[] 
   ];
 }
 
+/** Whether the form must be given a secret: none is stored for the way it signs in now. */
+export function needsSecret(form: AccountForm): boolean {
+  if (form.host === 'bitbucket' && form.auth === 'connector') return false;
+  const stored = form.hasSecret && (form.host === 'github' || form.storedAuth === form.auth);
+  return !stored;
+}
+
 /** What stops the account form from saving. */
 export function accountProblems(form: AccountForm): string[] {
   const problems: string[] = [];
   if (!form.account.trim()) {
     problems.push(form.host === 'bitbucket' ? 'Name the workspace.' : 'Name the organization.');
   }
-  if (
-    form.host === 'bitbucket' &&
-    form.auth === 'basic' &&
-    !/^[^@\s]+@[^@\s]+$/.test(form.email.trim())
-  ) {
-    problems.push('A bot account signs in with its email.');
+  if (form.host === 'bitbucket') {
+    if (form.auth === 'connector' && !form.consumer) {
+      problems.push(
+        'The Bitbucket connector has no OAuth consumer registered yet: register it under Connectors, or give a key and secret here.'
+      );
+    }
+    if (form.auth === 'oauth' && !form.clientId.trim()) problems.push('Paste the consumer’s key.');
+    if (form.auth === 'basic' && !/^[^@\s]+@[^@\s]+$/.test(form.email.trim())) {
+      problems.push('A bot account signs in with its email.');
+    }
   }
   if (form.host === 'github' && !/^\d{1,12}$/.test(form.appId.trim())) {
     problems.push('The App ID is the number on the App’s settings page.');
   }
-  if (!form.hasSecret && !form.secret.trim()) {
-    problems.push(form.host === 'bitbucket' ? 'Paste the token.' : 'Paste the App’s private key.');
+  if (needsSecret(form) && !form.secret.trim()) {
+    problems.push(
+      form.host === 'github'
+        ? 'Paste the App’s private key.'
+        : form.auth === 'oauth'
+          ? 'Paste the consumer’s secret.'
+          : 'Paste the token.'
+    );
   }
   return problems;
 }
@@ -286,7 +342,9 @@ export function accountRequest(form: AccountForm): { url: string; body: Record<s
           workspace: form.account.trim(),
           auth: form.auth,
           ...(form.auth === 'basic' ? { email: form.email.trim() } : {}),
-          token: form.secret.trim(),
+          ...(form.auth === 'oauth' ? { clientId: form.clientId.trim() } : {}),
+          // The connector's consumer is read from its registration: nothing to send.
+          ...(form.auth === 'connector' ? {} : { token: form.secret.trim() }),
         },
       }
     : {

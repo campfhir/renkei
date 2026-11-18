@@ -1,6 +1,7 @@
 /**
  * Targets, end to end in a browser: an operator connects the Bitbucket
- * workspace (a workspace access token) and the GitHub organization (a
+ * workspace (through the Bitbucket connector's OAuth consumer, by client
+ * credentials: nothing pasted) and the GitHub organization (a
  * GitHub App's ID and private key, generated here), the runners each host
  * reports appear in no target, a target made by hand takes the runners
  * carrying its labels on both hosts, another is made from a loose runner's
@@ -9,8 +10,9 @@
  *
  * The hosts are the sandbox stub's (e2e/sandbox-stub.mjs, `e2e-ci-*`): its
  * GitHub answers the App's installation and token exchange and the
- * organization's runners; its Bitbucket the workspace and the runners
- * endpoint. Where the rules went: the cards, forms and suggestions —
+ * organization's runners; its Bitbucket the client credentials grant for
+ * the code hosts' test consumer (support/code-host.ts) and the runners
+ * endpoint, which takes only the token that grant gave. Where the rules went: the cards, forms and suggestions —
  * targets-page.model.test.ts; matching runners to targets —
  * packages/ci-blocks targets.test.ts; reading each host, the JWT and the
  * refusals — lib/ci/runners.test.ts; secrets kept write-only —
@@ -25,6 +27,7 @@ import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { APIRequestContext, Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { prepareCodeHost } from './support/code-host';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const WORKSPACE = 'e2e-ci-acme';
@@ -63,6 +66,7 @@ async function removeTargets(
 
 test('targets: connect both hosts, make targets from runners @smoke', async ({
   page,
+  request,
   person: _person,
 }, testInfo) => {
   test.skip(
@@ -73,6 +77,8 @@ test('targets: connect both hosts, make targets from runners @smoke', async ({
   const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const pem = privateKey.export({ type: 'pkcs1', format: 'pem' }).toString();
   await removeTargets(page.request);
+  // The Bitbucket connector's OAuth consumer, which the workspace is read with.
+  await prepareCodeHost(request);
 
   try {
     await page.goto('/admin');
@@ -82,13 +88,21 @@ test('targets: connect both hosts, make targets from runners @smoke', async ({
       .click();
     await expect(page.getByRole('heading', { name: 'Targets', level: 1 })).toBeVisible();
 
-    // --- Bitbucket, with a workspace access token. ---
+    // --- Bitbucket, with the connector's OAuth consumer: nothing to paste. ---
+    await page.request.delete('/api/admin/ci-accounts/bitbucket');
+    await page.reload();
     const bitbucket = page.getByTestId('account-bitbucket');
-    await bitbucket.getByRole('button', { name: /^(Connect Bitbucket|Change)$/ }).click();
+    await bitbucket.getByRole('button', { name: 'Connect Bitbucket' }).click();
+    await expect(bitbucket.getByRole('combobox', { name: 'Signs in with' })).toHaveValue(
+      'connector'
+    );
+    await expect(bitbucket.getByRole('textbox', { name: /token|secret/i })).toHaveCount(0);
     await bitbucket.getByRole('textbox', { name: 'Workspace', exact: true }).fill(WORKSPACE);
-    await bitbucket.getByRole('textbox', { name: /^Access token/ }).fill('workspace-access-token');
     await bitbucket.getByRole('button', { name: 'Save and read runners' }).click();
     await expect(page.getByRole('status')).toHaveText('Bitbucket account saved.');
+    await expect(bitbucket).toContainText(
+      'The Bitbucket connector’s OAuth consumer, by client credentials.'
+    );
     await expect(bitbucket).toContainText('Connected');
     await expect(bitbucket).toContainText('2 runners · read just now');
 

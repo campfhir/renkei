@@ -459,6 +459,14 @@ function readBody(request) {
   });
 }
 
+function readText(request) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    request.on('data', (chunk) => chunks.push(chunk));
+    request.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+  });
+}
+
 function setVariable(scope, name, value) {
   if (!ENV_NAME.test(name) || RESERVED.has(name)) {
     return `${name} is not a usable variable name.`;
@@ -1512,8 +1520,11 @@ function handleActionsVariables(request, response, list, name) {
  * through a GitHub App's installation token (the JWT is not checked, as
  * nothing here holds the App's public key; the token it returns is what
  * the runner list requires); Bitbucket's from the workspace's runners
- * endpoint.
+ * endpoint, to the token its token endpoint gives the code hosts' test
+ * OAuth consumer (e2e/support/code-host.ts) by client credentials.
  */
+const BITBUCKET_CONSUMER = `Basic ${Buffer.from('e2e-bitbucket-client:e2e-bitbucket-secret').toString('base64')}`;
+const BITBUCKET_CONSUMER_TOKEN = 'bb_e2e_consumer';
 const CI_RUNNERS = {
   github: [
     {
@@ -1570,9 +1581,26 @@ function handleCiRunners(request, url, response) {
       runners: CI_RUNNERS.github,
     });
   }
+  if (request.method === 'POST' && url.pathname === '/bitbucket/site/oauth2/access_token') {
+    void readText(request).then((body) => {
+      if (new URLSearchParams(body).get('grant_type') !== 'client_credentials')
+        return json(response, 400, { error: 'unsupported_grant_type' });
+      if (request.headers.authorization !== BITBUCKET_CONSUMER)
+        return json(response, 400, { error: 'invalid_client' });
+      return json(response, 200, {
+        access_token: BITBUCKET_CONSUMER_TOKEN,
+        token_type: 'bearer',
+        expires_in: 7200,
+        scopes: 'runner',
+      });
+    });
+    return;
+  }
   if (
     /^\/bitbucket\/2\.0\/workspaces\/e2e-ci-[^/]+\/pipelines-config\/runners$/.test(url.pathname)
   ) {
+    if (request.headers.authorization !== `Bearer ${BITBUCKET_CONSUMER_TOKEN}`)
+      return error(response, 401, 'unauthorized');
     return json(response, 200, { pagelen: 100, values: CI_RUNNERS.bitbucket });
   }
   return null;
@@ -3385,7 +3413,7 @@ const server = createServer((request, response) => {
   // README are exercised without the network.
   // CI runners for the Targets page, on e2e-ci-* organizations and workspaces.
   if (
-    /^\/(github\/orgs\/e2e-ci-|github\/app\/installations\/|bitbucket\/2\.0\/workspaces\/e2e-ci-)/.test(
+    /^\/(github\/orgs\/e2e-ci-|github\/app\/installations\/|bitbucket\/2\.0\/workspaces\/e2e-ci-|bitbucket\/site\/oauth2\/access_token$)/.test(
       url.pathname
     )
   ) {
