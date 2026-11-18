@@ -83,7 +83,15 @@ export default function PipelinesSummary({
             <Icon path={ICONS.arrowRight} className="h-3.5 w-3.5" />
           </Link>
         </div>
-        <p className="text-xs text-gray-500">How Bitbucket builds and deploys this repository.</p>
+        <p className="text-xs text-gray-500">
+          How Bitbucket builds and deploys this repository.{' '}
+          <Link
+            href={`/code/${projectId}/pipeline-builder`}
+            className="text-blue-600 hover:underline dark:text-blue-400"
+          >
+            Build it from blocks
+          </Link>
+        </p>
       </div>
       {error ? (
         <p role="alert" className="text-sm text-red-600 dark:text-red-400">

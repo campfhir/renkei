@@ -25,6 +25,7 @@
  */
 
 import { useCallback, useEffect, useReducer } from 'react';
+import Link from 'next/link';
 import BackLink from '@/components/back-link';
 import ExternalLink from '@/components/external-link';
 import LocalTime from '@/components/local-time';
@@ -287,6 +288,12 @@ export default function ActionsPage({
               {projectName} · <span className="font-mono">{repoFullName}</span>
             </p>
           </div>
+          <Link
+            href={`/code/${projectId}/pipeline-builder`}
+            className="text-xs font-medium whitespace-nowrap text-blue-600 hover:underline dark:text-blue-400"
+          >
+            Build from blocks
+          </Link>
           {refreshButton}
           {hostLink}
         </header>

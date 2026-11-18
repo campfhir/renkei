@@ -180,6 +180,8 @@ export type AuditAction =
   | 'ci.block_published'
   | 'ci.block_deleted'
   /** A CI target added or changed (Organization → Targets). */
+  | 'ci.pipeline_saved'
+  | 'ci.pipeline_pull_request'
   | 'ci.target_saved'
   | 'ci.target_deleted'
   /** A host's CI service account saved or forgotten; its secret is never in the event. */
