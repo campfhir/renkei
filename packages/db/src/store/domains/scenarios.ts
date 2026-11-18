@@ -46,6 +46,7 @@ import { chatTaskScenarios } from './chat-tasks/scenarios';
 import { artifactScenarios } from './artifacts/scenarios';
 import { codeProjectScenarios } from './code-projects/scenarios';
 import { codeTemplateScenarios } from './code-templates/scenarios';
+import { ciBlockScenarios } from './ci-blocks/scenarios';
 import { chatModelScenarios } from './chat-models/scenarios';
 import { actionableItemScenarios } from './actionable-items/scenarios';
 import { firstRunScenarios } from './first-run/scenarios';
@@ -140,6 +141,7 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...artifactScenarios,
   ...codeProjectScenarios,
   ...codeTemplateScenarios,
+  ...ciBlockScenarios,
   ...chatModelScenarios,
   ...actionableItemScenarios,
   ...firstRunScenarios,

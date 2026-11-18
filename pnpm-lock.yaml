@@ -1468,6 +1468,9 @@ importers:
         specifier: ^8.23.1
         version: 8.23.1
     devDependencies:
+      '@renkei/ci-blocks':
+        specifier: workspace:*
+        version: link:../ci-blocks
       '@types/jest':
         specifier: ^30.0.0
         version: 30.0.0

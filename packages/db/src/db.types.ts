@@ -716,6 +716,27 @@ export interface ChatWidgetDecisions {
   state_key: string;
 }
 
+export interface CiBlocks {
+  created_at: Generated<Timestamp>;
+  created_by: string | null;
+  description: string | null;
+  draft: Json | null;
+  id: Generated<string>;
+  key: string;
+  kind: string;
+  latest_version: Generated<number>;
+  name: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface CiBlockVersions {
+  block_id: string;
+  definition: Json;
+  published_at: Generated<Timestamp>;
+  published_by: string;
+  version: number;
+}
+
 export interface CoachMarkProgress {
   completed_at: Timestamp | null;
   completed_count: Generated<number>;
@@ -1817,6 +1838,8 @@ export interface DB {
   delegate_signing_keys: DelegateSigningKeys;
   device_key_requests: DeviceKeyRequests;
   key_delegations: KeyDelegations;
+  ci_block_versions: CiBlockVersions;
+  ci_blocks: CiBlocks;
   coach_mark_progress: CoachMarkProgress;
   code_language_gaps: CodeLanguageGaps;
   code_project_templates: CodeProjectTemplates;
