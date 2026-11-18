@@ -179,6 +179,12 @@ export type AuditAction =
   /** A CI building block's draft published as its next version (Organization → Building blocks). */
   | 'ci.block_published'
   | 'ci.block_deleted'
+  /** A CI target added or changed (Organization → Targets). */
+  | 'ci.target_saved'
+  | 'ci.target_deleted'
+  /** A host's CI service account saved or forgotten; its secret is never in the event. */
+  | 'ci.account_saved'
+  | 'ci.account_removed'
   /**
    * A Jira admin change request was applied from its review page — what
    * Renkei changed in Jira's configuration, and on whose click. Recorded

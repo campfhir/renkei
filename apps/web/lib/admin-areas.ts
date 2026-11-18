@@ -110,6 +110,12 @@ export function adminSections(): AdminSection[] {
           detail:
             'The pipeline steps code projects build from — written once, for Bitbucket Pipelines and GitHub Actions.',
         },
+        {
+          href: `${admin}/ci-targets`,
+          label: 'Targets',
+          detail:
+            'Where deploy blocks run: your self-hosted runners, read from Bitbucket and GitHub with a service account.',
+        },
       ],
     },
     {
