@@ -185,7 +185,7 @@ export function promotions(state: AppState, now: number): PromotionView[] {
       : p.pullRequest
         ? { kind: 'merge', label: `Merge to ${p.toBranch}`, number: p.pullRequest.number }
         : count === 0
-          ? { kind: 'none', why: 'Nothing to promote.' }
+          ? { kind: 'none', why: '' }
           : { kind: 'open', label: `Open a pull request: ${p.fromBranch} → ${p.toBranch}` };
     return {
       key: `${p.from}-${p.to}`,

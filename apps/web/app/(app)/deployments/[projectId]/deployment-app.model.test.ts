@@ -171,7 +171,8 @@ describe('promoting', () => {
     ]);
     expect(promotions(even, NOW)[0]).toMatchObject({
       summary: 'main has everything develop has: nothing to promote.',
-      action: { kind: 'none', why: 'Nothing to promote.' },
+      // The summary says it; nothing more is said under it.
+      action: { kind: 'none', why: '' },
     });
   });
 

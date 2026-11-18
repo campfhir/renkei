@@ -16,7 +16,7 @@
 /* global process, Buffer, setTimeout, URL, URLSearchParams, console */
 
 import { createServer } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { generateKeyPairSync, randomUUID, sign as signWith } from 'node:crypto';
 import JSZip from 'jszip';
 
 const PORT = Number(process.env.SANDBOX_STUB_PORT ?? '8092');
@@ -1677,6 +1677,60 @@ function handleGitHubActions(request, url, response) {
  */
 const PIPELINE_DEMO = new Map();
 
+/** A demo repository's UUID: fixed per name, as Bitbucket's is per repository. */
+function pipelineDemoUuid(fullName) {
+  const hex = Buffer.from(fullName).toString('hex').padEnd(12, '0').slice(-12);
+  return `{00000000-0000-4000-8000-${hex}}`;
+}
+
+/** What develop has that main lacks, newest first, as Bitbucket lists commits. */
+const PIPELINE_DEMO_COMMITS = [
+  {
+    hash: '8e41c2a9f0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5',
+    message: 'Show the intake status on the case page',
+    author: { raw: 'Priya Shah <priya@example.test>', user: { display_name: 'Priya Shah' } },
+  },
+  {
+    hash: '71c0b3e9f0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5',
+    message: 'Retry the address lookup once on a timeout',
+    author: { raw: 'Jordan Lee <jordan@example.test>', user: { display_name: 'Jordan Lee' } },
+  },
+];
+
+/**
+ * Bitbucket Pipelines' OpenID Connect, stood in for: the stub signs a
+ * step's token with a key of its own and publishes the key at the
+ * workspace's issuer, `…/workspaces/{workspace}/pipelines-config/identity/oidc/keys.json`.
+ * `POST /e2e/bitbucket-step-token` hands a spec the token a step would hold
+ * in $BITBUCKET_STEP_OIDC_TOKEN (deployments.spec.ts).
+ */
+const OIDC_KEY = generateKeyPairSync('rsa', { modulusLength: 2048 });
+const OIDC_JWK = {
+  ...OIDC_KEY.publicKey.export({ format: 'jwk' }),
+  kid: 'e2e-oidc',
+  alg: 'RS256',
+  use: 'sig',
+};
+const base64url = (value) => Buffer.from(value).toString('base64url');
+
+function bitbucketStepToken(origin, body) {
+  const now = Math.floor(Date.now() / 1000);
+  const header = base64url(JSON.stringify({ alg: 'RS256', kid: 'e2e-oidc', typ: 'JWT' }));
+  const payload = base64url(
+    JSON.stringify({
+      iss: `${origin}/bitbucket/2.0/workspaces/${body.workspace ?? 'acme'}/pipelines-config/identity/oidc`,
+      aud: 'ari:cloud:bitbucket::workspace/e2e',
+      sub: `${body.repositoryUuid}:{step}`,
+      repositoryUuid: body.repositoryUuid,
+      branchName: body.branchName ?? 'main',
+      iat: now,
+      exp: now + 300,
+    })
+  );
+  const signature = signWith('sha256', Buffer.from(`${header}.${payload}`), OIDC_KEY.privateKey);
+  return `${header}.${payload}.${signature.toString('base64url')}`;
+}
+
 function pipelineDemoOf(fullName) {
   if (!PIPELINE_DEMO.has(fullName)) {
     PIPELINE_DEMO.set(fullName, {
@@ -1692,13 +1746,50 @@ function pipelineDemoOf(fullName) {
 }
 
 function handlePipelineDemo(request, url, response) {
-  const match =
-    /^\/bitbucket\/2\.0\/repositories\/(acme)\/(pipeline-demo-[^/]+)\/(refs\/branches|pullrequests|src)$/.exec(
-      url.pathname
-    );
-  if (!match) return null;
-  const fullName = `${match[1]}/${match[2]}`;
+  const found = /^\/bitbucket\/2\.0\/repositories\/(acme)\/(pipeline-demo-[^/]+)(?:\/(.*))?$/.exec(
+    url.pathname
+  );
+  if (!found) return null;
+  const fullName = `${found[1]}/${found[2]}`;
   const state = pipelineDemoOf(fullName);
+  const rest = found[3] ?? '';
+  // The repository itself, with the UUID its step tokens name it by.
+  if (rest === '' && request.method === 'GET') {
+    return json(response, 200, {
+      uuid: pipelineDemoUuid(fullName),
+      full_name: fullName,
+      name: found[2],
+      project: { key: 'DEMO' },
+      mainbranch: { name: 'main' },
+      updated_on: '2026-09-01T00:00:00Z',
+    });
+  }
+  // What develop has that main lacks: `commits?include=develop&exclude=main`.
+  if (rest === 'commits' && request.method === 'GET') {
+    const include = url.searchParams.get('include');
+    const exclude = url.searchParams.get('exclude');
+    const merged = state.pulls.some(
+      (pr) =>
+        pr.state === 'MERGED' &&
+        pr.source?.branch?.name === include &&
+        pr.destination?.branch?.name === exclude
+    );
+    return json(response, 200, {
+      values: include === 'develop' && exclude === 'main' && !merged ? PIPELINE_DEMO_COMMITS : [],
+    });
+  }
+  const pull = /^pullrequests\/(\d+)(\/merge)?$/.exec(rest);
+  if (pull) {
+    const pr = state.pulls.find((p) => p.id === Number(pull[1]));
+    if (!pr) return error(response, 404, 'not_found');
+    if (pull[2] && request.method === 'POST') {
+      pr.state = 'MERGED';
+      return json(response, 200, pr);
+    }
+    return json(response, 200, pr);
+  }
+  const match = [null, found[1], found[2], rest];
+  if (!['refs/branches', 'pullrequests', 'src'].includes(rest)) return null;
   if (match[3] === 'refs/branches') {
     return json(response, 200, {
       values: [...state.branches].map(([name, hash]) => ({ name, target: { hash } })),
@@ -3300,6 +3391,20 @@ const server = createServer((request, response) => {
   ) {
     if (handleCiRunners(request, url, response) !== null) return;
     return error(response, 404, 'not_found', 'Not Found');
+  }
+  if (
+    /^\/bitbucket\/2\.0\/workspaces\/[^/]+\/pipelines-config\/identity\/oidc\/keys\.json$/.test(
+      url.pathname
+    )
+  ) {
+    return json(response, 200, { keys: [OIDC_JWK] });
+  }
+  if (request.method === 'POST' && url.pathname === '/e2e/bitbucket-step-token') {
+    void readBody(request).then((body) => {
+      if (typeof body.repositoryUuid !== 'string') return error(response, 400, 'bad_request');
+      json(response, 200, { token: bitbucketStepToken(`http://${request.headers.host}`, body) });
+    });
+    return;
   }
   if (url.pathname.startsWith('/bitbucket/2.0/repositories/acme/pipeline-demo-')) {
     if (handlePipelineDemo(request, url, response) !== null) return;

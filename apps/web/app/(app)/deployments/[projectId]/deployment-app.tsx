@@ -264,9 +264,9 @@ export default function DeploymentApp({ projectId }: { projectId: string }) {
                 >
                   {state.busy === 'promote' ? 'Opening…' : p.action.label}
                 </button>
-              ) : (
+              ) : p.action.why ? (
                 <p className="text-xs text-gray-500">{p.action.why}</p>
-              )}
+              ) : null}
             </section>
           ))}
 
