@@ -6,7 +6,7 @@
  * Read once on open, with the person's own grant on whichever host the
  * repository is on (repo-host.ts) — on no usable token or an API
  * failure, the card stays and shows the reason (pulls-summary.tsx's own
- * pattern; pipelines-summary.tsx did this first).
+ * pattern).
  */
 
 import Link from 'next/link';

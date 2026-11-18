@@ -24,6 +24,7 @@ import type { MCPToolContext } from '../common';
 import { salesforceScopeFor } from './scopes';
 import type { SalesforceAuth } from './salesforce-auth';
 import { registerRecordReadTools } from './records';
+import { registerApexReadTools } from './apex';
 import { registerWriteTools } from './writes';
 import { registerBulkTools } from './bulk';
 import { registerReportTools } from './reports';
@@ -51,6 +52,7 @@ export function registerSalesforceTools(
   registerSalesforcePreviewLookups(context, auth);
   registerOrgTools(server, context);
   registerRecordReadTools(server, context, auth);
+  registerApexReadTools(server, context, auth);
   registerWriteTools(server, context, auth);
   registerBulkTools(server, context, auth);
   registerReportTools(server, context, auth);

@@ -98,6 +98,18 @@ export async function resolveRef(
   return typeof found === 'string' ? found : { describe, ...found };
 }
 
+/** A single value past this is longer than a tool result can carry whole beside anything else. */
+const LONG_VALUE_CHARS = 20_000;
+
+/** The length of the longest string anywhere in the rows (an Apex Body, a long text field). */
+function longestString(value: unknown): number {
+  if (typeof value === 'string') return value.length;
+  if (Array.isArray(value))
+    return value.reduce<number>((max, v) => Math.max(max, longestString(v)), 0);
+  if (value && typeof value === 'object') return longestString(Object.values(value));
+  return 0;
+}
+
 export function registerRecordReadTools(
   server: McpServer,
   context: MCPToolContext,
@@ -324,10 +336,18 @@ export function registerRecordReadTools(
       }
       const page = await sfQueryPolicy(context, access, target);
       if (!page.ok) return errText(page.error);
+      const longest = longestString(page.records);
       return textResult(
         [
           `${page.records.length} of ${page.totalSize} row${page.totalSize === 1 ? '' : 's'}${note}` +
             (page.next ? ` — more: call again with cursor ${page.next}` : ''),
+          ...(longest > LONG_VALUE_CHARS
+            ? [
+                `Note: a value here is ${longest.toLocaleString('en-US')} characters long and will be ` +
+                  'cut short. For Apex source use salesforce_read_apex, which reads it by line ' +
+                  'range; otherwise select fewer rows or fields.',
+              ]
+            : []),
           json(page.records),
         ].join('\n')
       );

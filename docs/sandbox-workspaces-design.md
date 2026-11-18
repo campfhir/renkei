@@ -20,8 +20,8 @@ repository on it, kept apart from ordinary chats:
   starts the clone; the project page follows it until it reads _Ready_.
 - **The project page** shows the repository and its checkout (clone
   again, change repository), the environment as names (replace by
-  pasting a `.env` again, remove one), a Bitbucket project's Pipelines
-  at a glance (a card opening its Pipelines page, below), and everything
+  pasting a `.env` again, remove one), a card opening the project's app
+  under Deployments (its pipeline, runs and variables; below), and everything
   a chat project's page has: instructions, files, memory, toolset, the
   chats inside it, sharing. Values are never shown again, to anyone.
 - **New chat** starts a chat in the project. Its chats are listed on the
@@ -294,9 +294,11 @@ it is for — is, of course, the point.
 
 ## Pipelines: a page of their own, never a chat tool
 
-A Bitbucket code project has a **Pipelines page**
-(`/[slug]/code/[projectId]/pipelines`,
-`apps/web/app/(app)/code/_components/pipelines-page.tsx`, over
+A code project's pipeline lives under **Deployments**, as its app
+(`/deployments/[projectId]`): what it deployed where, its pipeline built
+from blocks (`pipeline/`), and its host's **runs and variables**
+(`runs/`) — which for a Bitbucket project is the page described here
+(`apps/web/app/(app)/deployments/_components/pipelines-page.tsx`, over
 `/api/code/projects/[projectId]/pipelines` and
 `apps/web/lib/code/bitbucket-pipelines.ts`): the recent runs (state,
 ref, who, when, how long — each opening on Bitbucket, where the steps
@@ -304,11 +306,10 @@ and logs are), a way to start one (a branch or tag, optionally a named
 custom pipeline; `runs/route.ts`, on `pipeline:write` exactly as the
 chat's `bitbucket_trigger_pipeline` is), whether Bitbucket runs pipelines for the repository at
 all, whether a `bitbucket-pipelines.yml` is on the project's branch —
-and when there is none, an editor that starts one from the org's
-**pipeline templates** (`pipeline_templates`, migration 122, seeded with
-Node/pnpm, Node/npm, Python and a bare skeleton; operators rename,
-rewrite or delete them at `/admin/pipeline-templates`, the
-project-templates idiom) and commits it to the branch with the person's
+and when there is none, a link to the Pipeline tab, which builds one
+from the organization's building blocks and opens a pull request, or an
+editor to write one by hand (the pipeline templates that once seeded it
+were dropped in migration 187), which commits it to the branch with the person's
 own grant over `config-file/route.ts`, on `repository:write` as a code
 project's pushes are; the file there is edited the same way — and
 the variables the runs get — the repository's own and each deployment
@@ -320,10 +321,9 @@ difference against what Bitbucket has (`applyVariableText`, over
 own call, so a refusal names its key and the rest still lands. A secured
 variable renders as `secret KEY=` and keeps its value while that line
 stays; a line taken out removes the variable, after the page names what
-is about to go. The project page carries only a card
-(`pipelines-summary.tsx`, the route's `?view=summary`: on/off, the file,
-counts, the last run — no names or values) so it stays a summary, and
-the page has the room for a runs table beside the setup. It exists to
+is about to go. The project page carries only a link to it, so it stays
+about the repository, and the tab has the room for a runs table beside
+the setup. It exists to
 make CI/CD the path of least resistance: the page says what is missing
 and what to do about it (turn it on here; start the file from a template
 here, or ask a chat to write one fitted to the code), and the variables

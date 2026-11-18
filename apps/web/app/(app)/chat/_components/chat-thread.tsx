@@ -1069,10 +1069,11 @@ export default function ChatThread({
   }
   if (codeProjectId) {
     overflow.push({ label: 'Environment', icon: ICONS.chip, onSelect: codeTools.openEnvironment });
+    // Its pipeline, runs and variables live under Deployments; a new tab keeps the chat.
     overflow.push({
-      label: 'Pipelines',
-      icon: ICONS.play,
-      onSelect: codeTools.openPipelines,
+      label: 'Deployments',
+      icon: ICONS.deploy,
+      onSelect: () => window.open(`/deployments/${codeProjectId}/runs`, '_blank', 'noopener'),
     });
     if (isOwner)
       overflow.push({ label: 'Add files', icon: ICONS.upload, onSelect: codeTools.openFiles });

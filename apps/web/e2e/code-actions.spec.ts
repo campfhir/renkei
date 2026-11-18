@@ -1,20 +1,19 @@
 /**
- * A GitHub code project's Actions, in a browser: the card on the project
- * page (off, no workflow files, the last run) opening the Actions page,
- * which renders the recent runs, the setup and the variable sets on the
+ * A GitHub code project's Actions, in a browser: the Deployments link on
+ * the project page opening its app, whose Runs & variables tab
+ * renders the recent runs, the setup and the variable sets on the
  * real server — the repository's with its secret listed by name only —
  * and, through one press each, the switch turned on, a variable set saved
  * from the text box (a `secret` line refused, a plain one landing) and a
- * workflow file committed from the editor; then the same panel in the
- * dialog a code chat's overflow menu opens, with what the page did drawn
+ * workflow file committed from the editor; then the same tab opened from
+ * a code chat's More menu, in a new tab, with what the page did drawn
  * there. GitHub is the stub in sandbox-stub.mjs (`acme/actions-demo-*`,
  * one Actions row per repository); each test's person makes a project on
  * a repository of its own, connected through the real flow with the
  * Configure Actions capability (e2e/support/code-host.ts).
  *
  * Where its rules went: the editor's name and commit rules, what each
- * request sends, the words on the page — actions-page.model.test.ts and
- * actions-summary.model.test.ts; what a chat may write to the variables
+ * request sends, the words on the page — actions-page.model.test.ts; what a chat may write to the variables
  * — lib/code/pipeline-tools.test.ts.
  */
 
@@ -59,35 +58,30 @@ test.describe('Code project Actions', () => {
     ids = await stage(page, testInfo);
   });
 
-  test('card, page, the switch, a variable set, a workflow file, the chat’s dialog', async ({
+  test('the project page link, the Runs & variables tab, the switch, a variable set, a workflow file, the chat’s link', async ({
     page,
   }) => {
     // A dev server compiles each route the first time it is asked for one.
     test.setTimeout(180_000);
     const main = page.getByRole('main');
 
-    // ── The project page: the card summarizes what GitHub says ──
+    // ── The project page: its repository strip links to the app under Deployments ──
     await page.goto(`/code/${ids.projectId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.name })).toBeVisible({
       timeout: 30_000,
     });
-    const card = main.locator('section', {
-      has: page.getByRole('heading', { level: 2, name: 'Actions' }),
-    });
-    await expect(
-      card.getByText(
-        /^Off · no workflow files on main yet · 0 variables across the repository and 1 environment/
-      )
-    ).toBeVisible();
-    await expect(card.getByRole('link', { name: 'Run 9002' })).toHaveAttribute(
-      'href',
-      `https://github.com/${ids.repo}/actions/runs/9002`
-    );
-    await expect(card.getByText('Failure')).toBeVisible();
 
-    // ── Into the page: runs, setup, the sets with the secret by name ──
-    await card.getByRole('link', { name: /Runs, setup & variables/ }).click();
-    await expect(page.getByRole('heading', { level: 1, name: /^Actions/ })).toBeVisible({
+    // ── Its Runs & variables tab: runs, setup, the sets with the secret by name ──
+    await main
+      .getByTestId('code-repo-strip')
+      .getByRole('link', { name: 'Deployments', exact: true })
+      .click();
+    await main
+      .getByRole('navigation', { name: 'App' })
+      .getByRole('link', { name: 'Runs & variables' })
+      .click();
+    await expect(page).toHaveURL(new RegExp(`/deployments/${ids.projectId}/runs$`));
+    await expect(page.getByRole('heading', { level: 1, name: ids.name })).toBeVisible({
       timeout: 30_000,
     });
     await expect(main.getByRole('link', { name: 'Open on GitHub' })).toHaveAttribute(
@@ -128,8 +122,12 @@ test.describe('Code project Actions', () => {
     ).toBeVisible();
     await expect(page.getByText('nope')).toHaveCount(0);
 
-    // ── A workflow file, started blank and committed ──
-    await setup.getByRole('button', { name: 'Start from a template' }).click();
+    // ── A workflow file, written by hand and committed (or built from blocks) ──
+    await expect(setup.getByRole('link', { name: 'Build one from blocks' })).toHaveAttribute(
+      'href',
+      `/deployments/${ids.projectId}/pipeline`
+    );
+    await setup.getByRole('button', { name: 'or write one by hand' }).click();
     const file = setup.getByRole('form', { name: 'Workflow file' });
     await expect(file.getByRole('button', { name: 'Commit' })).toBeDisabled();
     await file.getByLabel('File name').fill('ci.yml');
@@ -139,22 +137,22 @@ test.describe('Code project Actions', () => {
     await expect(setup.getByText('1 on main.')).toBeVisible();
     await expect(setup.getByRole('button', { name: 'Edit ci.yml' })).toBeVisible();
 
-    // ── The chat's dialog: the same panel, with what the page just did ──
+    // ── The chat's More menu opens the same tab, with what the page just did ──
     const chatId = await createChat(page.request, { projectId: ids.projectId, title: 'Draft CI' });
     await page.goto(`/chat/${chatId}`);
     await main.getByRole('button', { name: 'More', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Pipelines' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Actions' });
-    await expect(dialog).toBeVisible();
-    await expect(dialog.getByText('1 on main.')).toBeVisible();
+    const opened = page.waitForEvent('popup');
+    await page.getByRole('menuitem', { name: 'Deployments' }).click();
+    const tab = await opened;
+    await expect(tab).toHaveURL(new RegExp(`/deployments/${ids.projectId}/runs$`));
+    const there = tab.getByRole('main');
+    await expect(there.getByText('1 on main.')).toBeVisible({ timeout: 30_000 });
     await expect(
-      dialog
+      there
         .getByRole('listitem')
         .filter({ hasText: 'API_BASE_URL' })
         .getByText('https://api.example.test')
     ).toBeVisible();
-    await expect(dialog.getByRole('heading', { level: 1 })).toHaveCount(0);
-    await page.keyboard.press('Escape');
-    await expect(dialog).toBeHidden();
+    await tab.close();
   });
 });

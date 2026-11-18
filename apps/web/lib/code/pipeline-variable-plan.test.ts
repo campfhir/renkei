@@ -90,7 +90,7 @@ describe('how the model reads a set and a write', () => {
     expect(
       renderWriteOutcome(plan, { added: ['A'], changed: [], removed: [], errors: ['B: no'] })
     ).toBe(
-      'added A.\nThe host refused: B: no.\nLeft alone: NPM_TOKEN reads as a secret, so no value is written from a chat; the person adds it as a secured variable on the Pipelines page.'
+      'added A.\nThe host refused: B: no.\nLeft alone: NPM_TOKEN reads as a secret, so no value is written from a chat; the person adds it as a secured variable on the project’s Runs & variables tab under Deployments.'
     );
   });
 });

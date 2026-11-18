@@ -88,16 +88,27 @@ export function adminSections(): AdminSection[] {
           detail: 'The starting instructions offered when someone creates a code project.',
         },
         {
-          href: `${admin}/pipeline-templates`,
-          label: 'Pipeline templates',
-          detail:
-            'The starting pipeline files offered on a code project’s Pipelines page when its repository has none.',
-        },
-        {
           href: `${admin}/code-services`,
           label: 'Code services',
           detail:
             'The container images a code project may start beside its checkout — your own registry, or the public ones by name.',
+        },
+      ],
+    },
+    {
+      label: 'CI and deployments',
+      areas: [
+        {
+          href: `${admin}/ci-blocks`,
+          label: 'Building blocks',
+          detail:
+            'The pipeline steps code projects build from — written once, for Bitbucket Pipelines and GitHub Actions.',
+        },
+        {
+          href: `${admin}/ci-targets`,
+          label: 'Targets',
+          detail:
+            'Where deploy blocks run: your self-hosted runners, read from Bitbucket and GitHub with a service account.',
         },
       ],
     },

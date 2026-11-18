@@ -16,7 +16,7 @@
 /* global process, Buffer, setTimeout, URL, URLSearchParams, console */
 
 import { createServer } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { generateKeyPairSync, randomUUID, sign as signWith } from 'node:crypto';
 import JSZip from 'jszip';
 
 const PORT = Number(process.env.SANDBOX_STUB_PORT ?? '8092');
@@ -1506,6 +1506,78 @@ function handleActionsVariables(request, response, list, name) {
   return error(response, 405, 'method_not_allowed');
 }
 
+/**
+ * Self-hosted runners for the Targets page (ci-targets.spec.ts), on an
+ * organization or workspace named `e2e-ci-*`: two on each host. GitHub's
+ * through a GitHub App's installation token (the JWT is not checked, as
+ * nothing here holds the App's public key; the token it returns is what
+ * the runner list requires); Bitbucket's from the workspace's runners
+ * endpoint.
+ */
+const CI_RUNNERS = {
+  github: [
+    {
+      id: 101,
+      name: 'workers-02',
+      os: 'linux',
+      status: 'online',
+      busy: true,
+      labels: [{ name: 'self-hosted' }, { name: 'Linux' }, { name: 'onprem-workers' }],
+    },
+    {
+      id: 102,
+      name: 'build-mac-01',
+      os: 'macos',
+      status: 'online',
+      busy: false,
+      labels: [{ name: 'self-hosted' }, { name: 'macOS' }, { name: 'ARM64' }],
+    },
+  ],
+  bitbucket: [
+    {
+      uuid: '{e2e-runner-1}',
+      name: 'workers-01',
+      labels: ['self.hosted', 'linux', 'onprem-workers'],
+      state: { status: 'ONLINE' },
+    },
+    {
+      uuid: '{e2e-runner-2}',
+      name: 'dmz-edge-01',
+      labels: ['self.hosted', 'linux', 'dmz'],
+      state: { status: 'OFFLINE' },
+    },
+  ],
+};
+
+function handleCiRunners(request, url, response) {
+  const gh = /^\/github\/orgs\/(e2e-ci-[^/]+)\/(installation|actions\/runners)$/.exec(url.pathname);
+  if (gh && gh[2] === 'installation')
+    return json(response, 200, { id: 9001, account: { login: gh[1] } });
+  if (
+    request.method === 'POST' &&
+    url.pathname === '/github/app/installations/9001/access_tokens'
+  ) {
+    return json(response, 201, {
+      token: 'ghs_e2e_installation',
+      expires_at: '2099-01-01T00:00:00Z',
+    });
+  }
+  if (gh && gh[2] === 'actions/runners') {
+    if (request.headers.authorization !== 'Bearer ghs_e2e_installation')
+      return error(response, 401, 'unauthorized');
+    return json(response, 200, {
+      total_count: CI_RUNNERS.github.length,
+      runners: CI_RUNNERS.github,
+    });
+  }
+  if (
+    /^\/bitbucket\/2\.0\/workspaces\/e2e-ci-[^/]+\/pipelines-config\/runners$/.test(url.pathname)
+  ) {
+    return json(response, 200, { pagelen: 100, values: CI_RUNNERS.bitbucket });
+  }
+  return null;
+}
+
 /** GitHub's REST API as far as the Actions page and its chat tools reach. */
 function handleGitHubActions(request, url, response) {
   const path = url.pathname.slice('/github'.length);
@@ -1593,6 +1665,180 @@ function handleGitHubActions(request, url, response) {
     }
   }
   return error(response, 404, 'not_found', 'Not Found');
+}
+
+/**
+ * The pipeline builder's repositories (`acme/pipeline-demo-*`,
+ * pipeline-builder.spec.ts): their branches, the pull requests opened on
+ * them, and a commit through the src endpoint kept on the branch it names
+ * — so the file the builder puts on its own branch is not on main until
+ * the pull request merges. The rest (variables, environments, the file on
+ * main) is handleBitbucket's, by repository.
+ */
+const PIPELINE_DEMO = new Map();
+
+/** A demo repository's UUID: fixed per name, as Bitbucket's is per repository. */
+function pipelineDemoUuid(fullName) {
+  const hex = Buffer.from(fullName).toString('hex').padEnd(12, '0').slice(-12);
+  return `{00000000-0000-4000-8000-${hex}}`;
+}
+
+/** What develop has that main lacks, newest first, as Bitbucket lists commits. */
+const PIPELINE_DEMO_COMMITS = [
+  {
+    hash: '8e41c2a9f0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5',
+    message: 'Show the intake status on the case page',
+    author: { raw: 'Priya Shah <priya@example.test>', user: { display_name: 'Priya Shah' } },
+  },
+  {
+    hash: '71c0b3e9f0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5',
+    message: 'Retry the address lookup once on a timeout',
+    author: { raw: 'Jordan Lee <jordan@example.test>', user: { display_name: 'Jordan Lee' } },
+  },
+];
+
+/**
+ * Bitbucket Pipelines' OpenID Connect, stood in for: the stub signs a
+ * step's token with a key of its own and publishes the key at the
+ * workspace's issuer, `…/workspaces/{workspace}/pipelines-config/identity/oidc/keys.json`.
+ * `POST /e2e/bitbucket-step-token` hands a spec the token a step would hold
+ * in $BITBUCKET_STEP_OIDC_TOKEN (deployments.spec.ts).
+ */
+const OIDC_KEY = generateKeyPairSync('rsa', { modulusLength: 2048 });
+const OIDC_JWK = {
+  ...OIDC_KEY.publicKey.export({ format: 'jwk' }),
+  kid: 'e2e-oidc',
+  alg: 'RS256',
+  use: 'sig',
+};
+const base64url = (value) => Buffer.from(value).toString('base64url');
+
+function bitbucketStepToken(origin, body) {
+  const now = Math.floor(Date.now() / 1000);
+  const header = base64url(JSON.stringify({ alg: 'RS256', kid: 'e2e-oidc', typ: 'JWT' }));
+  const payload = base64url(
+    JSON.stringify({
+      iss: `${origin}/bitbucket/2.0/workspaces/${body.workspace ?? 'acme'}/pipelines-config/identity/oidc`,
+      aud: 'ari:cloud:bitbucket::workspace/e2e',
+      sub: `${body.repositoryUuid}:{step}`,
+      repositoryUuid: body.repositoryUuid,
+      branchName: body.branchName ?? 'main',
+      iat: now,
+      exp: now + 300,
+    })
+  );
+  const signature = signWith('sha256', Buffer.from(`${header}.${payload}`), OIDC_KEY.privateKey);
+  return `${header}.${payload}.${signature.toString('base64url')}`;
+}
+
+function pipelineDemoOf(fullName) {
+  if (!PIPELINE_DEMO.has(fullName)) {
+    PIPELINE_DEMO.set(fullName, {
+      branches: new Map([
+        ['main', 'a1b2c3d4e5f6'],
+        ['develop', 'f6e5d4c3b2a1'],
+      ]),
+      files: new Map(),
+      pulls: [],
+    });
+  }
+  return PIPELINE_DEMO.get(fullName);
+}
+
+function handlePipelineDemo(request, url, response) {
+  const found = /^\/bitbucket\/2\.0\/repositories\/(acme)\/(pipeline-demo-[^/]+)(?:\/(.*))?$/.exec(
+    url.pathname
+  );
+  if (!found) return null;
+  const fullName = `${found[1]}/${found[2]}`;
+  const state = pipelineDemoOf(fullName);
+  const rest = found[3] ?? '';
+  // The repository itself, with the UUID its step tokens name it by.
+  if (rest === '' && request.method === 'GET') {
+    return json(response, 200, {
+      uuid: pipelineDemoUuid(fullName),
+      full_name: fullName,
+      name: found[2],
+      project: { key: 'DEMO' },
+      mainbranch: { name: 'main' },
+      updated_on: '2026-09-01T00:00:00Z',
+    });
+  }
+  // What develop has that main lacks: `commits?include=develop&exclude=main`.
+  if (rest === 'commits' && request.method === 'GET') {
+    const include = url.searchParams.get('include');
+    const exclude = url.searchParams.get('exclude');
+    const merged = state.pulls.some(
+      (pr) =>
+        pr.state === 'MERGED' &&
+        pr.source?.branch?.name === include &&
+        pr.destination?.branch?.name === exclude
+    );
+    return json(response, 200, {
+      values: include === 'develop' && exclude === 'main' && !merged ? PIPELINE_DEMO_COMMITS : [],
+    });
+  }
+  const pull = /^pullrequests\/(\d+)(\/merge)?$/.exec(rest);
+  if (pull) {
+    const pr = state.pulls.find((p) => p.id === Number(pull[1]));
+    if (!pr) return error(response, 404, 'not_found');
+    if (pull[2] && request.method === 'POST') {
+      pr.state = 'MERGED';
+      return json(response, 200, pr);
+    }
+    return json(response, 200, pr);
+  }
+  const match = [null, found[1], found[2], rest];
+  if (!['refs/branches', 'pullrequests', 'src'].includes(rest)) return null;
+  if (match[3] === 'refs/branches') {
+    return json(response, 200, {
+      values: [...state.branches].map(([name, hash]) => ({ name, target: { hash } })),
+    });
+  }
+  if (match[3] === 'pullrequests' && request.method === 'GET') {
+    const wanted = (url.searchParams.get('state') ?? 'OPEN').toUpperCase();
+    return json(response, 200, { values: state.pulls.filter((pr) => pr.state === wanted) });
+  }
+  if (match[3] === 'pullrequests' && request.method === 'POST') {
+    void readBody(request).then((body) => {
+      const id = state.pulls.length + 1;
+      const pr = {
+        id,
+        title: body.title ?? '',
+        description: body.description ?? '',
+        state: 'OPEN',
+        source: body.source,
+        destination: body.destination,
+        author: { display_name: 'E2E Dev' },
+        updated_on: new Date().toISOString(),
+        links: { html: { href: `https://bitbucket.org/${fullName}/pull-requests/${id}` } },
+      };
+      state.pulls.push(pr);
+      json(response, 201, pr);
+    });
+    return;
+  }
+  if (match[3] === 'src' && request.method === 'POST') {
+    const chunks = [];
+    request.on('data', (chunk) => chunks.push(chunk));
+    request.on('end', () => {
+      const form = new URLSearchParams(Buffer.concat(chunks).toString('utf8'));
+      const branch = form.get('branch') ?? 'main';
+      const parents = form.get('parents');
+      if (!state.branches.has(branch)) {
+        // Bitbucket makes a branch it does not know from the parent named.
+        if (!parents) return error(response, 400, 'bad_request', `No branch ${branch}`);
+        state.branches.set(branch, parents);
+      }
+      state.files.set(branch, form.get('bitbucket-pipelines.yml') ?? '');
+      state.branches.set(branch, `c${String(state.files.size).padStart(11, '0')}`);
+      if (branch === 'main') pipelinesOf(fullName).configFile = state.files.get(branch);
+      response.writeHead(201);
+      response.end();
+    });
+    return;
+  }
+  return null;
 }
 
 function handleBitbucket(request, url, response) {
@@ -3137,6 +3383,32 @@ const server = createServer((request, response) => {
   // Bitbucket, stood in for: the app is pointed here with
   // BITBUCKET_API_BASE_URL, so the picker's browsing and a project page's
   // README are exercised without the network.
+  // CI runners for the Targets page, on e2e-ci-* organizations and workspaces.
+  if (
+    /^\/(github\/orgs\/e2e-ci-|github\/app\/installations\/|bitbucket\/2\.0\/workspaces\/e2e-ci-)/.test(
+      url.pathname
+    )
+  ) {
+    if (handleCiRunners(request, url, response) !== null) return;
+    return error(response, 404, 'not_found', 'Not Found');
+  }
+  if (
+    /^\/bitbucket\/2\.0\/workspaces\/[^/]+\/pipelines-config\/identity\/oidc\/keys\.json$/.test(
+      url.pathname
+    )
+  ) {
+    return json(response, 200, { keys: [OIDC_JWK] });
+  }
+  if (request.method === 'POST' && url.pathname === '/e2e/bitbucket-step-token') {
+    void readBody(request).then((body) => {
+      if (typeof body.repositoryUuid !== 'string') return error(response, 400, 'bad_request');
+      json(response, 200, { token: bitbucketStepToken(`http://${request.headers.host}`, body) });
+    });
+    return;
+  }
+  if (url.pathname.startsWith('/bitbucket/2.0/repositories/acme/pipeline-demo-')) {
+    if (handlePipelineDemo(request, url, response) !== null) return;
+  }
   if (url.pathname.startsWith('/bitbucket/2.0/')) return handleBitbucket(request, url, response);
   // GitHub, stood in for (the app is pointed at /github with
   // GITHUB_API_BASE_URL); the connect flow's token and identity are the

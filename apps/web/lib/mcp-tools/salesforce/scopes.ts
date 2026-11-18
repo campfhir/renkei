@@ -16,6 +16,7 @@ export function salesforceScopeFor(toolName: string): string[] {
     case 'salesforce_describe_object':
     case 'salesforce_search':
     case 'salesforce_query':
+    case 'salesforce_read_apex':
     case 'salesforce_get_record':
     case 'salesforce_list_related':
     case 'salesforce_find_relationship_path':

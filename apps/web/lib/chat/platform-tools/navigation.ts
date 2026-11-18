@@ -67,6 +67,13 @@ export const APP_PAGES: readonly AppPage[] = [
     operatorOnly: true,
   },
   {
+    title: 'Deployments',
+    href: '/deployments',
+    about:
+      'What each code project’s pipeline deployed to each environment, and promoting one to the next.',
+    keywords: 'deploys releases environments production promote pipeline',
+  },
+  {
     title: 'Chat',
     href: '/chat',
     about: 'Every chat this person can open.',

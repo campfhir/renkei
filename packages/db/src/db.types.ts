@@ -716,6 +716,69 @@ export interface ChatWidgetDecisions {
   state_key: string;
 }
 
+export interface CiBlocks {
+  created_at: Generated<Timestamp>;
+  created_by: string | null;
+  description: string | null;
+  draft: Json | null;
+  id: Generated<string>;
+  key: string;
+  kind: string;
+  latest_version: Generated<number>;
+  name: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface CiBlockVersions {
+  block_id: string;
+  definition: Json;
+  published_at: Generated<Timestamp>;
+  published_by: string;
+  version: number;
+}
+
+export interface CiDeployments {
+  actor: string | null;
+  branch: string | null;
+  commit_sha: string;
+  created_at: Generated<Timestamp>;
+  detail: string | null;
+  environment: string;
+  finished_at: Timestamp | null;
+  id: Generated<string>;
+  project_id: string;
+  run_id: string;
+  run_url: string | null;
+  started_at: Timestamp;
+  status: string;
+  target: string | null;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface CiPipelines {
+  created_at: Generated<Timestamp>;
+  host: string;
+  project_id: string;
+  pull_request_url: string | null;
+  repo_key: string | null;
+  spec: Json;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+  written_at: Timestamp | null;
+  written_text: string | null;
+}
+
+export interface CiTargets {
+  created_at: Generated<Timestamp>;
+  created_by: string | null;
+  description: string | null;
+  id: Generated<string>;
+  kind: Generated<string>;
+  labels: Json;
+  name: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface CoachMarkProgress {
   completed_at: Timestamp | null;
   completed_count: Generated<number>;
@@ -1240,16 +1303,6 @@ export interface OperatorSessions {
   operator_name: string;
   session_id: string;
   subject: string;
-}
-
-export interface PipelineTemplates {
-  body: string;
-  created_at: Generated<Timestamp>;
-  description: string | null;
-  id: Generated<string>;
-  name: string;
-  provider: Generated<string>;
-  updated_at: Generated<Timestamp>;
 }
 
 export interface PrPipelineEvents {
@@ -1817,6 +1870,11 @@ export interface DB {
   delegate_signing_keys: DelegateSigningKeys;
   device_key_requests: DeviceKeyRequests;
   key_delegations: KeyDelegations;
+  ci_block_versions: CiBlockVersions;
+  ci_blocks: CiBlocks;
+  ci_deployments: CiDeployments;
+  ci_pipelines: CiPipelines;
+  ci_targets: CiTargets;
   coach_mark_progress: CoachMarkProgress;
   code_language_gaps: CodeLanguageGaps;
   code_project_templates: CodeProjectTemplates;
@@ -1857,7 +1915,6 @@ export interface DB {
   oidc_role_mappings: OidcRoleMappings;
   operator_sessions: OperatorSessions;
   pending_oidc_signin: PendingOidcSignin;
-  pipeline_templates: PipelineTemplates;
   platform_audit_log: PlatformAuditLog;
   platform_settings: PlatformSettings;
   pr_pipeline_events: PrPipelineEvents;

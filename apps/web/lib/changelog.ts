@@ -46,6 +46,48 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-18',
+    heading: 'CI and deployments',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Building blocks for pipelines',
+        detail:
+          'Operators keep the organization’s CI building blocks in Organization settings: a step written once — what it runs on, its inputs, the variables it needs, its commands — and shown as a Bitbucket step and a GitHub Actions job. Draft one with AI, publish it as a numbered version, and start from six starter blocks for Node, Python, Go and on-premises deploys.',
+      },
+      {
+        kind: 'added',
+        title: 'Targets from your runners',
+        detail:
+          'Connect a Bitbucket workspace and a GitHub App, and the Targets page lists their self-hosted runners with their labels and whether they are online. Name a target by its labels, or make one from a runner in one click; a deploy then picks a target instead of guessing labels.',
+      },
+      {
+        kind: 'added',
+        title: 'Build a pipeline from blocks',
+        detail:
+          'Each code project gets a pipeline builder: checks on every pull request, then each environment’s branch and the blocks that build and deploy it, suggested from the repository’s files. It shows the whole file it writes, checks it against your runners, variables and branches as you edit, and opens a pull request with it — Renkei never commits to your branch or deploys.',
+      },
+      {
+        kind: 'added',
+        title: 'Deployments: what runs where',
+        detail:
+          'A new Deployments item shows what each code project’s pipeline deployed to each environment, as the pipeline’s own deploy steps report it — signed by Bitbucket or GitHub, so no token is stored anywhere. See what is behind, open the pull request that promotes dev to production, and merge it from there; the pipeline deploys and reports back.',
+      },
+      {
+        kind: 'changed',
+        title: 'Pipelines moved to Deployments',
+        detail:
+          'A code project’s pipeline, its Bitbucket Pipelines or GitHub Actions runs and its variables are now tabs of its app under Deployments, beside what it deployed where. The project page links there, a code chat’s More menu opens it in a new tab, and old links still land in the right place.',
+      },
+      {
+        kind: 'changed',
+        title: 'Pipeline templates are gone',
+        detail:
+          'The organization’s catalog of starting pipeline files, and its page in Organization settings, are removed: build a project’s pipeline from building blocks on its Pipeline tab instead, or write the file by hand on the Runs & variables tab.',
+      },
+    ],
+  },
+  {
     date: '2026-11-17',
     entries: [
       {
