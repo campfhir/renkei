@@ -350,13 +350,16 @@ export default function AppNav({
       {groups.map((group) => (
         <div
           key={group.label}
-          className={group.extra ? 'mb-3 flex min-h-[25.5rem] flex-1 flex-col' : 'mb-3'}
+          // The chat section keeps room for its links and four chats: rows sit 2px
+          // apart so that, with every Workspace row an operator has, the column
+          // still fits a 1366×768 laptop without scrolling (nav-chat-scroll.spec.ts).
+          className={group.extra ? 'mb-3 flex min-h-[23.75rem] flex-1 flex-col' : 'mb-3'}
           {...(group.coach ? anchors[group.coach] : {})}
         >
           <p className="mb-1 px-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
             {group.label}
           </p>
-          <ul className="space-y-1">
+          <ul className="space-y-0.5">
             {group.items.map((item) => {
               const under =
                 pathname === item.href || (!item.exact && pathname.startsWith(`${item.href}/`));
