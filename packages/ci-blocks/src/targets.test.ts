@@ -51,6 +51,12 @@ const bitbucket = {
       labels: ['self.hosted', 'linux', 'dmz'],
       state: { status: 'UNREGISTERED' },
     },
+    {
+      uuid: '{a3}',
+      name: 'workers-03',
+      labels: ['self.hosted', 'linux', 'onprem-workers'],
+      state: { status: 'ONLINE', cordoned: true },
+    },
   ],
 };
 
@@ -98,7 +104,32 @@ describe('reading the hosts’ runners', () => {
         status: 'unregistered',
         busy: false,
       },
+      {
+        host: 'bitbucket',
+        id: '{a3}',
+        name: 'workers-03',
+        labels: ['self.hosted', 'linux', 'onprem-workers'],
+        status: 'cordoned',
+        busy: false,
+      },
     ]);
+  });
+
+  it('reads each status Bitbucket reports', () => {
+    const statuses = [
+      'ONLINE',
+      'OFFLINE',
+      'UNREGISTERED',
+      'DISABLED',
+      'UNHEALTHY',
+      'ENABLED',
+      'NEW',
+    ];
+    expect(
+      parseBitbucketRunners({
+        values: statuses.map((status) => ({ uuid: status, name: status, state: { status } })),
+      }).map((r) => r.status)
+    ).toEqual(['online', 'offline', 'unregistered', 'disabled', 'unhealthy', 'offline', 'offline']);
   });
 
   it('reads nothing from an answer that is not one', () => {
@@ -108,11 +139,11 @@ describe('reading the hosts’ runners', () => {
 });
 
 describe('which runners a target has', () => {
-  it('takes a runner carrying every label for its host, case aside, on both hosts', () => {
+  it('takes a runner carrying every label for its host, case aside, on both hosts; a cordoned one is not online', () => {
     const health = targetHealth(workers, runners);
     expect(health.byHost.github.map((r) => r.name)).toEqual(['workers-02']);
-    expect(health.byHost.bitbucket.map((r) => r.name)).toEqual(['workers-01']);
-    expect({ total: health.total, online: health.online }).toEqual({ total: 2, online: 1 });
+    expect(health.byHost.bitbucket.map((r) => r.name)).toEqual(['workers-01', 'workers-03']);
+    expect({ total: health.total, online: health.online }).toEqual({ total: 3, online: 1 });
   });
 
   it('lists the runners no target takes', () => {

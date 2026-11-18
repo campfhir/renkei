@@ -1511,8 +1511,8 @@ function handleActionsVariables(request, response, list, name) {
  * organization or workspace named `e2e-ci-*`: two on each host. GitHub's
  * through a GitHub App's installation token (the JWT is not checked, as
  * nothing here holds the App's public key; the token it returns is what
- * the runner list requires); Bitbucket's through its workspace's UUID and
- * the endpoint its own autoscaler uses.
+ * the runner list requires); Bitbucket's from the workspace's runners
+ * endpoint.
  */
 const CI_RUNNERS = {
   github: [
@@ -1570,17 +1570,8 @@ function handleCiRunners(request, url, response) {
       runners: CI_RUNNERS.github,
     });
   }
-  const workspace = /^\/bitbucket\/2\.0\/workspaces\/(e2e-ci-[^/]+)$/.exec(url.pathname);
-  if (workspace)
-    return json(response, 200, {
-      uuid: `{${workspace[1]}}`,
-      slug: workspace[1],
-      name: workspace[1],
-    });
   if (
-    /^\/bitbucket\/internal\/workspaces\/%7Be2e-ci-[^/]+%7D\/pipelines-config\/runners$/.test(
-      url.pathname
-    )
+    /^\/bitbucket\/2\.0\/workspaces\/e2e-ci-[^/]+\/pipelines-config\/runners$/.test(url.pathname)
   ) {
     return json(response, 200, { pagelen: 100, values: CI_RUNNERS.bitbucket });
   }
@@ -3220,7 +3211,7 @@ const server = createServer((request, response) => {
   // README are exercised without the network.
   // CI runners for the Targets page, on e2e-ci-* organizations and workspaces.
   if (
-    /^\/(github\/orgs\/e2e-ci-|github\/app\/installations\/|bitbucket\/2\.0\/workspaces\/e2e-ci-|bitbucket\/internal\/)/.test(
+    /^\/(github\/orgs\/e2e-ci-|github\/app\/installations\/|bitbucket\/2\.0\/workspaces\/e2e-ci-)/.test(
       url.pathname
     )
   ) {

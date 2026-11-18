@@ -8,13 +8,11 @@
  *   (`GET /orgs/{org}/installation`, `POST /app/installations/{id}/access_tokens`)
  *   and lists `GET /orgs/{org}/actions/runners` — the App needs read
  *   access to the organization's self-hosted runners.
- * - Bitbucket: there is no public runner API. The workspace's UUID comes
- *   from `GET /2.0/workspaces/{workspace}`, and its runners from
- *   `/internal/workspaces/{uuid}/pipelines-config/runners`, the endpoint
- *   Atlassian's own runner autoscaler reads with a token holding the
- *   runner read scope. Should it stop answering, targets keep the labels
- *   they were given and pipelines are unaffected; only this list goes
- *   blank, saying why.
+ * - Bitbucket: `GET /2.0/workspaces/{workspace}/pipelines-config/runners`,
+ *   paged, with a workspace access token or a bot account's API token
+ *   holding `read:runner:bitbucket`. Should a read fail, targets keep the
+ *   labels they were given and pipelines are unaffected; only this list
+ *   goes blank, saying why.
  */
 
 import { createSign } from 'node:crypto';
@@ -166,23 +164,8 @@ async function bitbucketRunnersNow(account: BitbucketAccount): Promise<RunnersRe
         ? `Basic ${Buffer.from(`${account.email}:${account.token}`).toString('base64')}`
         : `Bearer ${account.token}`,
   };
-  const workspace = await call(
-    `${BITBUCKET_API_BASE}/workspaces/${encodeURIComponent(account.workspace)}`,
-    { headers },
-    'Bitbucket'
-  );
-  if (!workspace.ok) return workspace;
-  const uuid =
-    isRecord(workspace.body) && typeof workspace.body.uuid === 'string' ? workspace.body.uuid : '';
-  if (workspace.status !== 200 || !uuid) {
-    return {
-      ok: false,
-      error: refusal('Bitbucket', workspace.status, `workspace ${account.workspace}`),
-    };
-  }
-  const internal = BITBUCKET_API_BASE.replace(/\/2\.0$/, '/internal');
-  let next: string | null =
-    `${internal}/workspaces/${encodeURIComponent(uuid)}/pipelines-config/runners?pagelen=100`;
+  const first = `${BITBUCKET_API_BASE}/workspaces/${encodeURIComponent(account.workspace)}/pipelines-config/runners`;
+  let next: string | null = `${first}?pagelen=100`;
   const runners: Runner[] = [];
   for (let page = 1; next && page <= MAX_PAGES; page += 1) {
     const listed = await call(next, { headers }, 'Bitbucket');
@@ -190,12 +173,13 @@ async function bitbucketRunnersNow(account: BitbucketAccount): Promise<RunnersRe
     if (listed.status !== 200) {
       return {
         ok: false,
-        error: `${refusal('Bitbucket', listed.status, `${account.workspace}’s runners`)} Bitbucket lists runners only through the endpoint its own autoscaler uses, so this can also mean Atlassian changed it; targets keep their labels either way.`,
+        error: refusal('Bitbucket', listed.status, `workspace ${account.workspace}’s runners`),
       };
     }
     runners.push(...parseBitbucketRunners(listed.body));
     const nextUrl: unknown = isRecord(listed.body) ? listed.body.next : null;
-    next = typeof nextUrl === 'string' && nextUrl.startsWith(internal) ? nextUrl : null;
+    // Follow only Bitbucket's own pages of this list, never a link elsewhere.
+    next = typeof nextUrl === 'string' && nextUrl.startsWith(first) ? nextUrl : null;
   }
   return { ok: true, runners, readAt: new Date().toISOString() };
 }

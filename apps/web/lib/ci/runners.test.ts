@@ -2,7 +2,7 @@
 /**
  * Reading each host's runners with the organization's service accounts:
  * GitHub through the App's installation token, Bitbucket through its
- * workspace and the autoscaler's runners endpoint; what each refusal says;
+ * workspace’s runners endpoint; what each refusal says;
  * and the minute's cache.
  */
 
@@ -122,31 +122,28 @@ describe('Bitbucket runners', () => {
     token: 'workspace-token',
   };
 
-  it('finds the workspace’s UUID, then reads its runners, following pages', async () => {
+  it('reads the workspace’s runners, following pages', async () => {
+    const list = 'https://api.bitbucket.org/2.0/workspaces/acme/pipelines-config/runners';
     answers = {
-      'https://api.bitbucket.org/2.0/workspaces/acme': {
+      [`${list}?pagelen=100`]: {
         status: 200,
-        body: { uuid: '{ws-1}', slug: 'acme' },
-      },
-      'https://api.bitbucket.org/internal/workspaces/%7Bws-1%7D/pipelines-config/runners?pagelen=100':
-        {
-          status: 200,
-          body: {
-            values: [
-              {
-                uuid: '{r1}',
-                name: 'app-01',
-                labels: ['self.hosted', 'onprem-app'],
-                state: { status: 'ONLINE' },
-              },
-            ],
-            next: 'https://api.bitbucket.org/internal/workspaces/%7Bws-1%7D/pipelines-config/runners?page=2',
-          },
+        body: {
+          values: [
+            {
+              uuid: '{r1}',
+              name: 'app-01',
+              labels: ['self.hosted', 'onprem-app'],
+              state: { status: 'ONLINE' },
+            },
+          ],
+          next: `${list}?page=2&pagelen=100`,
         },
-      'https://api.bitbucket.org/internal/workspaces/%7Bws-1%7D/pipelines-config/runners?page=2': {
+      },
+      [`${list}?page=2&pagelen=100`]: {
         status: 200,
         body: {
           values: [{ uuid: '{r2}', name: 'app-02', labels: [], state: { status: 'OFFLINE' } }],
+          next: 'https://elsewhere.test/steal',
         },
       },
     };
@@ -170,11 +167,11 @@ describe('Bitbucket runners', () => {
     );
   });
 
-  it('says plainly that the runners endpoint may have changed, and that targets keep their labels', async () => {
-    answers = {
-      'https://api.bitbucket.org/2.0/workspaces/acme': { status: 200, body: { uuid: '{ws-1}' } },
-    };
+  it('says why the runners could not be read', async () => {
+    answers = {};
     const read = await readBitbucketRunners(account);
-    expect(read.ok ? '' : read.error).toContain('targets keep their labels either way');
+    expect(read.ok).toBe(false);
+    expect(read.ok ? '' : read.error).toContain('workspace acme’s runners');
+    expect(calls).toHaveLength(1);
   });
 });

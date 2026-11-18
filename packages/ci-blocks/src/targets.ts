@@ -10,15 +10,21 @@
  * lib/ci/runners.ts); these read the hosts' answers:
  * - GitHub: an organization's self-hosted runners
  *   (`GET /orgs/{org}/actions/runners`), labels as objects;
- * - Bitbucket: a workspace's runners, from the endpoint Atlassian's own
- *   runner autoscaler uses (Bitbucket has no public runner API); labels as
- *   strings, status under `state`.
+ * - Bitbucket: a workspace's runners
+ *   (`GET /2.0/workspaces/{workspace}/pipelines-config/runners`); labels
+ *   as strings, status under `state`.
  */
 
 import { isRecord } from '@renkei/guards';
 import type { Host } from './render';
 
-export type RunnerStatus = 'online' | 'offline' | 'unregistered';
+/**
+ * Only `online` takes jobs. Bitbucket also reports runners an admin
+ * disabled, ones failing their health check, and ones cordoned: online,
+ * but taking no new steps.
+ */
+export type RunnerStatus =
+  'online' | 'offline' | 'unregistered' | 'disabled' | 'unhealthy' | 'cordoned';
 
 export interface Runner {
   host: Host;
@@ -61,17 +67,33 @@ export function parseGithubRunners(body: unknown): Runner[] {
   }));
 }
 
+function bitbucketStatus(status: string, cordoned: boolean): RunnerStatus {
+  switch (status) {
+    case 'ONLINE':
+      return cordoned ? 'cordoned' : 'online';
+    case 'UNREGISTERED':
+      return 'unregistered';
+    case 'DISABLED':
+      return 'disabled';
+    case 'UNHEALTHY':
+      return 'unhealthy';
+    // OFFLINE, ENABLED (switched back on, not yet heard from) and anything new.
+    default:
+      return 'offline';
+  }
+}
+
 /** A workspace's runners as Bitbucket answers its runners endpoint (`values`, paged). */
 export function parseBitbucketRunners(body: unknown): Runner[] {
   const values = isRecord(body) && Array.isArray(body.values) ? body.values : [];
   return values.filter(isRecord).map((runner) => {
-    const state = isRecord(runner.state) ? text(runner.state.status).toUpperCase() : '';
+    const state = isRecord(runner.state) ? runner.state : {};
     return {
       host: 'bitbucket',
       id: text(runner.uuid),
       name: text(runner.name),
       labels: (Array.isArray(runner.labels) ? runner.labels : []).map(text).filter(Boolean),
-      status: state === 'ONLINE' ? 'online' : state === 'UNREGISTERED' ? 'unregistered' : 'offline',
+      status: bitbucketStatus(text(state.status).toUpperCase(), state.cordoned === true),
       busy: false,
     };
   });
