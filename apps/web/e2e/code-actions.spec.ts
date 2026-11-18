@@ -1,6 +1,6 @@
 /**
- * A GitHub code project's Actions, in a browser: the card on the project
- * page opening its app under Deployments, whose Runs & variables tab
+ * A GitHub code project's Actions, in a browser: the Deployments link on
+ * the project page opening its app, whose Runs & variables tab
  * renders the recent runs, the setup and the variable sets on the
  * real server — the repository's with its secret listed by name only —
  * and, through one press each, the switch turned on, a variable set saved
@@ -58,25 +58,24 @@ test.describe('Code project Actions', () => {
     ids = await stage(page, testInfo);
   });
 
-  test('card, the Runs & variables tab, the switch, a variable set, a workflow file, the chat’s link', async ({
+  test('the project page link, the Runs & variables tab, the switch, a variable set, a workflow file, the chat’s link', async ({
     page,
   }) => {
     // A dev server compiles each route the first time it is asked for one.
     test.setTimeout(180_000);
     const main = page.getByRole('main');
 
-    // ── The project page: its card opens the app under Deployments ──
+    // ── The project page: its repository strip links to the app under Deployments ──
     await page.goto(`/code/${ids.projectId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.name })).toBeVisible({
       timeout: 30_000,
     });
-    const card = main.locator('section', {
-      has: page.getByRole('heading', { level: 2, name: 'Pipeline and deployments' }),
-    });
-    await expect(card).toContainText('GitHub runs and variables');
 
     // ── Its Runs & variables tab: runs, setup, the sets with the secret by name ──
-    await card.getByRole('link', { name: /Open in Deployments/ }).click();
+    await main
+      .getByTestId('code-repo-strip')
+      .getByRole('link', { name: 'Deployments', exact: true })
+      .click();
     await main
       .getByRole('navigation', { name: 'App' })
       .getByRole('link', { name: 'Runs & variables' })

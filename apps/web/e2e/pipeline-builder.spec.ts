@@ -1,6 +1,6 @@
 /**
  * A code project's pipeline builder, end to end in a browser, on a
- * Bitbucket repository: the project page's card opens its app under
+ * Bitbucket repository: the project page's Deployments link opens its app under
  * Deployments, whose Pipeline tab it is;
  * it shows what was found in the repository and the pipeline saved for
  * the project; a deploy block is added to production from the picker,
@@ -132,10 +132,13 @@ test('pipeline builder: add a deploy, open the pull request, update it @smoke', 
     });
     expect(staged.ok(), await staged.text()).toBe(true);
 
-    // From the project page's card, to its app under Deployments, to the Pipeline tab.
+    // From the project page's Deployments link, to its app, to the Pipeline tab.
     await page.goto(`/code/${projectId}`);
     const main = page.getByRole('main');
-    await main.getByRole('link', { name: /Open in Deployments/ }).click();
+    await main
+      .getByTestId('code-repo-strip')
+      .getByRole('link', { name: 'Deployments', exact: true })
+      .click();
     await main
       .getByRole('navigation', { name: 'App' })
       .getByRole('link', { name: 'Pipeline' })

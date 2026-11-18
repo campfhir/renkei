@@ -1,6 +1,6 @@
 /**
- * A Bitbucket code project's Pipelines, in a browser: the card on the
- * project page opening its app under Deployments, whose Runs & variables
+ * A Bitbucket code project's Pipelines, in a browser: the Deployments link
+ * on the project page (and no pipeline card there) opening its app, whose Runs & variables
  * tab renders the recent runs, the setup and the empty
  * variable sets on the real server; one press through — a secured and a
  * plain repository variable saved from the text box, the request reaching
@@ -89,7 +89,7 @@ test.describe('Code project pipelines', () => {
     ids = await stage(page, testInfo);
   });
 
-  test('card, page, a variable set saved, a set-up repository drawn, phone width', async ({
+  test('the project page link, the Runs & variables tab, a variable set saved, a set-up repository drawn, phone width', async ({
     page,
   }, testInfo) => {
     const shot = (name: string) =>
@@ -107,32 +107,28 @@ test.describe('Code project pipelines', () => {
     const main = page.getByRole('main');
     const pagePath = `/deployments/${ids.projectId}/runs`;
 
-    // ── The project page: a card in the rail after the chats, before the
-    //    environment, that opens the project's app under Deployments ──
+    // ── The project page: no pipeline card in the rail, only a link to the
+    //    project's app under Deployments in the repository strip ──
     await page.goto(`/code/${ids.projectId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.name })).toBeVisible({
       timeout: 30_000,
     });
-    const card = main.locator('section', {
-      has: page.getByRole('heading', { level: 2, name: 'Pipeline and deployments' }),
+    const strip = main.getByTestId('code-repo-strip');
+    const deployments = strip.getByRole('link', { name: 'Deployments', exact: true });
+    await expect(deployments).toHaveAttribute('href', `/deployments/${ids.projectId}`);
+    // The rail is drawn once its Environment card is: no runs, setup or variables beside it.
+    await expect(main.getByRole('heading', { level: 2, name: 'Environment' }).first()).toBeVisible({
+      timeout: 30_000,
     });
-    // The rail is drawn once the card is: read the headings after it.
-    await expect(card).toBeVisible({ timeout: 30_000 });
-    const headings = await main.getByRole('heading', { level: 2 }).allTextContents();
-    const at = (name: string) => headings.findIndex((text) => text.startsWith(name));
-    expect(at('Pipeline and deployments')).toBeGreaterThan(at('Chats in this project'));
-    expect(at('Environment')).toBeGreaterThan(at('Pipeline and deployments'));
-    await expect(card.getByRole('link', { name: /Open in Deployments/ })).toHaveAttribute(
-      'href',
-      `/deployments/${ids.projectId}`
-    );
-    await expect(card.getByRole('button')).toHaveCount(0);
+    for (const gone of ['Pipelines', 'Actions', 'Pipeline and deployments', 'Recent runs']) {
+      await expect(main.getByRole('heading', { level: 2, name: gone, exact: true })).toHaveCount(0);
+    }
     await expectNoHorizontalOverflow(page);
     await shot('code-pipelines-card.png');
 
     // ── Into the app under Deployments, its Runs & variables tab: the runs
     //    table, the setup, the empty variable sets ──
-    await card.getByRole('link', { name: /Open in Deployments/ }).click();
+    await deployments.click();
     await expect(page).toHaveURL(new RegExp(`/deployments/${ids.projectId}$`));
     await main
       .getByRole('navigation', { name: 'App' })

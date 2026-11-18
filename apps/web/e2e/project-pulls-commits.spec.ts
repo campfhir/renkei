@@ -1,15 +1,15 @@
 /**
- * The project screen's PRs/Commits/Actions cards and pages, and a chat
+ * The project screen's PRs/Commits cards and pages, and a chat
  * row's "most recent PR" badge — all mocked with page.route (AGENTS.md:
  * a call that would hit a real vendor/provider, GitHub here, is mocked
  * at the browser edge). Since these routes call GitHub server-side, not
  * from the browser, mocking the browser's request to our own
- * `/api/pulls|commits|actions|pr-summary` routes keeps the
+ * `/api/pulls|commits|pr-summary` routes keeps the
  * real GitHub API entirely out of the loop — the server-side call never
  * happens once the browser's own request is intercepted.
  *
- * A GitHub project, to exercise the Actions card path (Bitbucket's
- * richer Pipelines is already covered by code.spec.ts's fixtures).
+ * A GitHub project. Its runs and variables are under Deployments
+ * (code-actions.spec.ts); the project screen only links there.
  *
  * The project is the test's own person's, who connects GitHub through the
  * real connect flow (e2e/support/code-host.ts: the in-memory app's fake
@@ -84,14 +84,6 @@ const MOST_RECENT_COMMIT = {
   url: 'https://github.com/acme/site/commit/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 };
 
-const LAST_RUN = {
-  id: '999',
-  state: 'success',
-  ref: 'main',
-  url: 'https://github.com/acme/site/actions/runs/999',
-  startedAt: '2026-09-01T00:00:00.000Z',
-};
-
 async function mockRoutes(page: Page, ids: Ids): Promise<void> {
   await page.route(`**/api/code/projects/${ids.projectId}/pulls**`, async (route) => {
     const url = new URL(route.request().url());
@@ -142,23 +134,6 @@ async function mockRoutes(page: Page, ids: Ids): Promise<void> {
     });
   });
 
-  await page.route(`**/api/code/projects/${ids.projectId}/actions**`, async (route) => {
-    const url = new URL(route.request().url());
-    if (url.searchParams.get('view') === 'summary') {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ lastRun: LAST_RUN }),
-      });
-      return;
-    }
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ runs: [LAST_RUN] }),
-    });
-  });
-
   await page.route(`**/api/chat/chats/${ids.chatId}/pr-summary`, async (route) => {
     await route.fulfill({
       status: 200,
@@ -190,7 +165,7 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
   });
 }
 
-test.describe('project pulls, commits and actions', () => {
+test.describe('project pulls and commits', () => {
   test.beforeEach(async ({ page, request, person: _person }) => {
     await prepareCodeHost(request);
     await connectCodeHost(page, 'github');
@@ -205,7 +180,7 @@ test.describe('project pulls, commits and actions', () => {
     await mockRoutes(page, ids);
     const main = page.getByRole('main');
 
-    // ── The project screen: Pulls, Commits and Actions cards ──
+    // ── The project screen: Pulls and Commits cards ──
     await page.goto(`/code/${ids.projectId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
 
@@ -220,10 +195,13 @@ test.describe('project pulls, commits and actions', () => {
     });
     await expect(commits.getByText('aaaaaaaaaaaa')).toBeVisible();
 
-    const actions = main.locator('section', {
-      has: page.getByRole('heading', { level: 2, name: 'Actions' }),
-    });
-    await expect(actions.getByText('Success')).toBeVisible();
+    // Runs and variables live under Deployments now: a link, no card.
+    await expect(
+      main.getByTestId('code-repo-strip').getByRole('link', { name: 'Deployments', exact: true })
+    ).toHaveAttribute('href', `/deployments/${ids.projectId}`);
+    await expect(main.getByRole('heading', { level: 2, name: 'Actions', exact: true })).toHaveCount(
+      0
+    );
     await shot(page, testInfo, 'project-pulls-commits-cards.png');
 
     // ── The active chat row: its most recent PR, as a badge ──
@@ -295,14 +273,10 @@ test.describe('project pulls, commits and actions', () => {
       const commits = main.locator('section', {
         has: viewerPage.getByRole('heading', { level: 2, name: 'Commits' }),
       });
-      const actions = main.locator('section', {
-        has: viewerPage.getByRole('heading', { level: 2, name: 'Actions' }),
-      });
       // The cards stay on the page — not hidden entirely — and each
       // names the actual reason a person can act on.
       await expect(pulls.getByRole('alert')).toContainText('GitHub is not connected');
       await expect(commits.getByRole('alert')).toContainText('GitHub is not connected');
-      await expect(actions.getByRole('alert')).toContainText('GitHub is not connected');
       await shot(viewerPage, testInfo, 'project-pulls-commits-no-access.png');
     } finally {
       await context.close();

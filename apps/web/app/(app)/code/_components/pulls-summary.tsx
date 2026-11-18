@@ -8,7 +8,7 @@
  * to the full Pulls page. Read once on open, with the person's own
  * grant on whichever host the repository is on (repo-host.ts) — on no
  * usable token or an API failure, the card stays and shows the reason
- * (matching pipelines-summary.tsx's own error-surfacing card, not
+ * (an error-surfacing card, not
  * hiding it: "GitHub is not connected. Connect it on the Connectors
  * page, then try again." is exactly the thing a person needs to see,
  * not silence). What the card shows when is pulls-summary.model.ts.
