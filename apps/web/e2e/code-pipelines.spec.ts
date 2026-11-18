@@ -1,14 +1,15 @@
 /**
  * A Bitbucket code project's Pipelines, in a browser: the card on the
- * project page (off, no file, the last run) opening the project's
- * Pipelines page, which renders the recent runs, the setup and the empty
+ * project page opening its app under Deployments, whose Runs & variables
+ * tab renders the recent runs, the setup and the empty
  * variable sets on the real server; one press through — a secured and a
  * plain repository variable saved from the text box, the request reaching
  * the route and the stand-in, the names drawn and the secured value never
  * on the page; the rest of a set-up repository (the switch on, the file
  * committed, a run started, an environment's variable) staged through the
- * routes the page calls and drawn after a reload, on the page and on the
- * card; then the page at phone width, the runs as cards. Bitbucket is the
+ * routes the page calls and drawn after a reload; then the tab at phone
+ * width, the runs as cards; and a code chat's More menu opening it in a
+ * new tab. Bitbucket is the
  * stub in sandbox-stub.mjs (the app is pointed at it with
  * BITBUCKET_API_BASE_URL), which keeps one pipelines row per repository;
  * each test's person makes a project on a repository of its own
@@ -19,7 +20,7 @@
  * Where its rules went: what a template does to the file box, the commit
  * and run requests and when they can be sent, which variables a save
  * takes away and the question it asks, the words under a saved set, how a
- * run's state and duration read — app/(app)/code/_components/
+ * run's state and duration read — app/(app)/deployments/_components/
  * pipelines-page.model.test.ts.
  */
 
@@ -130,41 +131,44 @@ test.describe('Code project pipelines', () => {
         fullPage: false,
       });
     const main = page.getByRole('main');
-    const pagePath = `/code/${ids.projectId}/pipelines`;
+    const pagePath = `/deployments/${ids.projectId}/runs`;
 
     // ── The project page: a card in the rail after the chats, before the
-    //    environment, summarizing what Bitbucket says — off, no file, no
-    //    variables, the last run — and nothing to edit inline ──
+    //    environment, that opens the project's app under Deployments ──
     await page.goto(`/code/${ids.projectId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.name })).toBeVisible({
       timeout: 30_000,
     });
     const card = main.locator('section', {
-      has: page.getByRole('heading', { level: 2, name: 'Pipelines' }),
+      has: page.getByRole('heading', { level: 2, name: 'Pipeline and deployments' }),
     });
+    // The rail is drawn once the card is: read the headings after it.
+    await expect(card).toBeVisible({ timeout: 30_000 });
     const headings = await main.getByRole('heading', { level: 2 }).allTextContents();
     const at = (name: string) => headings.findIndex((text) => text.startsWith(name));
-    expect(at('Pipelines')).toBeGreaterThan(at('Chats in this project'));
-    expect(at('Environment')).toBeGreaterThan(at('Pipelines'));
-    await expect(
-      card.getByText(/^Off · no bitbucket-pipelines\.yml on main yet · 0 variables/)
-    ).toBeVisible();
-    await expect(card.getByText('Last run')).toBeVisible();
-    await expect(card.getByRole('link', { name: '#2', exact: true })).toHaveAttribute(
+    expect(at('Pipeline and deployments')).toBeGreaterThan(at('Chats in this project'));
+    expect(at('Environment')).toBeGreaterThan(at('Pipeline and deployments'));
+    await expect(card.getByRole('link', { name: /Open in Deployments/ })).toHaveAttribute(
       'href',
-      `https://bitbucket.org/${ids.repo}/pipelines/results/2`
+      `/deployments/${ids.projectId}`
     );
-    await expect(card.getByText('Failed')).toBeVisible();
     await expect(card.getByRole('button')).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
     await shot('code-pipelines-card.png');
 
-    // ── Into the page: the runs table, the setup, the empty variable sets ──
-    await card.getByRole('link', { name: /Runs, setup & variables/ }).click();
+    // ── Into the app under Deployments, its Runs & variables tab: the runs
+    //    table, the setup, the empty variable sets ──
+    await card.getByRole('link', { name: /Open in Deployments/ }).click();
+    await expect(page).toHaveURL(new RegExp(`/deployments/${ids.projectId}$`));
+    await main
+      .getByRole('navigation', { name: 'App' })
+      .getByRole('link', { name: 'Runs & variables' })
+      .click();
     await expect(page).toHaveURL(new RegExp(`${pagePath}$`));
-    await expect(page.getByRole('heading', { level: 1, name: /^Pipelines/ })).toBeVisible({
+    await expect(page.getByRole('heading', { level: 1, name: ids.name })).toBeVisible({
       timeout: 30_000,
     });
+    await expect(main.getByText('Bitbucket Pipelines', { exact: false }).first()).toBeVisible();
     await expect(main.getByText(ids.repo)).toBeVisible();
     await expect(main.getByRole('link', { name: 'Open on Bitbucket' })).toHaveAttribute(
       'href',
@@ -271,20 +275,11 @@ test.describe('Code project pipelines', () => {
     await expect(page.getByText('deploy-key-bytes')).toHaveCount(0);
     await shot('code-pipelines-set.png');
 
-    // ── Back on the project page, the card reflects it: on, two variables ──
-    await main.getByRole('link', { name: ids.name, exact: true }).click();
-    await expect(page.getByRole('heading', { level: 1, name: ids.name })).toBeVisible();
-    await expect(
-      card.getByText(
-        /^On · bitbucket-pipelines\.yml on main · 3 variables across the repository and 1 environment/
-      )
-    ).toBeVisible();
-
     // ── Phone width: the page again, one column, the runs as cards
     //    rather than a table, nothing sideways ──
     await page.setViewportSize(MOBILE_VIEWPORT);
     await page.goto(pagePath);
-    await expect(page.getByRole('heading', { level: 1, name: /^Pipelines/ })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: ids.name })).toBeVisible();
     await expect(runs.getByRole('table')).toBeHidden();
     const runCards = runs.getByRole('listitem');
     await expect(runCards).toHaveCount(3);
@@ -338,23 +333,26 @@ test.describe('Code project pipelines', () => {
     await expect(row).toHaveCount(0);
     await expect(main.getByText('Node with pnpm', { exact: true })).toBeVisible();
   });
-  test('a code chat’s overflow menu opens the same page in a dialog', async ({ page }) => {
+  test('a code chat’s overflow menu opens the project’s runs and variables in a new tab', async ({
+    page,
+  }) => {
     const chatId = await createChat(page.request, { projectId: ids.projectId, title: 'Draft CI' });
     await page.goto(`/chat/${chatId}`);
     const main = page.getByRole('main');
     await main.getByRole('button', { name: 'More', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Pipelines' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Pipelines' });
-    await expect(dialog).toBeVisible();
-    // The page's own cards, without its page header or back link.
-    await expect(dialog.getByRole('region', { name: 'Recent runs' })).toBeVisible({
+    const opened = page.waitForEvent('popup');
+    await page.getByRole('menuitem', { name: 'Deployments' }).click();
+    const tab = await opened;
+    await expect(tab).toHaveURL(new RegExp(`/deployments/${ids.projectId}/runs$`));
+    const there = tab.getByRole('main');
+    await expect(there.getByRole('region', { name: 'Recent runs' })).toBeVisible({
       timeout: 30_000,
     });
-    await expect(dialog.getByRole('region', { name: 'Setup' })).toBeVisible();
-    await expect(dialog.getByRole('region', { name: 'Repository variables' })).toBeVisible();
-    await expect(dialog.getByRole('heading', { level: 1 })).toHaveCount(0);
-    await expect(dialog.getByRole('link', { name: 'Open on Bitbucket' })).toBeVisible();
-    await page.keyboard.press('Escape');
-    await expect(dialog).toBeHidden();
+    await expect(there.getByRole('region', { name: 'Setup' })).toBeVisible();
+    await expect(there.getByRole('region', { name: 'Repository variables' })).toBeVisible();
+    await expect(there.getByRole('link', { name: 'Open on Bitbucket' })).toBeVisible();
+    // The chat stays where it was.
+    await expect(page).toHaveURL(new RegExp(`/chat/${chatId}$`));
+    await tab.close();
   });
 });

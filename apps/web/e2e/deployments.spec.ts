@@ -74,6 +74,8 @@ test('deployments: reports show what runs where, and promoting merges @smoke', a
     testInfo.project.name !== 'desktop-light',
     'One pass is enough: the pages are drawn by their models.'
   );
+  // A dev server compiles each route the first time it is asked for one.
+  test.setTimeout(180_000);
   const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
   const name = `Deploy demo (${tag})`;
   const repo = `acme/pipeline-demo-${tag}`;
@@ -193,8 +195,11 @@ test('deployments: reports show what runs where, and promoting merges @smoke', a
     // The Deployments page, from the sidebar.
     await page.goto('/');
     await page.getByRole('link', { name: 'Deployments', exact: true }).first().click();
+    await expect(page).toHaveURL(/\/deployments$/, { timeout: 30_000 });
     const main = page.getByRole('main');
-    await expect(main.getByRole('heading', { name: 'Deployments', level: 1 })).toBeVisible();
+    await expect(main.getByRole('heading', { name: 'Deployments', level: 1 })).toBeVisible({
+      timeout: 30_000,
+    });
     const app = main.getByRole('article', { name });
     await expect(app).toContainText('Dev · develop', { timeout: 30_000 });
     await expect(app).toContainText('8e41c2a');

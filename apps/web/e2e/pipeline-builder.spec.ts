@@ -1,6 +1,7 @@
 /**
  * A code project's pipeline builder, end to end in a browser, on a
- * Bitbucket repository: the Pipelines card on the project page opens it;
+ * Bitbucket repository: the project page's card opens its app under
+ * Deployments, whose Pipeline tab it is;
  * it shows what was found in the repository and the pipeline saved for
  * the project; a deploy block is added to production from the picker,
  * given its target and input; the file it writes says so; the pull
@@ -55,6 +56,8 @@ test('pipeline builder: add a deploy, open the pull request, update it @smoke', 
   request,
   person: _person,
 }, testInfo) => {
+  // A dev server compiles each route the first time it is asked for one.
+  test.setTimeout(180_000);
   const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
   const buildName = `Build ${tag}`;
   const deployName = `Deploy ${tag}`;
@@ -129,11 +132,15 @@ test('pipeline builder: add a deploy, open the pull request, update it @smoke', 
     });
     expect(staged.ok(), await staged.text()).toBe(true);
 
-    // From the project page's Pipelines card.
+    // From the project page's card, to its app under Deployments, to the Pipeline tab.
     await page.goto(`/code/${projectId}`);
-    await page.getByRole('link', { name: 'Build it from blocks' }).click();
     const main = page.getByRole('main');
-    await expect(main.getByRole('heading', { name: 'Pipeline', level: 1 })).toBeVisible();
+    await main.getByRole('link', { name: /Open in Deployments/ }).click();
+    await main
+      .getByRole('navigation', { name: 'App' })
+      .getByRole('link', { name: 'Pipeline' })
+      .click();
+    await expect(page).toHaveURL(new RegExp(`/deployments/${projectId}/pipeline$`));
     const found = main.getByRole('region', { name: 'Found in this repository' });
     await expect(found).toContainText('Node · package.json', { timeout: 30_000 });
     await expect(found).toContainText('No bitbucket-pipelines.yml on main yet');
@@ -143,6 +150,8 @@ test('pipeline builder: add a deploy, open the pull request, update it @smoke', 
     await production.getByRole('button', { name: '+ Add block' }).click();
     await production.getByRole('button', { name: new RegExp(`^Deploy\\s*${deployName}`) }).click();
     const editor = production.getByRole('group', { name: `${deployName}, production, step 2` });
+    // Targets are organization-wide, and another spec's may sort first: pick this run's.
+    await editor.getByRole('combobox', { name: 'Target' }).selectOption(target);
     await expect(editor.getByRole('combobox', { name: 'Target' })).toHaveValue(target);
     await editor.getByRole('textbox', { name: 'service_name' }).fill('billing');
     await editor.getByRole('button', { name: 'Done' }).click();
