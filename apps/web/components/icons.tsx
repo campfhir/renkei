@@ -52,6 +52,7 @@ export const ICONS = {
   /** A ring around a dot — the unread badge, "put it back". */
   unreadDot: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 12h.01',
   folder: 'M3 19V5h6l2 3h10v11z',
+  deploy: 'M5 15c-1.5 1.5-2 5-2 5s3.5-.5 5-2M9 15l-3-3c1-4 4-8 10-9-1 6-5 9-9 10zM15 9h.01',
   /** Git, one glyph per verb: for the code tools' calls in a chat. */
   gitClone: 'M4 5h16v14H4zM12 9v6M9 12l3 3 3-3',
   gitCommit: 'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM3 12h6M15 12h6',

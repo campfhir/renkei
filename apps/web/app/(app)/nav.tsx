@@ -232,6 +232,8 @@ export default function AppNav({
               },
             ]
           : []),
+        // What each code project's pipeline deployed where, as the pipelines report it.
+        { href: `/deployments`, label: 'Deployments', icon: ICONS.deploy },
       ],
     },
     {
