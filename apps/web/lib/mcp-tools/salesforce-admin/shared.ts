@@ -131,23 +131,47 @@ export function apexTestLines(validation: Validation, payload: MetadataPayload):
       ];
 }
 
-/** Store the proposal, validate it, and answer with the outcome and the review link. */
-/** What proposing needs of its caller — an MCP tool's context, or a code project's turn. */
+/** What proposing needs of its caller — an MCP tool's context, a code project's turn, a route. */
 export type ProposalContext = Pick<MCPToolContext, 'subject' | 'agent' | 'origin'>;
 
+export interface ProposalInput {
+  kind: string;
+  title: string;
+  reason?: string;
+  replaces?: string;
+  payload: MetadataPayload;
+  summary: string[];
+}
+
+/** A stored, validated proposal: its id, the review page, what Salesforce said, and the answer in words. */
+export interface Proposed {
+  changeId: string;
+  url: string;
+  validation: Validation;
+  text: string;
+}
+
+/** Store the proposal, validate it, and answer with the outcome and the review link. */
 export async function proposeAndValidate(
   context: ProposalContext,
   access: SalesforceAccess,
-  input: {
-    kind: string;
-    title: string;
-    reason?: string;
-    replaces?: string;
-    payload: MetadataPayload;
-    summary: string[];
-  }
+  input: ProposalInput
 ) {
-  if (!context.subject) return errText('No signed-in identity on this request.');
+  const proposed = await proposeChange(context, access, input);
+  if (typeof proposed === 'string') return errText(proposed);
+  return {
+    content: [{ type: 'text' as const, text: proposed.text }],
+    _meta: actMeta({ url: proposed.url }),
+  };
+}
+
+/** proposeAndValidate's work, for a caller that wants the id and link rather than text alone. */
+export async function proposeChange(
+  context: ProposalContext,
+  access: SalesforceAccess,
+  input: ProposalInput
+): Promise<Proposed | string> {
+  if (!context.subject) return 'No signed-in identity on this request.';
   // Replacing your own earlier proposal cancels it. An operator may also
   // replace someone's free-text request, which closes it as built.
   const replaced = input.replaces ? await getChangeRequestById(input.replaces) : null;
@@ -215,22 +239,19 @@ export async function proposeAndValidate(
 
   const link = `${reviewPrefix(context)}${change.id}`;
   return {
-    content: [
-      {
-        type: 'text' as const,
-        text: [
-          `Proposed in ${access.connectorName}${access.sandbox ? ' (sandbox)' : ' (production)'} — nothing has changed in Salesforce yet.`,
-          ...input.summary,
-          '',
-          ...validationLines(validation),
-          ...apexTestLines(validation, input.payload),
-          '',
-          `Review and approve: ${link}`,
-          `Request ${change.id}; it expires in ${CHANGE_REQUEST_TTL_HOURS} hours. Only an operator can approve it, from that page, and it then deploys in the background; operators have been told it is waiting. salesforce_admin_get_change_request with this id says where it has got to.`,
-        ].join('\n'),
-      },
-    ],
-    _meta: actMeta({ url: link }),
+    changeId: change.id,
+    url: link,
+    validation,
+    text: [
+      `Proposed in ${access.connectorName}${access.sandbox ? ' (sandbox)' : ' (production)'} — nothing has changed in Salesforce yet.`,
+      ...input.summary,
+      '',
+      ...validationLines(validation),
+      ...apexTestLines(validation, input.payload),
+      '',
+      `Review and approve: ${link}`,
+      `Request ${change.id}; it expires in ${CHANGE_REQUEST_TTL_HOURS} hours. Only an operator can approve it, from that page, and it then deploys in the background; operators have been told it is waiting. salesforce_admin_get_change_request with this id says where it has got to.`,
+    ].join('\n'),
   };
 }
 
