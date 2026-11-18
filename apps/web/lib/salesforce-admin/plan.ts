@@ -38,6 +38,7 @@ import {
 import { entityKey, fingerprintOf, toolingQuery } from './tooling';
 import { listRecordTypes, wholeComponentFingerprint } from './whole-components';
 import { APEX_KIND, readLiveApex } from './apex';
+import { apexTestsVerdict, type Validation } from './change-requests';
 
 export { entityKey, fingerprintOf, toolingQuery } from './tooling';
 
@@ -288,6 +289,21 @@ export interface MetadataPayload {
   apexTests?: string[];
   /** The classes and triggers it writes, test classes left out: each must be 80% covered. */
   apexMeasured?: ApexUnit[];
+}
+
+/**
+ * Whether a change carries Apex whose validation is done and whose tests
+ * do not allow a deploy — what the validation badge says in place of
+ * "Validated" (validation-state.model.ts).
+ */
+export function apexTestsShort(change: {
+  validation: Validation | null;
+  payload: unknown;
+}): boolean {
+  const validation = change.validation;
+  if (!validation || 'error' in validation || !validation.done) return false;
+  const verdict = apexTestsVerdict(validation, readMetadataPayload(change.payload));
+  return verdict !== null && !verdict.ok;
 }
 
 /** Whether a payload deploys anything, or is data steps alone. */

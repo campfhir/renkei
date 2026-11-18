@@ -5,6 +5,9 @@
  */
 
 import type { ChangeRequestState, Validation } from '@/lib/salesforce-admin/change-requests';
+import { VALIDATION_LABELS, validationState } from './validation-state.model';
+
+export { validationState, type ValidationState } from './validation-state.model';
 
 const LABELS: Record<ChangeRequestState, string> = {
   pending: 'Waiting for review',
@@ -48,29 +51,15 @@ export function ChangeStatePill({ state }: { state: ChangeRequestState }) {
   );
 }
 
-export type ValidationState = 'passed' | 'checked' | 'failed' | 'running' | 'error' | 'none';
-
-export function validationState(validation: Validation | null): ValidationState {
-  if (!validation) return 'none';
-  if ('error' in validation) return 'error';
-  if (!validation.done) return 'running';
-  // A change that is data only has no deploy for Salesforce to dry-run:
-  // the proposal checked every name and id against the org instead.
-  if (validation.success) return validation.deployId ? 'passed' : 'checked';
-  return 'failed';
-}
-
-const VALIDATION_LABELS: Record<ValidationState, string> = {
-  passed: 'Validated by Salesforce',
-  checked: 'Checked against the org',
-  failed: 'Validation failed',
-  running: 'Validating…',
-  error: 'Could not validate',
-  none: 'Not validated',
-};
-
-export function ValidationPill({ validation }: { validation: Validation | null }) {
-  const state = validationState(validation);
+export function ValidationPill({
+  validation,
+  testsShort = false,
+}: {
+  validation: Validation | null;
+  /** An Apex change whose tests do not allow a deploy (validation-state.model.ts). */
+  testsShort?: boolean;
+}) {
+  const state = validationState(validation, testsShort);
   const color =
     state === 'passed' || state === 'checked'
       ? 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300'

@@ -16,7 +16,12 @@ import {
   type ChangeRequest,
   type OperationResult,
 } from '@/lib/salesforce-admin/change-requests';
-import { deploys, readMetadataPayload, stepLabel } from '@/lib/salesforce-admin/plan';
+import {
+  apexTestsShort,
+  deploys,
+  readMetadataPayload,
+  stepLabel,
+} from '@/lib/salesforce-admin/plan';
 import { accessForChange, applyGate, refreshValidation } from '@/lib/salesforce-admin/apply';
 import { listSalesforceConnectors } from '@/lib/salesforce-app';
 import { SALESFORCE_ADMIN_KIND } from '@/lib/salesforce-kinds';
@@ -220,7 +225,7 @@ export default async function SalesforceAdminChangePage({
         <BackLink href="/salesforce-admin/changes" label="Salesforce admin changes" />
         <h1 className="min-w-0 truncate text-xl font-bold">Review a Salesforce change</h1>
         <ChangeStatePill state={state} />
-        <ValidationPill validation={validation} />
+        <ValidationPill validation={validation} testsShort={apexTestsShort(change)} />
       </div>
 
       <div className="mb-4 space-y-2 rounded-md border border-gray-200 p-3 text-sm dark:border-gray-800">
@@ -344,6 +349,11 @@ export default async function SalesforceAdminChangePage({
             <p className="text-gray-700 dark:text-gray-300">
               A check-only deploy passed: Salesforce compiled it and checked every reference, and
               changed nothing.
+            </p>
+          ) : apexTests && validation.failures.length === 0 && !validation.errorMessage ? (
+            <p className="text-red-700 dark:text-red-400">
+              Salesforce compiled it in a check-only deploy, changing nothing, and its Apex tests
+              did not pass. The tests below say what to fix.
             </p>
           ) : (
             <>

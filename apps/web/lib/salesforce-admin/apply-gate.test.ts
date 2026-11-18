@@ -164,3 +164,23 @@ describe('an Apex change', () => {
     expect(untested.ok === false && untested.reason).toContain('No tests ran');
   });
 });
+
+it('says the tests are why, not that Salesforce did not validate it, when the deploy failed only on its tests', async () => {
+  const gate = await applyGate('operator', ['renkei-operator'], {
+    connectorKey: 'uat',
+    validation: {
+      ...passed,
+      success: false,
+      status: 'Failed',
+      tests: {
+        run: 2,
+        failures: [{ className: 'BillingServiceTest', method: 'taxes', message: 'boom' }],
+        coverage: [{ name: 'BillingService', type: 'Class', lines: 100, uncovered: 0 }],
+        warnings: [],
+      },
+    },
+    payload: apexPayload,
+  });
+  expect(gate.ok === false && gate.reason).toMatch(/^Its Apex tests do not allow a deploy/);
+  expect(gate.ok === false && gate.reason).toContain('BillingServiceTest.taxes failed: boom');
+});

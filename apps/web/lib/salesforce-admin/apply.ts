@@ -162,6 +162,19 @@ export async function applyGate(
       reason: `${connector.name} is a production org that does not take change requests. Build in a sandbox, or ask an organization admin to allow changes on this connector.`,
     };
   }
+  // An Apex change's tests say why before Salesforce's own verdict does:
+  // a validation that failed only on its tests has nothing else to fix.
+  const tests = apexTestsVerdict(change.validation, readMetadataPayload(change.payload));
+  const validated =
+    change.validation !== null && 'deployId' in change.validation && change.validation.done;
+  if (validated && tests && !tests.ok) {
+    return {
+      ok: false,
+      reason:
+        `Its Apex tests do not allow a deploy (every test must pass, and each class and trigger it changes be ${APEX_COVERAGE_PERCENT}% covered): ` +
+        tests.problems.join(' '),
+    };
+  }
   if (!validationPassed(change.validation)) {
     const running =
       change.validation !== null && 'deployId' in change.validation && !change.validation.done;
@@ -170,15 +183,6 @@ export async function applyGate(
       reason: running
         ? 'Salesforce is still validating this change; it can be applied once that passes.'
         : 'Salesforce has not validated this change. Propose it again once the errors are fixed.',
-    };
-  }
-  const tests = apexTestsVerdict(change.validation, readMetadataPayload(change.payload));
-  if (tests && !tests.ok) {
-    return {
-      ok: false,
-      reason:
-        `Its Apex tests do not allow a deploy (every test must pass, and each class and trigger it changes be ${APEX_COVERAGE_PERCENT}% covered): ` +
-        tests.problems.join(' '),
     };
   }
 

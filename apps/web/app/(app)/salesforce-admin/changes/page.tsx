@@ -12,6 +12,7 @@ import {
   stateOf,
   type ChangeRequest,
 } from '@/lib/salesforce-admin/change-requests';
+import { apexTestsShort } from '@/lib/salesforce-admin/plan';
 import { listSalesforceConnectors } from '@/lib/salesforce-app';
 import { SALESFORCE_ADMIN_KIND } from '@/lib/salesforce-kinds';
 import LocalTime from '@/components/local-time';
@@ -74,7 +75,9 @@ export default async function SalesforceAdminChangesPage(): Promise<React.ReactN
           ) : null}
         </span>
         <span className="flex shrink-0 flex-wrap gap-1">
-          {change.kind === REQUEST_KIND ? null : <ValidationPill validation={change.validation} />}
+          {change.kind === REQUEST_KIND ? null : (
+            <ValidationPill validation={change.validation} testsShort={apexTestsShort(change)} />
+          )}
           <ChangeStatePill state={stateOf(change, now)} />
         </span>
       </Link>

@@ -97,7 +97,9 @@ export default async function ChangesPage({
         <span className="flex shrink-0 flex-wrap gap-1">
           {row.source === 'salesforce-admin' ? (
             <>
-              {row.kind === 'proposal' ? <ValidationPill validation={row.validation} /> : null}
+              {row.kind === 'proposal' ? (
+                <ValidationPill validation={row.validation} testsShort={row.testsShort} />
+              ) : null}
               <SalesforceStatePill state={row.state} />
             </>
           ) : (
