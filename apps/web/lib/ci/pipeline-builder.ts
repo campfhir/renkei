@@ -52,8 +52,9 @@ import {
 import type { HostBranch } from '@/lib/code/repo-host';
 import { bitbucketHostAdapter } from '@/lib/code/repo-host-bitbucket';
 import { githubHostAdapter } from '@/lib/code/repo-host-github';
-import { describeBitbucketFailure } from '@/lib/mcp-tools/bitbucket/client';
+import { bbJson, describeBitbucketFailure } from '@/lib/mcp-tools/bitbucket/client';
 import { ghJson, rec, str } from '@/lib/mcp-tools/github/client';
+import { bareUuid } from './oidc';
 import { listTargets, targetsPage } from './targets';
 
 export type CodeRepoProject = ProjectRow & { repo: NonNullable<ProjectRow['repo']> };
@@ -299,6 +300,11 @@ export async function savePipeline(
 ): Promise<void> {
   const host = hostOf(project.repo.provider) ?? 'bitbucket';
   await getDataStore().ciPipelines.save(project.id, { host, spec, updatedBy: subject });
+  // GitHub's tokens name the repository as owner/name; Bitbucket's by a UUID
+  // only Bitbucket knows, read when the pull request opens (openBitbucket).
+  if (host === 'github') {
+    await getDataStore().ciPipelines.setRepoKey(project.id, project.repo.fullName.toLowerCase());
+  }
 }
 
 // ——— the pull request ———
@@ -359,6 +365,10 @@ async function openBitbucket(write: HostWrite): Promise<OpenOutcome> {
   const { fullName } = write.project.repo;
   const base = repoBase(fullName);
   if (!base) return { ok: false, status: 400, error: 'The repository name is not usable.' };
+  // How Bitbucket's step tokens will name this repository, for the deploy reports.
+  const repository = await bbJson(auth, ['repository'], base);
+  const uuid = repository.ok ? str(repository.body.uuid) : '';
+  if (uuid) await getDataStore().ciPipelines.setRepoKey(write.project.id, bareUuid(uuid));
   const adapter = bitbucketHostAdapter(write.caller);
   const open = await adapter.listPullRequests(fullName, { state: 'open', max: 50 });
   const existing = open.ok
