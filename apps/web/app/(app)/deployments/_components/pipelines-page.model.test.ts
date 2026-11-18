@@ -6,7 +6,6 @@
  */
 
 import type { PipelineRun, PipelineVariable } from '@/lib/code/bitbucket-pipelines';
-import type { PipelineTemplate } from '@/lib/code/pipeline-templates';
 import {
   branchLabel,
   canCommit,
@@ -28,8 +27,6 @@ import {
   removalQuestion,
   runRequest,
   runStatePill,
-  templateBlankOption,
-  templateOptionLabel,
   textRows,
   variableShown,
   variablesButtonLabel,
@@ -66,23 +63,6 @@ const run = (actions: PipelinesAction[], from: PipelinesState = initialPipelines
   actions.reduce(pipelinesReducer, from);
 
 const opened = (more: Partial<Setup> = {}) => run([{ type: 'loaded', setup: setup(more) }]);
-
-const TEMPLATES: PipelineTemplate[] = [
-  {
-    id: 't-pnpm',
-    provider: 'atlassian-bitbucket',
-    name: 'Node with pnpm',
-    description: 'Install with pnpm, then test.',
-    body: 'pipelines:\n  default:\n    - step:\n        script:\n          - pnpm install --frozen-lockfile\n',
-  },
-  {
-    id: 't-bare',
-    provider: 'atlassian-bitbucket',
-    name: 'Bare skeleton',
-    description: null,
-    body: 'pipelines: {}\n',
-  },
-];
 
 const pipelineRun = (more: Partial<PipelineRun> = {}): PipelineRun => ({
   uuid: '{r3}',
@@ -221,56 +201,29 @@ describe('a run in the list', () => {
 
 describe('the pipeline file', () => {
   it('opens empty with an "Add" message when the branch has none', () => {
-    const state = run(
-      [{ type: 'fileOpening' }, { type: 'fileOpened', text: null, templates: TEMPLATES }],
-      opened()
-    );
+    const state = run([{ type: 'fileOpening' }, { type: 'fileOpened', text: null }], opened());
     expect(state.fileDraft).toEqual({
       text: '',
       message: 'Add bitbucket-pipelines.yml',
-      templateId: '',
     });
     expect(state.busy).toBe(false);
-    expect(templateBlankOption(state.fileDraft!)).toBe('Pick a template…');
   });
 
   it('opens what is on the branch with an "Update" message when there is one', () => {
     const state = run(
-      [{ type: 'fileOpening' }, { type: 'fileOpened', text: 'pipelines: {}\n', templates: [] }],
+      [{ type: 'fileOpening' }, { type: 'fileOpened', text: 'pipelines: {}\n' }],
       opened({ configFile: 'present' })
     );
     expect(state.fileDraft?.text).toBe('pipelines: {}\n');
     expect(state.fileDraft?.message).toBe('Update bitbucket-pipelines.yml');
-    expect(templateBlankOption(state.fileDraft!)).toBe('Keep what is here');
-  });
-
-  it('a picked template fills the box; the empty choice keeps what is there', () => {
-    const open = run([{ type: 'fileOpened', text: null, templates: TEMPLATES }], opened());
-    const picked = run([{ type: 'templatePicked', templateId: 't-pnpm' }], open);
-    expect(picked.fileDraft?.text).toMatch(/pnpm install --frozen-lockfile/);
-    const edited = run(
-      [
-        { type: 'fileChanged', field: 'text', value: 'mine' },
-        { type: 'templatePicked', templateId: '' },
-      ],
-      picked
-    );
-    expect(edited.fileDraft).toMatchObject({ text: 'mine', templateId: '' });
-  });
-
-  it('lists a template with its description when it has one', () => {
-    expect(templateOptionLabel(TEMPLATES[0]!)).toBe(
-      'Node with pnpm — Install with pnpm, then test.'
-    );
-    expect(templateOptionLabel(TEMPLATES[1]!)).toBe('Bare skeleton');
   });
 
   it('cannot be committed empty, and sends the box as it is with the message trimmed', () => {
-    const open = run([{ type: 'fileOpened', text: null, templates: TEMPLATES }], opened());
+    const open = run([{ type: 'fileOpened', text: null }], opened());
     expect(canCommit(open)).toBe(false);
     const filled = run(
       [
-        { type: 'templatePicked', templateId: 't-bare' },
+        { type: 'fileChanged', field: 'text', value: 'pipelines: {}\n' },
         { type: 'fileChanged', field: 'message', value: '  Add CI  ' },
       ],
       open
@@ -282,8 +235,8 @@ describe('the pipeline file', () => {
   it('a commit closes the editor and says where it went, reminding when Pipelines is off', () => {
     const done = run(
       [
-        { type: 'fileOpened', text: null, templates: TEMPLATES },
-        { type: 'templatePicked', templateId: 't-bare' },
+        { type: 'fileOpened', text: null },
+        { type: 'fileChanged', field: 'text', value: 'pipelines: {}\n' },
         { type: 'sent', what: 'file' },
         {
           type: 'fileCommitted',
@@ -311,10 +264,7 @@ describe('the pipeline file', () => {
   });
 
   it('cancelling throws the draft away', () => {
-    const state = run(
-      [{ type: 'fileOpened', text: null, templates: [] }, { type: 'fileCancelled' }],
-      opened()
-    );
+    const state = run([{ type: 'fileOpened', text: null }, { type: 'fileCancelled' }], opened());
     expect(state.fileDraft).toBeNull();
   });
 });

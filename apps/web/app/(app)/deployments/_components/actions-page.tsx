@@ -6,8 +6,8 @@
  * (pipelines-page.tsx) for GitHub, drawn from the same parts
  * (pipeline-parts.tsx): the recent runs; the setup — whether GitHub runs
  * Actions for the repository at all, and the workflow files on the
- * branch, each editable, with a way to start a new one from the org's
- * pipeline templates — and the variables runs get, the repository's and
+ * branch, each editable, with a way to write a new one (or build one from
+ * blocks on the Pipeline tab) — and the variables runs get, the repository's and
  * each deployment environment's, each set edited as one text box,
  * `KEY=value` a line, applied as a difference. Read on open and after
  * every change, with the person's own GitHub grant.
@@ -24,13 +24,13 @@
  */
 
 import { useCallback, useEffect, useReducer } from 'react';
+import Link from 'next/link';
 import ExternalLink from '@/components/external-link';
 import LocalTime from '@/components/local-time';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import type { VariablesApplied } from '@/lib/code/bitbucket-pipelines';
 import { actionsSecretsUrl, actionsUrl } from '@/lib/code/github-actions-urls';
 import type { HostPipelineRun } from '@/lib/code/repo-host';
-import type { PipelineTemplate } from '@/lib/code/pipeline-templates';
 import Pill, { type PillTone } from '@/app/(app)/code/_components/pill';
 import VariableGroup, {
   StatusPill,
@@ -61,8 +61,6 @@ import {
   outcomeFor,
   outcomeOf,
   removalQuestion,
-  templateBlankOption,
-  templateOptionLabel,
   textRows,
   variablesGoing,
   variablesRequest,
@@ -110,7 +108,7 @@ export default function ActionsPage({
 }) {
   const url = `/api/code/projects/${projectId}/actions`;
   const [state, dispatch] = useReducer(actionsReducer, initialActions);
-  const { setup, loadError, error, busy, draft, fileDraft, templates, committed } = state;
+  const { setup, loadError, error, busy, draft, fileDraft, committed } = state;
 
   const reload = useCallback(async () => {
     const result = await getJson<ActionsPageSetup>(url);
@@ -169,19 +167,14 @@ export default function ActionsPage({
     );
   };
 
-  /** Open the editor: a workflow as it is on the branch, or an empty one for a template to fill. */
+  /** Open the editor: a workflow as it is on the branch, or an empty one to write. */
   const openFile = async (name: string | null) => {
     dispatch({ type: 'fileOpening' });
-    const [file, catalog] = await Promise.all([
-      name
-        ? getJson<{ text: string | null }>(`${url}/workflow-file?name=${encodeURIComponent(name)}`)
-        : Promise.resolve({ data: { text: null }, error: null }),
-      templates
-        ? Promise.resolve({ data: { templates }, error: null })
-        : getJson<{ templates: PipelineTemplate[] }>(
-            `/api/code/pipeline-templates?provider=github`
-          ),
-    ]);
+    const file = name
+      ? await getJson<{ text: string | null }>(
+          `${url}/workflow-file?name=${encodeURIComponent(name)}`
+        )
+      : { data: { text: null }, error: null };
     if (file.error) {
       dispatch({ type: 'fileOpenFailed', error: file.error });
       return;
@@ -190,7 +183,6 @@ export default function ActionsPage({
       type: 'fileOpened',
       name,
       text: file.data?.text ?? null,
-      templates: catalog.data?.templates ?? [],
     });
   };
 
@@ -328,6 +320,16 @@ export default function ActionsPage({
                     <dt className="text-gray-500">Workflows</dt>
                     <dd className="min-w-0 basis-full sm:flex-1 sm:basis-auto">
                       {workflowsLine(setup, branchLabel)}{' '}
+                      {setup.workflows && setup.workflows.length > 0 ? null : (
+                        <>
+                          <Link
+                            href={`/deployments/${projectId}/pipeline`}
+                            className={linkButtonClass}
+                          >
+                            Build one from blocks
+                          </Link>{' '}
+                        </>
+                      )}
                       {canEdit && !fileDraft ? (
                         <button
                           type="button"
@@ -337,7 +339,7 @@ export default function ActionsPage({
                         >
                           {setup.workflows && setup.workflows.length > 0
                             ? 'New workflow'
-                            : 'Start from a template'}
+                            : 'or write one by hand'}
                         </button>
                       ) : null}
                     </dd>
@@ -404,25 +406,6 @@ export default function ActionsPage({
                         ) : null}
                       </label>
                     ) : null}
-                    {templates && templates.length > 0 ? (
-                      <label className="block text-xs">
-                        <span className="text-gray-500">Start from a template</span>
-                        <select
-                          value={fileDraft.templateId}
-                          onChange={(event) =>
-                            dispatch({ type: 'templatePicked', templateId: event.target.value })
-                          }
-                          className={`mt-0.5 ${inputClass}`}
-                        >
-                          <option value="">{templateBlankOption(fileDraft)}</option>
-                          {templates.map((template) => (
-                            <option key={template.id} value={template.id}>
-                              {templateOptionLabel(template)}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    ) : null}
                     <textarea
                       value={fileDraft.text}
                       onChange={(event) =>
@@ -453,8 +436,8 @@ export default function ActionsPage({
                     </label>
                     <div className="flex items-center justify-end gap-2">
                       <p className="mr-auto text-xs text-gray-500">
-                        Commit goes straight to {branchLabel}, with your GitHub access. The picked
-                        template is a starting point; what is in the box is what lands.
+                        Commit goes straight to {branchLabel}, with your GitHub access: what is in
+                        the box is what lands.
                       </p>
                       <button
                         type="button"

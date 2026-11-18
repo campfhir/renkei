@@ -5,8 +5,8 @@
  * tab of its app under Deployments: the recent runs, the setup
  * — whether Bitbucket runs pipelines for the repository at all, and
  * whether a `bitbucket-pipelines.yml` is on the branch, with an editor
- * that starts one from the org's pipeline templates and commits it, or
- * edits the one there — and the variables the runs get, the repository's
+ * that writes one and commits it (or the Pipeline tab builds one from
+ * blocks), or edits the one there — and the variables the runs get, the repository's
  * and each deployment environment's, each set edited as one text box,
  * `KEY=value` a line, and applied as a difference. Read on open and after
  * every change, with the person's own Bitbucket grant. Its GitHub
@@ -30,6 +30,7 @@
  */
 
 import { useCallback, useEffect, useReducer, type Dispatch } from 'react';
+import Link from 'next/link';
 import ExternalLink from '@/components/external-link';
 import LocalTime from '@/components/local-time';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
@@ -38,7 +39,6 @@ import type {
   PipelineVariable,
   VariablesApplied,
 } from '@/lib/code/bitbucket-pipelines';
-import type { PipelineTemplate } from '@/lib/code/pipeline-templates';
 import VariableGroup, {
   RunStatePill,
   StatusPill,
@@ -65,8 +65,6 @@ import {
   pipelinesUrl as urlOfPipelines,
   removalQuestion,
   runRequest,
-  templateBlankOption,
-  templateOptionLabel,
   textRows,
   variablesGoing,
   variablesRequest,
@@ -104,18 +102,7 @@ export default function PipelinesPage({
 }) {
   const url = `/api/code/projects/${projectId}/pipelines`;
   const [state, dispatch] = useReducer(pipelinesReducer, initialPipelines);
-  const {
-    setup,
-    loadError,
-    error,
-    busy,
-    draft,
-    runDraft,
-    started,
-    fileDraft,
-    templates,
-    committed,
-  } = state;
+  const { setup, loadError, error, busy, draft, runDraft, started, fileDraft, committed } = state;
 
   const reload = useCallback(async () => {
     const result = await getJson<Setup>(url);
@@ -175,17 +162,10 @@ export default function PipelinesPage({
     );
   };
 
-  /** Open the file editor: the file as it is on the branch, or empty for a template to fill. */
+  /** Open the file editor: the file as it is on the branch, or an empty one to write. */
   const openFile = async () => {
     dispatch({ type: 'fileOpening' });
-    const [file, catalog] = await Promise.all([
-      getJson<{ ref: string; text: string | null }>(`${url}/config-file`),
-      templates
-        ? Promise.resolve({ data: { templates }, error: null })
-        : getJson<{ templates: PipelineTemplate[] }>(
-            `/api/code/pipeline-templates?provider=atlassian-bitbucket`
-          ),
-    ]);
+    const file = await getJson<{ ref: string; text: string | null }>(`${url}/config-file`);
     if (file.error) {
       dispatch({ type: 'fileOpenFailed', error: file.error });
       return;
@@ -193,7 +173,6 @@ export default function PipelinesPage({
     dispatch({
       type: 'fileOpened',
       text: file.data?.text ?? null,
-      templates: catalog.data?.templates ?? [],
     });
   };
 
@@ -362,18 +341,27 @@ export default function PipelinesPage({
                       ) : setup.configFile === 'absent' ? (
                         <span>
                           Not on {branchLabel} yet.{' '}
+                          <Link
+                            href={`/deployments/${projectId}/pipeline`}
+                            className={linkButtonClass}
+                          >
+                            Build it from blocks
+                          </Link>
                           {canEdit && !fileDraft ? (
-                            <button
-                              type="button"
-                              disabled={busy}
-                              onClick={() => void openFile()}
-                              className={linkButtonClass}
-                            >
-                              Start from a template
-                            </button>
-                          ) : null}{' '}
-                          A chat in this project can write one fitted to the code. Runs start once
-                          it is committed and Pipelines is on.
+                            <>
+                              {', or '}
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void openFile()}
+                                className={linkButtonClass}
+                              >
+                                write one by hand
+                              </button>
+                            </>
+                          ) : null}
+                          . A chat in this project can write one fitted to the code too. Runs start
+                          once it is committed and Pipelines is on.
                         </span>
                       ) : (
                         <span className="text-gray-500">Could not be checked.</span>
@@ -390,25 +378,6 @@ export default function PipelinesPage({
                     aria-label="Pipeline file"
                     className="mt-3 space-y-2"
                   >
-                    {templates && templates.length > 0 ? (
-                      <label className="block text-xs">
-                        <span className="text-gray-500">Start from a template</span>
-                        <select
-                          value={fileDraft.templateId}
-                          onChange={(event) => {
-                            dispatch({ type: 'templatePicked', templateId: event.target.value });
-                          }}
-                          className={`mt-0.5 ${inputClass}`}
-                        >
-                          <option value="">{templateBlankOption(fileDraft)}</option>
-                          {templates.map((template) => (
-                            <option key={template.id} value={template.id}>
-                              {templateOptionLabel(template)}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    ) : null}
                     <textarea
                       value={fileDraft.text}
                       onChange={(event) =>
@@ -439,8 +408,8 @@ export default function PipelinesPage({
                     </label>
                     <div className="flex items-center justify-end gap-2">
                       <p className="mr-auto text-xs text-gray-500">
-                        Commit goes straight to {branchLabel}, with your Bitbucket access. The
-                        picked template is a starting point; what is in the box is what lands.
+                        Commit goes straight to {branchLabel}, with your Bitbucket access: what is
+                        in the box is what lands.
                       </p>
                       <button
                         type="button"

@@ -1305,16 +1305,6 @@ export interface OperatorSessions {
   subject: string;
 }
 
-export interface PipelineTemplates {
-  body: string;
-  created_at: Generated<Timestamp>;
-  description: string | null;
-  id: Generated<string>;
-  name: string;
-  provider: Generated<string>;
-  updated_at: Generated<Timestamp>;
-}
-
 export interface PrPipelineEvents {
   action_taken: string | null;
   conclusion: string;
@@ -1925,7 +1915,6 @@ export interface DB {
   oidc_role_mappings: OidcRoleMappings;
   operator_sessions: OperatorSessions;
   pending_oidc_signin: PendingOidcSignin;
-  pipeline_templates: PipelineTemplates;
   platform_audit_log: PlatformAuditLog;
   platform_settings: PlatformSettings;
   pr_pipeline_events: PrPipelineEvents;

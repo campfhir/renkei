@@ -8,8 +8,8 @@
  * The component makes the calls and dispatches what the person did and
  * what the server answered; everything the page decides from that — which
  * variables a save takes away (and the question it asks first), what each
- * request sends, when Commit and Start run can be pressed, what a picked
- * template does to the box, the words under a saved set, how a run's state
+ * request sends, when Commit and Start run can be pressed, the words
+ * under a saved set, how a run's state
  * and duration read — is here, and tested in pipelines-page.model.test.ts.
  */
 
@@ -21,7 +21,6 @@ import type {
   VariablesApplied,
 } from '@/lib/code/bitbucket-pipelines';
 import { renderVariableText } from '@/lib/code/pipeline-variables-text';
-import type { PipelineTemplate } from '@/lib/code/pipeline-templates';
 
 export interface Setup extends PipelineSetup {
   access: {
@@ -45,11 +44,10 @@ export interface Outcome extends Scope, VariablesApplied {
   problems: string[];
 }
 
-/** The pipeline file being written: its text, the commit message, and which template filled it. */
+/** The pipeline file being written: its text and the commit message. */
 export interface FileDraft {
   text: string;
   message: string;
-  templateId: string;
 }
 
 /** The "Run pipeline" form: where, and which pipeline. */
@@ -77,8 +75,6 @@ export interface PipelinesState {
   /** The run just started from here, named until the next start. */
   started: PipelineRun | null;
   fileDraft: FileDraft | null;
-  /** The org's pipeline templates, read the first time the file editor opens. */
-  templates: PipelineTemplate[] | null;
   /** Where the file just committed from here went, until the editor opens again. */
   committed: Committed | null;
 }
@@ -93,7 +89,6 @@ export const initialPipelines: PipelinesState = {
   runDraft: null,
   started: null,
   fileDraft: null,
-  templates: null,
   committed: null,
 };
 
@@ -113,8 +108,7 @@ export type PipelinesAction =
   // The pipeline file
   | { type: 'fileOpening' }
   | { type: 'fileOpenFailed'; error: string }
-  | { type: 'fileOpened'; text: string | null; templates: PipelineTemplate[] }
-  | { type: 'templatePicked'; templateId: string }
+  | { type: 'fileOpened'; text: string | null }
   | { type: 'fileChanged'; field: 'text' | 'message'; value: string }
   | { type: 'fileCancelled' }
   | { type: 'fileCommitted'; committed: Committed | null }
@@ -164,26 +158,12 @@ export function pipelinesReducer(state: PipelinesState, action: PipelinesAction)
       return {
         ...state,
         busy: false,
-        templates: action.templates,
         fileDraft: {
           text: action.text ?? '',
           message:
             action.text === null ? 'Add bitbucket-pipelines.yml' : 'Update bitbucket-pipelines.yml',
-          templateId: '',
         },
       };
-    case 'templatePicked': {
-      if (!state.fileDraft) return state;
-      const template = state.templates?.find((entry) => entry.id === action.templateId);
-      return {
-        ...state,
-        fileDraft: {
-          ...state.fileDraft,
-          templateId: action.templateId,
-          ...(template ? { text: template.body } : {}),
-        },
-      };
-    }
     case 'fileChanged':
       return state.fileDraft
         ? { ...state, fileDraft: { ...state.fileDraft, [action.field]: action.value } }
@@ -336,16 +316,6 @@ export function canCommit(state: PipelinesState): boolean {
 /** What Commit sends: the box as it is, and the message trimmed. */
 export function fileRequest(draft: FileDraft): { text: string; message: string } {
   return { text: draft.text, message: draft.message.trim() };
-}
-
-/** The template picker's empty choice: keep the text when there is some, else ask for a pick. */
-export function templateBlankOption(draft: FileDraft): string {
-  return draft.text ? 'Keep what is here' : 'Pick a template…';
-}
-
-/** A template as the picker lists it. */
-export function templateOptionLabel(template: PipelineTemplate): string {
-  return `${template.name}${template.description ? ` — ${template.description}` : ''}`;
 }
 
 /** The status after a commit, past the link: a reminder when Pipelines is off. */

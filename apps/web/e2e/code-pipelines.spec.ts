@@ -17,8 +17,7 @@
  * pipeline-variable scopes the page stands on: e2e/support/code-host.ts),
  * so no two tests share state.
  *
- * Where its rules went: what a template does to the file box, the commit
- * and run requests and when they can be sent, which variables a save
+ * Where its rules went: the file box, the commit and run requests and when they can be sent, which variables a save
  * takes away and the question it asks, the words under a saved set, how a
  * run's state and duration read — app/(app)/deployments/_components/
  * pipelines-page.model.test.ts.
@@ -48,36 +47,11 @@ interface Ids {
 }
 
 /**
- * What migration 122 seeds for a real organization, in short. The
- * in-memory store starts from the schema alone, so an operator adds them
- * through the catalog's own route when they are missing (and they stay).
- */
-const SEED_PIPELINE_TEMPLATES = [
-  {
-    name: 'Node with pnpm',
-    description: 'Install with pnpm, then lint, typecheck and test on every push.',
-    body: 'image: node:22\n\npipelines:\n  default:\n    - step:\n        script:\n          - pnpm install --frozen-lockfile\n          - pnpm test\n',
-  },
-  {
-    name: 'Bare skeleton',
-    description: 'One step with one command — the shape of a pipeline, nothing assumed.',
-    body: 'pipelines:\n  default:\n    - step:\n        script:\n          - echo "Replace me"\n',
-  },
-];
-
-/**
- * The catalog's seeded rows, the person's Bitbucket connection, and a
+ * The person's Bitbucket connection, and a
  * project on a repository of its own. The repository must be one the
  * stub's pipelines answer for (`acme/pipelines-demo-*`).
  */
 async function stage(page: Page, testInfo: TestInfo): Promise<Ids> {
-  for (const template of SEED_PIPELINE_TEMPLATES) {
-    const added = await page.request.post('/api/admin/pipeline-templates', {
-      data: { provider: 'atlassian-bitbucket', ...template },
-    });
-    // 409: already there, from an earlier test.
-    expect([201, 409], await added.text()).toContain(added.status());
-  }
   const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
   const name = `Pipelines demo (${tag})`;
   const repo = `acme/pipelines-demo-${tag}`;
@@ -190,6 +164,12 @@ test.describe('Code project pipelines', () => {
     await expect(setup.getByText('Off', { exact: true })).toBeVisible();
     await expect(setup.getByText(/Not on main yet\./)).toBeVisible();
     await expect(setup.getByText(/A chat in this project can write one/)).toBeVisible();
+    // No file yet: build one from blocks on the Pipeline tab, or write it by hand.
+    await expect(setup.getByRole('link', { name: 'Build it from blocks' })).toHaveAttribute(
+      'href',
+      `/deployments/${ids.projectId}/pipeline`
+    );
+    await expect(setup.getByRole('button', { name: 'write one by hand' })).toBeVisible();
     const repositoryVariables = main.getByRole('region', { name: 'Repository variables' });
     const production = main.getByRole('region', { name: 'Production' });
     await expect(repositoryVariables.getByText('No variables.')).toBeVisible();
@@ -235,7 +215,7 @@ test.describe('Code project pipelines', () => {
     await ok(
       page.request.put(`${api}/config-file`, {
         data: {
-          text: SEED_PIPELINE_TEMPLATES[0]!.body,
+          text: 'image: node:22\n\npipelines:\n  default:\n    - step:\n        script:\n          - npm test\n',
           message: 'Add bitbucket-pipelines.yml',
         },
       })
@@ -300,39 +280,6 @@ test.describe('Code project pipelines', () => {
     await shot('code-pipelines-mobile.png');
   });
 
-  test('the admin catalog: seeded rows, one added, edited and deleted', async ({
-    page,
-  }, _testInfo) => {
-    const name = `Playwright pipeline template (${ids.tag})`;
-    await page.goto(`/admin/pipeline-templates`);
-    await expect(page.getByRole('heading', { level: 1, name: 'Pipeline templates' })).toBeVisible({
-      timeout: 30_000,
-    });
-    const main = page.getByRole('main');
-    await expect(main.getByText('Node with pnpm', { exact: true })).toBeVisible();
-    await expect(main.getByText('Bare skeleton', { exact: true })).toBeVisible();
-
-    await main.getByRole('button', { name: '+ New template' }).click();
-    await main.getByLabel('Name', { exact: true }).fill(name);
-    await main.getByLabel(/^Description/).fill('Made by the browser suite.');
-    await main
-      .getByLabel('bitbucket-pipelines.yml')
-      .fill('pipelines:\n  default:\n    - step:\n        script:\n          - make test\n');
-    await main.getByRole('button', { name: 'Create template' }).click();
-    const row = main.getByRole('listitem').filter({ hasText: name });
-    await expect(row).toBeVisible();
-    await expect(row.getByText('Made by the browser suite.')).toBeVisible();
-
-    await row.getByRole('button', { name: 'Edit' }).click();
-    await expect(main.getByLabel('bitbucket-pipelines.yml')).toHaveValue(/make test/);
-    await main.getByLabel(/^Description/).fill('Edited by the browser suite.');
-    await main.getByRole('button', { name: 'Save template' }).click();
-    await expect(row.getByText('Edited by the browser suite.')).toBeVisible();
-
-    await row.getByRole('button', { name: 'Delete' }).click();
-    await expect(row).toHaveCount(0);
-    await expect(main.getByText('Node with pnpm', { exact: true })).toBeVisible();
-  });
   test('a code chat’s overflow menu opens the project’s runs and variables in a new tab', async ({
     page,
   }) => {

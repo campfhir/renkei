@@ -94,9 +94,6 @@ describe('writing a workflow file', () => {
         type: 'fileOpened',
         name,
         text,
-        templates: [
-          { id: 't1', provider: 'github', name: 'Node', description: null, body: 'on: push' },
-        ],
       },
     ]);
 
@@ -107,7 +104,6 @@ describe('writing a workflow file', () => {
       name: 'ci.yml',
       text: 'on: pull_request',
       message: 'Update ci.yml',
-      templateId: '',
     });
   });
 
@@ -136,11 +132,10 @@ describe('writing a workflow file', () => {
     expect(commitMessageFor('nope')).toBe('Add a workflow');
   });
 
-  it('a picked template fills the box, and Commit sends the box as it is', () => {
+  it('Commit sends the box as it is, the name and message trimmed', () => {
     let state = opened(null, null);
     state = fold(
       [
-        { type: 'templatePicked', templateId: 't1' },
         { type: 'fileChanged', field: 'name', value: ' ci.yml ' },
         { type: 'fileChanged', field: 'message', value: '  Add CI  ' },
         { type: 'fileChanged', field: 'text', value: 'on: push\njobs: {}' },
@@ -164,7 +159,7 @@ describe('writing a workflow file', () => {
 
   it('names a taken or unusable file name, and nothing while the name is empty', () => {
     const files = setup().workflows!;
-    const draft = (name: string) => ({ isNew: true, name, text: '', message: '', templateId: '' });
+    const draft = (name: string) => ({ isNew: true, name, text: '', message: '' });
     expect(workflowNameProblem(draft(''), files)).toBeNull();
     expect(workflowNameProblem(draft('CI.yml'), files)).toMatch(/already a workflow/);
     expect(workflowNameProblem(draft('x'), files)).toMatch(/ending .yml or .yaml/);
@@ -174,7 +169,7 @@ describe('writing a workflow file', () => {
 
   it('a commit closes the editor and says where it went', () => {
     const state = fold([
-      { type: 'fileOpened', name: 'ci.yml', text: 'x', templates: [] },
+      { type: 'fileOpened', name: 'ci.yml', text: 'x' },
       { type: 'sent', what: 'file' },
       {
         type: 'fileCommitted',

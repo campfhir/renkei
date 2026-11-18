@@ -15,7 +15,6 @@
 import type { PipelineVariable } from '@/lib/code/bitbucket-pipelines';
 import type { ActionsSetup, WorkflowFile } from '@/lib/code/github-actions';
 import { renderVariableText } from '@/lib/code/pipeline-variables-text';
-import type { PipelineTemplate } from '@/lib/code/pipeline-templates';
 import { workflowFileName } from '@/lib/code/workflow-file-name';
 import type { Committed, Draft, Outcome, Scope } from './pipelines-page.model';
 
@@ -26,14 +25,13 @@ export interface ActionsPageSetup extends ActionsSetup {
   };
 }
 
-/** The workflow file being written: its name, text, commit message, and which template filled it. */
+/** The workflow file being written: its name, text and commit message. */
 export interface WorkflowDraft {
   /** True for a file that is not on the branch yet: its name is still the person's to set. */
   isNew: boolean;
   name: string;
   text: string;
   message: string;
-  templateId: string;
 }
 
 export interface ActionsState {
@@ -44,7 +42,6 @@ export interface ActionsState {
   draft: Draft | null;
   outcome: Outcome | null;
   fileDraft: WorkflowDraft | null;
-  templates: PipelineTemplate[] | null;
   committed: (Committed & { name: string }) | null;
 }
 
@@ -56,7 +53,6 @@ export const initialActions: ActionsState = {
   draft: null,
   outcome: null,
   fileDraft: null,
-  templates: null,
   committed: null,
 };
 
@@ -77,9 +73,7 @@ export type ActionsAction =
       /** The file's name, or null for a new one. */
       name: string | null;
       text: string | null;
-      templates: PipelineTemplate[];
     }
-  | { type: 'templatePicked'; templateId: string }
   | { type: 'fileChanged'; field: 'name' | 'text' | 'message'; value: string }
   | { type: 'fileCancelled' }
   | { type: 'fileCommitted'; committed: (Committed & { name: string }) | null };
@@ -122,27 +116,13 @@ export function actionsReducer(state: ActionsState, action: ActionsAction): Acti
       return {
         ...state,
         busy: false,
-        templates: action.templates,
         fileDraft: {
           isNew: action.name === null,
           name: action.name ?? '',
           text: action.text ?? '',
           message: action.name === null ? 'Add a workflow' : `Update ${action.name}`,
-          templateId: '',
         },
       };
-    case 'templatePicked': {
-      if (!state.fileDraft) return state;
-      const template = state.templates?.find((entry) => entry.id === action.templateId);
-      return {
-        ...state,
-        fileDraft: {
-          ...state.fileDraft,
-          templateId: action.templateId,
-          ...(template ? { text: template.body } : {}),
-        },
-      };
-    }
     case 'fileChanged': {
       if (!state.fileDraft) return state;
       const next = { ...state.fileDraft, [action.field]: action.value };

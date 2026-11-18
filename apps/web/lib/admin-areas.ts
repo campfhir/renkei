@@ -88,12 +88,6 @@ export function adminSections(): AdminSection[] {
           detail: 'The starting instructions offered when someone creates a code project.',
         },
         {
-          href: `${admin}/pipeline-templates`,
-          label: 'Pipeline templates',
-          detail:
-            'The starting pipeline files offered on a code project’s Runs & variables tab, under Deployments, when its repository has none.',
-        },
-        {
           href: `${admin}/code-services`,
           label: 'Code services',
           detail:

@@ -79,6 +79,12 @@ export const CHANGELOG: ChangelogRelease[] = [
         detail:
           'A code project’s pipeline, its Bitbucket Pipelines or GitHub Actions runs and its variables are now tabs of its app under Deployments, beside what it deployed where. The project page links there, a code chat’s More menu opens it in a new tab, and old links still land in the right place.',
       },
+      {
+        kind: 'changed',
+        title: 'Pipeline templates are gone',
+        detail:
+          'The organization’s catalog of starting pipeline files, and its page in Organization settings, are removed: build a project’s pipeline from building blocks on its Pipeline tab instead, or write the file by hand on the Runs & variables tab.',
+      },
     ],
   },
   {

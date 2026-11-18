@@ -306,11 +306,10 @@ and logs are), a way to start one (a branch or tag, optionally a named
 custom pipeline; `runs/route.ts`, on `pipeline:write` exactly as the
 chat's `bitbucket_trigger_pipeline` is), whether Bitbucket runs pipelines for the repository at
 all, whether a `bitbucket-pipelines.yml` is on the project's branch —
-and when there is none, an editor that starts one from the org's
-**pipeline templates** (`pipeline_templates`, migration 122, seeded with
-Node/pnpm, Node/npm, Python and a bare skeleton; operators rename,
-rewrite or delete them at `/admin/pipeline-templates`, the
-project-templates idiom) and commits it to the branch with the person's
+and when there is none, a link to the Pipeline tab, which builds one
+from the organization's building blocks and opens a pull request, or an
+editor to write one by hand (the pipeline templates that once seeded it
+were dropped in migration 187), which commits it to the branch with the person's
 own grant over `config-file/route.ts`, on `repository:write` as a code
 project's pushes are; the file there is edited the same way — and
 the variables the runs get — the repository's own and each deployment

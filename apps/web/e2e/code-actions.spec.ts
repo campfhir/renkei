@@ -123,8 +123,12 @@ test.describe('Code project Actions', () => {
     ).toBeVisible();
     await expect(page.getByText('nope')).toHaveCount(0);
 
-    // ── A workflow file, started blank and committed ──
-    await setup.getByRole('button', { name: 'Start from a template' }).click();
+    // ── A workflow file, written by hand and committed (or built from blocks) ──
+    await expect(setup.getByRole('link', { name: 'Build one from blocks' })).toHaveAttribute(
+      'href',
+      `/deployments/${ids.projectId}/pipeline`
+    );
+    await setup.getByRole('button', { name: 'or write one by hand' }).click();
     const file = setup.getByRole('form', { name: 'Workflow file' });
     await expect(file.getByRole('button', { name: 'Commit' })).toBeDisabled();
     await file.getByLabel('File name').fill('ci.yml');
