@@ -672,7 +672,7 @@ RUN python3 -m venv /opt/sandbox-python && \
 ARG TS_LANGUAGE_SERVER_VERSION=6.0.0
 ARG TYPESCRIPT_VERSION=5.9.3
 ARG PYRIGHT_VERSION=1.1.414
-ARG GO_VERSION=1.27.3
+ARG GO_VERSION=1.27.4
 ARG GOPLS_VERSION=v0.23.0
 # gopls is built here rather than installed as released: its release pins
 # golang.org/x/mod and golang.org/x/text at versions with open advisories
