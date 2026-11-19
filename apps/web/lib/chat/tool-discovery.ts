@@ -171,7 +171,7 @@ export function findToolsTool(
       if (options.unavailable) return errorResult(UNAVAILABLE);
       if (discoverable.length === 0) return errorResult(NOTHING_TO_FIND);
       const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-      const scored = discoverable
+      const all = discoverable
         .map((entry) => ({
           entry,
           score: scoreOf(
@@ -185,8 +185,14 @@ export function findToolsTool(
           ),
         }))
         .filter((row) => row.score > 0)
-        .sort((a, b) => b.score - a.score || a.entry.def.name.localeCompare(b.entry.def.name))
-        .slice(0, MAX_MATCHES);
+        .sort((a, b) => b.score - a.score || a.entry.def.name.localeCompare(b.entry.def.name));
+      // Past the cap, the rest are NAMED, not dropped. A broad query
+      // ("sharepoint list") can match more tools than fit, and a cut that
+      // fell silently left the model sure a tool did not exist — it offered
+      // to delete and re-add 26 list rows because the update tool sorted
+      // past the cut. Names alone are cheap; a search by one makes it callable.
+      const overflow = all.slice(MAX_MATCHES).map((row) => row.entry.def.name);
+      const scored = all.slice(0, MAX_MATCHES);
       if (scored.length === 0) {
         return errorResult(
           `No tools matched "${query}". Enabled connectors: ${summary}. Try different words, or search by connector name.`
@@ -212,7 +218,11 @@ export function findToolsTool(
               const params = summarizeInputSchema(tool.inputSchema);
               return matchLine(tool) + (params ? `\n  Parameters: ${params}` : '');
             })
-            .join('\n'),
+            .join('\n') +
+          (overflow.length > 0
+            ? `\n\n${overflow.length} more tool(s) matched but are not callable yet — search for ` +
+              `one by its exact name to use it: ${overflow.join(', ')}.`
+            : ''),
         { discoveredTools: matches }
       );
     },

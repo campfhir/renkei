@@ -1113,6 +1113,199 @@ describe('sharepoint list schema tools', () => {
   });
 });
 
+describe('people in sharepoint list columns', () => {
+  const SITE = 'https://contoso.sharepoint.com/sites/eng';
+  const LIST_ID = '11111111-2222-4333-8444-555555555555';
+  const USERS = '/lists/User%20Information%20List/items';
+  const siteRoute = {
+    match: '/sites/contoso.sharepoint.com:',
+    body: { id: 'site-1', displayName: 'Eng' },
+  };
+  const listsRoute = {
+    match: '/sites/site-1/lists?',
+    body: {
+      value: [
+        {
+          id: LIST_ID,
+          displayName: 'Projects',
+          webUrl: `${SITE}/Lists/Projects`,
+          list: { template: 'genericList' },
+        },
+      ],
+    },
+  };
+  const columnsRoute = {
+    match: `/lists/${LIST_ID}/columns`,
+    body: {
+      value: [
+        { name: 'Title', text: {} },
+        { name: 'ProjectManager', displayName: 'Project Manager', personOrGroup: {} },
+        { name: 'Author', displayName: 'Created By', personOrGroup: {}, readOnly: true },
+        { name: 'Client', displayName: 'Client', lookup: {} },
+      ],
+    },
+  };
+  const person = (id: string, name: string, email: string) => ({
+    match: `${USERS}/${id}?`,
+    body: { id, fields: { Title: name, EMail: email } },
+  });
+
+  it('finds the signed-in person’s number on the site from "me"', async () => {
+    routes = [
+      siteRoute,
+      {
+        match: USERS,
+        body: { value: [{ id: '18', fields: { Title: 'Alice', EMail: 'alice@example.com' } }] },
+      },
+    ];
+    const tools = await toolsOf(registerSharePointTools);
+
+    const text = textOf(
+      await tools.get('sharepoint_find_site_user')!({ site: SITE, person: 'me' })
+    );
+
+    // "me" is the grant's own address, looked up by exact email.
+    const call = requests.find((request) => request.url.includes(USERS))!;
+    expect(new URL(call.url).searchParams.get('$filter')).toBe(
+      "fields/EMail eq 'alice@example.com'"
+    );
+    expect(text).toContain('Alice <alice@example.com>');
+    expect(text).toContain('lookupId: 18');
+  });
+
+  it('says a person not yet on the site cannot be set, rather than offering another number', async () => {
+    routes = [siteRoute, { match: USERS, body: { value: [] } }];
+    const tools = await toolsOf(registerSharePointTools);
+
+    const result = (await tools.get('sharepoint_find_site_user')!({
+      site: SITE,
+      person: "o'brien@example.com",
+    })) as { content: { text: string }[]; isError?: boolean };
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('not yet in Eng');
+    // Exact email first, then the login name, quotes escaped for OData.
+    const filters = requests
+      .filter((request) => request.url.includes(USERS))
+      .map((request) => new URL(request.url).searchParams.get('$filter'));
+    expect(filters).toEqual([
+      "fields/EMail eq 'o''brien@example.com'",
+      "fields/UserName eq 'o''brien@example.com'",
+    ]);
+  });
+
+  it('asks which person when a name matches several', async () => {
+    routes = [
+      siteRoute,
+      {
+        match: USERS,
+        body: {
+          value: [
+            { id: '14', fields: { Title: 'Bryan Smith', EMail: 'bryan@example.com' } },
+            { id: '22', fields: { Title: 'Bryan Ortiz', EMail: 'bortiz@example.com' } },
+          ],
+        },
+      },
+    ];
+    const tools = await toolsOf(registerSharePointTools);
+
+    const text = textOf(
+      await tools.get('sharepoint_find_site_user')!({ site: SITE, person: 'Bryan' })
+    );
+
+    expect(text).toContain('2 people on Eng match "Bryan" — ask which one');
+    const call = requests.find((request) => request.url.includes(USERS))!;
+    expect(new URL(call.url).searchParams.get('$filter')).toBe("startswith(fields/Title,'Bryan')");
+  });
+
+  it('names the person beside every person-column number an item list shows', async () => {
+    routes = [
+      siteRoute,
+      columnsRoute,
+      person('14', 'Bryan Smith', 'bryan@example.com'),
+      person('18', 'Alice', 'alice@example.com'),
+      {
+        match: `/lists/${LIST_ID}/items?`,
+        body: {
+          value: [
+            {
+              id: '93',
+              fields: {
+                Title: 'Rollout',
+                ProjectManagerLookupId: '14',
+                AuthorLookupId: '18',
+                ClientLookupId: '5',
+              },
+            },
+          ],
+        },
+      },
+      listsRoute,
+    ];
+    const tools = await toolsOf(registerSharePointTools);
+
+    const text = textOf(
+      await tools.get('sharepoint_list_items')!({ site: SITE, list: 'Projects' })
+    );
+
+    expect(text).toContain('ProjectManagerLookupId: 14 (Bryan Smith <bryan@example.com>)');
+    expect(text).toContain('AuthorLookupId: 18 (Alice <alice@example.com>)');
+    // A lookup to another list is not a person, and is left as it is.
+    expect(text).toContain('ClientLookupId: 5\n');
+    expect(requests.some((request) => request.url.includes(`${USERS}/5`))).toBe(false);
+  });
+
+  it('names the people on a single item too', async () => {
+    routes = [
+      siteRoute,
+      columnsRoute,
+      person('14', 'Bryan Smith', 'bryan@example.com'),
+      {
+        match: `/lists/${LIST_ID}/items/93`,
+        body: { id: '93', fields: { Title: 'Rollout', ProjectManagerLookupId: '14' } },
+      },
+      listsRoute,
+    ];
+    const tools = await toolsOf(registerSharePointTools);
+
+    const text = textOf(
+      await tools.get('sharepoint_get_list_item')!({ site: SITE, list: 'Projects', itemId: '93' })
+    );
+
+    expect(text).toContain('ProjectManagerLookupId: 14 (Bryan Smith <bryan@example.com>)');
+  });
+
+  it('looks nothing up when no item carries a lookup', async () => {
+    routes = [
+      siteRoute,
+      {
+        match: `/lists/${LIST_ID}/items?`,
+        body: { value: [{ id: '1', fields: { Title: 'Plain' } }] },
+      },
+      listsRoute,
+    ];
+    const tools = await toolsOf(registerSharePointTools);
+
+    await tools.get('sharepoint_list_items')!({ site: SITE, list: 'Projects' });
+
+    expect(requests.some((request) => request.url.includes('/columns'))).toBe(false);
+    expect(requests.some((request) => request.url.includes(USERS))).toBe(false);
+  });
+
+  it('shows how a person column is written when describing the list', async () => {
+    routes = [siteRoute, columnsRoute, listsRoute];
+    const tools = await toolsOf(registerSharePointTools);
+
+    const text = textOf(await tools.get('sharepoint_get_list')!({ site: SITE, list: 'Projects' }));
+
+    expect(text).toContain(
+      'write as ProjectManagerLookupId: the number sharepoint_find_site_user gives'
+    );
+    // Created By is read-only: no write hint.
+    expect(text).not.toContain('write as AuthorLookupId');
+  });
+});
+
 describe('scope maps', () => {
   /**
    * Every registered tool must appear in its namespace's switch. A missing
@@ -1163,7 +1356,12 @@ describe('scope maps', () => {
     ]) {
       expect(sharepointScopeFor(name)).toEqual(['Sites.Manage.All']);
     }
-    for (const name of ['sharepoint_list_lists', 'sharepoint_get_list', 'sharepoint_list_items']) {
+    for (const name of [
+      'sharepoint_list_lists',
+      'sharepoint_get_list',
+      'sharepoint_list_items',
+      'sharepoint_find_site_user',
+    ]) {
       expect(sharepointScopeFor(name)).toEqual(['Sites.Read.All']);
     }
   });

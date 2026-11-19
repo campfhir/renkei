@@ -47,6 +47,13 @@ import {
   errText,
 } from '../graph/client';
 import { resolveSite } from '../graph/resolve';
+import {
+  labelPeople,
+  personColumnsOf,
+  personIdsIn,
+  siteUsersById,
+  type SiteUser,
+} from './site-users';
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -183,15 +190,39 @@ export function shownFields(fields: Record<string, unknown>): [string, unknown][
   );
 }
 
-function itemLines(item: Record<string, unknown>): string {
+function itemLines(
+  item: Record<string, unknown>,
+  personColumns: Set<string>,
+  users: Map<string, SiteUser>
+): string {
   const fields = rec(item.fields);
   const title = str(fields.Title) || '(untitled)';
   const rest = shownFields(fields)
     .filter(([key]) => key !== 'Title' && key !== 'id')
-    .map(
-      ([key, value]) => `    ${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`
-    );
+    .map(([key, value]) => `    ${key}: ${labelPeople(key, value, personColumns, users)}`);
   return [`${title}`, `    itemId: ${str(item.id)}`, ...rest].join('\n');
+}
+
+/**
+ * The people behind the person columns in these items, so an answer never
+ * shows a bare site number (see site-users.ts for why that mattered).
+ * Costs nothing when no item carries one.
+ */
+async function peopleIn(
+  context: GraphCallContext,
+  auth: AuthedFetch,
+  list: ListRef,
+  itemsFields: Record<string, unknown>[]
+): Promise<{ personColumns: Set<string>; users: Map<string, SiteUser> }> {
+  const empty = { personColumns: new Set<string>(), users: new Map<string, SiteUser>() };
+  const anyLookup = itemsFields.some((fields) =>
+    Object.keys(fields).some((key) => key.endsWith('LookupId'))
+  );
+  if (!anyLookup) return empty;
+  const personColumns = await personColumnsOf(context, auth, list.siteId, list.listId);
+  const ids = personIdsIn(itemsFields, personColumns);
+  if (ids.length === 0) return { ...empty, personColumns };
+  return { personColumns, users: await siteUsersById(context, auth, list.siteId, ids) };
 }
 
 /** Name the column's type from whichever type facet it carries. */
@@ -359,7 +390,10 @@ export function registerListTools(
           : '';
         return (
           `${str(column.displayName)} (${columnType(column)}${flags.length ? `, ${flags.join(', ')}` : ''})\n` +
-          `    internal name: ${str(column.name)}${choices}`
+          `    internal name: ${str(column.name)}${choices}` +
+          (column.personOrGroup !== undefined && column.readOnly !== true
+            ? `\n    write as ${str(column.name)}LookupId: the number sharepoint_find_site_user gives`
+            : '')
         );
       });
       const header =
@@ -467,10 +501,16 @@ export function registerListTools(
             : `${list.name} is empty.`
         );
       }
+      const people = await peopleIn(
+        context,
+        access.auth,
+        list,
+        items.map((item) => rec(item.fields))
+      );
       return textResult(
         withPresentationHint(
           `${list.name} — ${items.length} item(s)${next ? ' (more remain)' : ''}\n\n` +
-            items.map(itemLines).join('\n') +
+            items.map((item) => itemLines(item, people.personColumns, people.users)).join('\n') +
             (next ? `\n\npageToken: ${next}` : ''),
           'Render as a table of items, one row each, with the columns shown.'
         )
@@ -505,8 +545,9 @@ export function registerListTools(
       if (!found.ok) return errText(found.error);
 
       const fields = rec(found.body.fields);
+      const people = await peopleIn(context, access.auth, list, [fields]);
       const lines = shownFields(fields).map(
-        ([key, value]) => `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`
+        ([key, value]) => `${key}: ${labelPeople(key, value, people.personColumns, people.users)}`
       );
       return textResult(
         withPresentationHint(
@@ -525,7 +566,9 @@ export function registerListTools(
       description:
         'Add a row to a SharePoint list. Keys are INTERNAL column names from sharepoint_get_list ' +
         '(display names will not work); most lists require Title. A choice column takes one of its ' +
-        'listed choices; a person or lookup column takes the id under its …LookupId name.',
+        'listed choices. A person column is written as {Column}LookupId with the number ' +
+        'sharepoint_find_site_user gives for that person on this site — never a number read off ' +
+        'another row, which is someone else.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         ...listFields,
@@ -570,7 +613,8 @@ export function registerListTools(
       description:
         'Set column values on an existing SharePoint list item; columns not named keep their ' +
         'values. Keys are INTERNAL column names from sharepoint_get_list. Read-only and computed ' +
-        'columns are refused by SharePoint.',
+        'columns are refused by SharePoint. A person column is written as {Column}LookupId with ' +
+        'the number sharepoint_find_site_user gives for that person on this site.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         ...listFields,
@@ -613,7 +657,8 @@ export function registerListTools(
       title: 'SharePoint · Act — Delete a list item',
       description:
         'Delete one item from a SharePoint list. It goes to the site’s recycle bin, where a site ' +
-        'owner can restore it.',
+        'owner can restore it. To correct an item’s values, use sharepoint_update_list_item ' +
+        'instead: deleting and re-adding gives it a new itemId and loses its history.',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: z.object({
         ...listFields,
