@@ -47,10 +47,13 @@ export {
 export {
   HOST_LABEL,
   MAX_ENVIRONMENTS,
+  MAX_PROJECT_BLOCKS,
   MAX_STEPS,
   PIPELINE_FILE,
+  blockOfStep,
   partName,
   pipelineChecks,
+  readProjectBlocks,
   readPipelineSpec,
   renderPipeline,
   suggestPipeline,
@@ -64,6 +67,7 @@ export {
   type PipelineEnvironment,
   type PipelineSpec,
   type PipelineStep,
+  type ProjectBlock,
   type Suggestion,
 } from './pipeline';
 export { REPORT_PATH, reportCommand, type ReportStatus, type ReportTo } from './report';

@@ -21,6 +21,7 @@ import ThemeScript from '@/components/theme-script';
 import ThemeSync from '@/components/theme-sync';
 import { CodeLineNumbersProvider } from '@/components/code-display-context';
 import { UploadQueueProvider } from '@/components/uploads/upload-queue';
+import { AssistantDockProvider } from '@/components/assistant-dock/assistant-dock';
 import { getVersionInfo } from '@/lib/version-info';
 import { countChangesAwaitingReview } from '@/lib/admin-changes/sources';
 import { getDataStore } from '@renkei/db';
@@ -144,42 +145,47 @@ export default async function TenantLayout({ children }: { children: ReactNode }
             the queue sits above every page so a navigation inside the app
             leaves them running. */}
         <UploadQueueProvider>
-        <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-black dark:text-gray-100">
-          {/* The person's encryption key, kept connected from this browser
+          <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-black dark:text-gray-100">
+            {/* The person's encryption key, kept connected from this browser
               (docs/delegate-key-design.md); its banners sit above the nav. */}
-          <KeyGuard />
-          {/* The nav frames the page: it owns the <main> so the menu column can
+            <KeyGuard />
+            {/* The nav frames the page: it owns the <main> so the menu column can
               stand beside it on a wide screen. */}
-          {/* The coach marks wrap the nav AND the page: a tour spotlights
+            {/* The coach marks wrap the nav AND the page: a tour spotlights
               both, and walks across pages without unmounting. */}
-          <CoachMarkProvider
-            isOperator={isOperator}
-            enabled={coachMarksEnabled}
-            autoStart={coachMarks.autoStart}
-            progress={coachMarkProgress}
-          >
-            <AppNav
-              userName={userName}
-              userEmail={identity?.email ?? null}
+            <CoachMarkProvider
               isOperator={isOperator}
-              chats={chats}
-              version={version}
-              pendingChanges={pendingChanges}
-              fabricConnected={fabricConnected}
+              enabled={coachMarksEnabled}
+              autoStart={coachMarks.autoStart}
+              progress={coachMarkProgress}
             >
-              {children}
-            </AppNav>
-          </CoachMarkProvider>
-          <NotificationCorner
-            corner={prefs?.toastCorner ?? 'bottom-right'}
-            toastsEnabled={prefs?.toastsEnabled ?? false}
-          />
-          {/* Renders nothing — it only turns arrivals into OS banners while the
+              {/* A page's assistant floats above everything, in one dock
+                (components/assistant-dock); it draws only while a page
+                has put one in it. */}
+              <AssistantDockProvider>
+                <AppNav
+                  userName={userName}
+                  userEmail={identity?.email ?? null}
+                  isOperator={isOperator}
+                  chats={chats}
+                  version={version}
+                  pendingChanges={pendingChanges}
+                  fabricConnected={fabricConnected}
+                >
+                  {children}
+                </AppNav>
+              </AssistantDockProvider>
+            </CoachMarkProvider>
+            <NotificationCorner
+              corner={prefs?.toastCorner ?? 'bottom-right'}
+              toastsEnabled={prefs?.toastsEnabled ?? false}
+            />
+            {/* Renders nothing — it only turns arrivals into OS banners while the
               tab is in the background, and only for somebody whose browser has
               granted permission. The opt-in it checks lives in this browser's
               localStorage, not here — see desktop-notifications.tsx. */}
-          <DesktopNotifications />
-        </div>
+            <DesktopNotifications />
+          </div>
         </UploadQueueProvider>
       </NotificationCenter>
     </CodeLineNumbersProvider>

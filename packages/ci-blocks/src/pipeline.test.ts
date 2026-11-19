@@ -329,3 +329,95 @@ describe('a first pipeline', () => {
     });
   });
 });
+
+describe('blocks of the project’s own', () => {
+  const ownDeploy = {
+    key: 'deploy-sync-worker',
+    name: 'Deploy sync-worker',
+    description: 'Restarts the unit and checks /health.',
+    version: 2,
+    definition: {
+      ...systemd,
+      inputs: [],
+      commands: 'sudo systemctl restart sync-worker # ${env}\ncurl -fsS localhost:8080/health',
+    },
+  };
+  const tailored: PipelineSpec = {
+    checks: [build],
+    environments: [
+      {
+        name: 'production',
+        branch: 'main',
+        steps: [
+          build,
+          { block: 'deploy-sync-worker', version: 2, inputs: {}, target: 'onprem-workers' },
+        ],
+      },
+    ],
+    blocks: [ownDeploy],
+  };
+
+  it('are kept with the pipeline, read whole, and left out when there are none', () => {
+    expect(readPipelineSpec(tailored)).toEqual({ ok: true, value: tailored });
+    const none = readPipelineSpec({ ...spec, blocks: [] });
+    expect(none.ok && 'blocks' in none.value).toBe(false);
+    const bad = readPipelineSpec({
+      ...spec,
+      blocks: [
+        { key: 'Bad', name: 'Bad', version: 1, definition: systemd },
+        { key: 'half', name: 'Half done', version: 1, definition: { ...systemd, commands: '' } },
+        ownDeploy,
+        { ...ownDeploy, name: 'Again' },
+      ],
+    });
+    expect(bad.ok ? [] : bad.errors).toEqual([
+      'Bad needs a key: lower case letters, digits and -, starting with a letter.',
+      'Half done: The block needs at least one command.',
+      'The project has two blocks keyed deploy-sync-worker.',
+    ]);
+  });
+
+  it('render in place of the organization’s, marked as the project’s own, whatever version the step names', () => {
+    const rendered = renderPipeline(
+      {
+        ...tailored,
+        environments: [
+          {
+            ...tailored.environments[0],
+            steps: [
+              build,
+              { block: 'deploy-sync-worker', version: 1, inputs: {}, target: 'onprem-workers' },
+            ],
+          },
+        ],
+      },
+      context('bitbucket')
+    );
+    if (!rendered.ok) throw new Error(rendered.errors.join('\n'));
+    expect(rendered.value).toContain('curl -fsS localhost:8080/health');
+    expect(rendered.value).toContain(
+      '# block: deploy-sync-worker@v2, this project’s own, target onprem-workers'
+    );
+  });
+
+  it('are checked like any block, and never offered a newer published version', () => {
+    const shadow: PipelineSpec = {
+      checks: [{ block: 'go-test-build', version: 2, inputs: {} }],
+      environments: [],
+      blocks: [{ ...ownDeploy, key: 'go-test-build', definition: goBuild }],
+    };
+    const texts = pipelineChecks(shadow, { at, latest }, targets, {
+      host: 'github',
+      branch: 'main',
+      repoVariables: [],
+      environments: [],
+      branches: ['main'],
+      existingFile: null,
+      lastWritten: null,
+    }).map((c) => c.text);
+    expect(texts.some((t) => t.includes('is published'))).toBe(false);
+    expect(texts).toContain(
+      'Every block’s inputs are filled in, and the file is written for GitHub.'
+    );
+  });
+});

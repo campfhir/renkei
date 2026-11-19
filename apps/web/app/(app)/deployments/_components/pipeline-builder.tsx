@@ -8,10 +8,12 @@
  * organization's blocks — on every pull request, then each environment's
  * branch — or the file it writes, the checks before it runs, and Save and
  * "Open a pull request". One column on a phone; the checks beside the rows
- * on a wide screen. What the page decides is pipeline-builder.model.ts.
+ * on a wide screen. Editors get the assistant in the app's floating dock
+ * (components/assistant-dock), which tailors the blocks to the source. What
+ * the page decides is pipeline-builder.model.ts.
  */
 
-import { useCallback, useEffect, useReducer, type Dispatch } from 'react';
+import { useCallback, useEffect, useReducer, useRef, type Dispatch } from 'react';
 import Link from 'next/link';
 import ExternalLink from '@/components/external-link';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
@@ -26,6 +28,7 @@ import {
   fileStatus,
   fileText,
   initialBuilder,
+  ownBlocks,
   partCards,
   pullRequestNote,
   saveRequest,
@@ -36,6 +39,17 @@ import {
   type PartCard,
   type StepCard,
 } from './pipeline-builder.model';
+import { AssistantDockPanel, useAssistantDock } from '@/components/assistant-dock/assistant-dock';
+import PipelineAssistant from './pipeline-assistant';
+import {
+  askRequest,
+  assistantReducer,
+  buildingBlockRequest,
+  initialAssistant,
+  reuseQuestion,
+  type AssistantAnswer,
+  type AssistantMessage,
+} from './pipeline-assistant.model';
 import {
   cardClass,
   inputClass,
@@ -74,11 +88,17 @@ const chip =
 export default function PipelineBuilder({
   projectId,
   host,
+  operator,
 }: {
   projectId: string;
   host: 'bitbucket' | 'github';
+  /** Offers making one of the project's blocks a building block for every project. */
+  operator: boolean;
 }) {
   const [state, dispatch] = useReducer(builderReducer, initialBuilder);
+  const [assistant, assistantDispatch] = useReducer(assistantReducer, initialAssistant);
+  const nextId = useRef(0);
+  const dock = useAssistantDock();
   const url = `/api/code/projects/${projectId}/pipeline-builder`;
 
   const load = useCallback(
@@ -142,8 +162,56 @@ export default function PipelineBuilder({
     );
   };
 
+  const ask = async (text: string) => {
+    if (!state.spec) return;
+    const id = `m${(nextId.current += 1)}`;
+    const asked = assistantReducer(assistant, { type: 'asked', id, text });
+    if (asked === assistant) return;
+    assistantDispatch({ type: 'asked', id, text });
+    const result = await sendJsonFull<AssistantAnswer>(
+      `${url}/assistant`,
+      'POST',
+      askRequest(asked, state.spec)
+    );
+    if (result.error || !result.data) {
+      assistantDispatch({
+        type: 'failed',
+        error: result.error ?? 'The assistant did not answer.',
+      });
+      return;
+    }
+    assistantDispatch({
+      type: 'answered',
+      id: `m${(nextId.current += 1)}`,
+      answer: result.data,
+    });
+  };
+
+  const apply = (message: AssistantMessage) => {
+    if (!message.proposal) return;
+    dispatch({ type: 'applyProposal', spec: message.proposal.spec });
+    assistantDispatch({ type: 'applied', id: message.id });
+  };
+
+  const saveBlock = async (message: AssistantMessage) => {
+    const body = buildingBlockRequest(assistant, message.id);
+    if (!body) return;
+    assistantDispatch({ type: 'savingBlock', id: message.id });
+    const result = await sendJsonFull<{ id?: string }>('/api/admin/ci-blocks', 'POST', body);
+    if (result.error || !result.data?.id) {
+      assistantDispatch({
+        type: 'blockFailed',
+        id: message.id,
+        error: result.error ?? 'The building block was not saved.',
+      });
+      return;
+    }
+    assistantDispatch({ type: 'blockSaved', id: message.id, blockId: result.data.id });
+  };
+
   const data = state.data;
   const hostName = host === 'github' ? 'GitHub' : 'Bitbucket';
+  const blockName = (key: string) => data?.blocks.find((b) => b.key === key)?.name ?? key;
 
   return (
     <div>
@@ -219,6 +287,22 @@ export default function PipelineBuilder({
               </div>
             ) : null}
 
+            {data.canEdit ? (
+              // The assistant floats above the page, in the app's dock.
+              <AssistantDockPanel id="pipeline-assistant" title="Pipeline assistant">
+                <PipelineAssistant
+                  state={assistant}
+                  dispatch={assistantDispatch}
+                  spec={state.spec}
+                  blockName={blockName}
+                  operator={operator}
+                  onAsk={(text) => void ask(text)}
+                  onApply={apply}
+                  onSaveBlock={(message) => void saveBlock(message)}
+                />
+              </AssistantDockPanel>
+            ) : null}
+
             <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
               <div className="min-w-0 space-y-4">
                 <div
@@ -244,7 +328,18 @@ export default function PipelineBuilder({
                   ))}
                 </div>
                 {state.view === 'builder' ? (
-                  <Rows state={state} dispatch={dispatch} />
+                  <>
+                    <Rows state={state} dispatch={dispatch} />
+                    <OwnBlocks
+                      state={state}
+                      operator={operator}
+                      busy={assistant.busy}
+                      onReuse={(block) => {
+                        dock.open();
+                        void ask(reuseQuestion(block));
+                      }}
+                    />
+                  </>
                 ) : (
                   <FileView state={state} />
                 )}
@@ -416,6 +511,11 @@ function StepTile({
     >
       <span className="text-[11px] font-semibold tracking-wide text-gray-500 uppercase">
         {step.kind ? KIND_LABEL[step.kind] : 'Missing'}
+        {step.own ? (
+          <span className="ml-2 normal-case text-violet-700 dark:text-violet-400">
+            this project’s own
+          </span>
+        ) : null}
         {step.newer ? (
           <span className="ml-2 normal-case text-amber-700 dark:text-amber-400">
             v{step.newer} published
@@ -478,6 +578,11 @@ function Picker({
               >
                 <span className="text-[11px] font-semibold text-gray-500 uppercase">
                   {KIND_LABEL[choice.kind]}
+                  {choice.own ? (
+                    <span className="ml-2 normal-case text-violet-700 dark:text-violet-400">
+                      this project’s own
+                    </span>
+                  ) : null}
                 </span>
                 <span className="text-sm font-medium">{choice.name}</span>
                 {choice.description ? (
@@ -669,6 +774,66 @@ function EnvironmentForm({
         </button>
       </div>
     </form>
+  );
+}
+
+/** The blocks the assistant wrote for this project, and making one reusable (operators). */
+function OwnBlocks({
+  state,
+  operator,
+  busy,
+  onReuse,
+}: {
+  state: BuilderState;
+  operator: boolean;
+  busy: boolean;
+  onReuse: (block: { key: string; name: string }) => void;
+}) {
+  const blocks = ownBlocks(state);
+  if (blocks.length === 0) return null;
+  return (
+    <section aria-label="This project’s own blocks" className={`${cardClass} space-y-2`}>
+      <h2 className="text-sm font-semibold">This project’s own blocks</h2>
+      <p className="text-xs text-gray-500">
+        Written for this repository and kept with its pipeline, not in the organization’s building
+        blocks.
+      </p>
+      <ul className="space-y-2">
+        {blocks.map((block) => (
+          <li
+            key={block.key}
+            className="flex flex-wrap items-start gap-x-3 gap-y-1 rounded-md bg-gray-50 p-2 dark:bg-gray-900"
+          >
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">
+                {block.name}{' '}
+                <span className="font-mono text-xs font-normal text-gray-500">
+                  {block.key} · {KIND_LABEL[block.kind]}
+                </span>
+              </p>
+              {block.description ? (
+                <p className="text-xs text-gray-500">{block.description}</p>
+              ) : null}
+              <p className="text-xs text-gray-500">
+                {block.usedIn.length > 0
+                  ? `Used in ${block.usedIn.join(', ')}`
+                  : 'Not used in any row; add it from a row’s picker.'}
+              </p>
+            </div>
+            {operator && state.data?.canEdit ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => onReuse(block)}
+                className={linkButtonClass}
+              >
+                Make it reusable
+              </button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

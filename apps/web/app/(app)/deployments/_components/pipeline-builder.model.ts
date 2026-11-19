@@ -13,6 +13,7 @@
 
 import {
   HOST_LABEL,
+  blockOfStep,
   partName,
   pipelineChecks,
   renderPipeline,
@@ -94,7 +95,9 @@ export type BuilderAction =
   | { type: 'closeEnvironmentForm' }
   | { type: 'addEnvironment' }
   | { type: 'saved' }
-  | { type: 'pullRequestOpened'; url: string; updated: boolean };
+  | { type: 'pullRequestOpened'; url: string; updated: boolean }
+  /** The assistant's pipeline, as the person applied it (pipeline-assistant.tsx). */
+  | { type: 'applyProposal'; spec: PipelineSpec };
 
 export const initialBuilder: BuilderState = {
   data: null,
@@ -113,7 +116,21 @@ export const initialBuilder: BuilderState = {
 
 // ——— editing the spec ———
 
-function latestOf(data: BuilderData, key: string): PipelineBlock | null {
+/** The block to add for a key: the project's own, else the organization's latest. */
+function latestOf(
+  data: BuilderData,
+  key: string,
+  spec?: PipelineSpec | null
+): PipelineBlock | null {
+  const own = spec?.blocks?.find((b) => b.key === key);
+  if (own)
+    return {
+      key: own.key,
+      name: own.name,
+      version: own.version,
+      definition: own.definition,
+      project: true,
+    };
   return data.blocks.filter((b) => b.key === key).sort((a, b) => b.version - a.version)[0] ?? null;
 }
 
@@ -204,7 +221,7 @@ export function builderReducer(state: BuilderState, action: BuilderAction): Buil
       return { ...state, picking: null };
     case 'addStep': {
       if (!data || !spec) return state;
-      const block = latestOf(data, action.block);
+      const block = latestOf(data, action.block, spec);
       const steps = stepsOf(spec, action.part);
       if (!block || !steps) return state;
       const target = block.definition.runsOn.type === 'target' ? defaultTarget(data) : undefined;
@@ -276,7 +293,7 @@ export function builderReducer(state: BuilderState, action: BuilderAction): Buil
         state,
         withStep(spec, action.step, (step) => ({
           ...step,
-          version: latestOf(data, step.block)?.version ?? step.version,
+          version: latestOf(data, step.block, spec)?.version ?? step.version,
         }))
       );
     }
@@ -327,6 +344,16 @@ export function builderReducer(state: BuilderState, action: BuilderAction): Buil
     }
     case 'saved':
       return { ...state, busy: null, saved: spec, notice: 'Pipeline saved.' };
+    case 'applyProposal':
+      return {
+        ...editing(state, action.spec),
+        view: 'builder',
+        selected: null,
+        picking: null,
+        environmentForm: null,
+        notice:
+          'The assistant’s pipeline is in the builder. Check it, then save or open the pull request to keep it.',
+      };
     case 'pullRequestOpened':
       return {
         ...state,
@@ -342,11 +369,16 @@ export function builderReducer(state: BuilderState, action: BuilderAction): Buil
 
 // ——— what the page derives ———
 
+function organizationBlock(data: BuilderData) {
+  return (key: string, version: number) =>
+    data.blocks.find((b) => b.key === key && b.version === version) ?? null;
+}
+
+/** For the renderer and the checks, which find the project's own blocks in the spec themselves. */
 function context(data: BuilderData) {
   return {
     host: data.host,
-    block: (key: string, version: number) =>
-      data.blocks.find((b) => b.key === key && b.version === version) ?? null,
+    block: organizationBlock(data),
     target: (name: string) => data.targets.find((t) => t.name === name)?.labels ?? null,
     report: data.report,
   };
@@ -406,6 +438,8 @@ export interface StepCard {
   target: string | null;
   /** True when the block is not among the organization's any more. */
   missing: boolean;
+  /** A block of the project's own (the assistant wrote it). */
+  own: boolean;
   /** The newer published version, when there is one. */
   newer: number | null;
   version: number;
@@ -419,9 +453,14 @@ export interface PartCard {
   steps: StepCard[];
 }
 
-function stepCard(data: BuilderData, ref: StepRef, step: PipelineStep): StepCard {
-  const block = context(data).block(step.block, step.version);
-  const latest = latestOf(data, step.block);
+function stepCard(
+  data: BuilderData,
+  spec: PipelineSpec,
+  ref: StepRef,
+  step: PipelineStep
+): StepCard {
+  const block = blockOfStep(spec, organizationBlock(data))(step.block, step.version);
+  const latest = latestOf(data, step.block, spec);
   const inputs = block?.definition.inputs ?? [];
   const values = inputs.map((input) => {
     const value = step.inputs[input.name]?.trim() || input.default;
@@ -437,6 +476,7 @@ function stepCard(data: BuilderData, ref: StepRef, step: PipelineStep): StepCard
         ? values.join(' · ')
         : 'No inputs'
       : `The organization has no ${step.block} v${step.version}.`,
+    own: Boolean(block?.project),
     target: block?.definition.runsOn.type === 'target' ? (step.target ?? null) : null,
     missing: !block,
     newer: latest && latest.version > step.version ? latest.version : null,
@@ -448,7 +488,7 @@ export function partCards(state: BuilderState): PartCard[] {
   const { data, spec } = state;
   if (!data || !spec) return [];
   const card = (part: Part, steps: PipelineStep[]) =>
-    steps.map((step, index) => stepCard(data, { part, index }, step));
+    steps.map((step, index) => stepCard(data, spec, { part, index }, step));
   return [
     {
       part: null,
@@ -471,20 +511,66 @@ export function partCards(state: BuilderState): PartCard[] {
 export function blockChoices(
   state: BuilderState,
   part: Part
-): { key: string; name: string; kind: BlockKind; description: string | null }[] {
-  const data = state.data;
+): { key: string; name: string; kind: BlockKind; description: string | null; own: boolean }[] {
+  const { data, spec } = state;
   if (!data) return [];
-  const keys = [...new Set(data.blocks.map((b) => b.key))];
-  return keys
-    .map((key) => latestOf(data, key)!)
-    .filter((b) => part !== null || b.definition.kind !== 'deploy')
-    .map((b) => ({
-      key: b.key,
-      name: b.name,
-      kind: b.definition.kind,
-      description: data.blocks.find((x) => x.key === b.key)?.description ?? null,
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const own = spec?.blocks ?? [];
+  const keys = [...new Set(data.blocks.map((b) => b.key))].filter(
+    (key) => !own.some((b) => b.key === key)
+  );
+  const fits = (kind: BlockKind) => part !== null || kind !== 'deploy';
+  // The project's own first, then the organization's, each by name.
+  return [
+    ...own
+      .filter((b) => fits(b.definition.kind))
+      .map((b) => ({
+        key: b.key,
+        name: b.name,
+        kind: b.definition.kind,
+        description: b.description ?? null,
+        own: true,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    ...keys
+      .map((key) => latestOf(data, key)!)
+      .filter((b) => fits(b.definition.kind))
+      .map((b) => ({
+        key: b.key,
+        name: b.name,
+        kind: b.definition.kind,
+        description: data.blocks.find((x) => x.key === b.key)?.description ?? null,
+        own: false,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  ];
+}
+
+export interface OwnBlockCard {
+  key: string;
+  name: string;
+  description: string | null;
+  kind: BlockKind;
+  version: number;
+  /** Where the pipeline uses it: “Pull requests”, “production”. */
+  usedIn: string[];
+}
+
+/** The blocks the project keeps of its own, with where each is used. */
+export function ownBlocks(state: BuilderState): OwnBlockCard[] {
+  const spec = state.spec;
+  if (!spec?.blocks) return [];
+  const parts: { name: string; steps: PipelineStep[] }[] = [
+    { name: partName(null), steps: spec.checks },
+    ...spec.environments.map((e) => ({ name: e.name, steps: e.steps })),
+  ];
+  return spec.blocks.map((b) => ({
+    key: b.key,
+    name: b.name,
+    description: b.description ?? null,
+    kind: b.definition.kind,
+    version: b.version,
+    usedIn: parts.filter((p) => p.steps.some((s) => s.block === b.key)).map((p) => p.name),
+  }));
 }
 
 export interface StepEditor {
@@ -513,9 +599,9 @@ export function stepEditor(state: BuilderState): StepEditor | null {
   const steps = stepsOf(spec, selected.part);
   const step = steps?.[selected.index];
   if (!steps || !step) return null;
-  const block = context(data).block(step.block, step.version);
+  const block = blockOfStep(spec, organizationBlock(data))(step.block, step.version);
   if (!block) return null;
-  const latest = latestOf(data, step.block);
+  const latest = latestOf(data, step.block, spec);
   return {
     ref: selected,
     name: block.name,
