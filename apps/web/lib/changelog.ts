@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-19',
     entries: [
       {
+        kind: 'added',
+        title: 'Agents can work with SharePoint lists',
+        detail:
+          'Agents can now read SharePoint lists, search and page through their items, and add, change and delete items, naming a list by its title or link. With the new "Manage SharePoint lists" permission they can also create lists and add or remove columns; removing a column or deleting an item asks for approval first.',
+      },
+      {
         kind: 'changed',
         title: 'The pipeline assistant works in the background',
         detail:

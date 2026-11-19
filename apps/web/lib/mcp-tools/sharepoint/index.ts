@@ -22,6 +22,8 @@ import { registerSharePointPreviewLookups } from './preview-lookups';
 import { registerSiteTools } from './sites';
 import { registerPageTools } from './pages';
 import { registerMetadataTools } from './metadata';
+import { registerListTools } from './lists';
+import { registerListSchemaTools } from './list-schema';
 import { registerWatchTools } from './watches';
 import { sharepointScopeFor } from './scopes';
 
@@ -38,6 +40,8 @@ export async function registerSharePointTools(
   registerSiteTools(server, context, auth);
   registerPageTools(server, context, auth);
   registerMetadataTools(server, context, auth);
+  registerListTools(server, context, auth);
+  registerListSchemaTools(server, context, auth);
   registerWatchTools(server, context, auth);
   registerDocumentTools(server, context, auth, {
     prefix: 'sharepoint',

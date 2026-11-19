@@ -631,6 +631,7 @@ describe('listAvailableTools', () => {
           'Mail.ReadWrite',
           'Calendars.ReadWrite',
           'Sites.ReadWrite.All',
+          'Sites.Manage.All',
           'Files.ReadWrite.All',
         ],
         granted_scopes: null,
