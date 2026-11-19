@@ -21,6 +21,7 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { resolveAgentLlm } from '@renkei/agent-llm';
 import { readPipelineSpec } from '@renkei/ci-blocks';
+import { isRecord } from '@renkei/guards';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { preferredChatModelId } from '@/lib/chat/preferred-model';
@@ -35,7 +36,7 @@ import {
   readSourceFile as readGithubFile,
 } from '@/lib/code/github-browse';
 import { readConversation, runPipelineAssistant } from '@/lib/ci/pipeline-assistant';
-import { builderBlocks, builderTargets } from '@/lib/ci/pipeline-builder';
+import { builderBlocks, builderTargets, withBranch } from '@/lib/ci/pipeline-builder';
 import { builderContext } from '@/lib/ci/pipeline-builder-access';
 import { logger } from '@/lib/logger';
 import { whoIs } from '@/lib/log-actor';
@@ -47,19 +48,18 @@ export async function POST(
   const { projectId } = await params;
   const found = await builderContext(request, projectId, { write: true });
   if (!found.ok) return found.response;
-  const { project, subject, origin, host } = found.context;
+  const { subject, origin, host } = found.context;
   const body = await readJsonBody(request);
   const conversation = readConversation(body.conversation);
   if ('error' in conversation) return jsonError(400, 'conversation', conversation.error);
+  if (!isRecord(body.spec)) return jsonError(400, 'spec', 'Send the pipeline in the builder.');
+  // A pipeline that does not read yet is when help is wanted most: the
+  // assistant gets it as it stands, with what is wrong, and must fix it.
   const spec = readPipelineSpec(body.spec);
-  if (!spec.ok) {
-    return NextResponse.json(
-      { error: 'The pipeline in the builder does not read.', problems: spec.errors },
-      { status: 400 }
-    );
-  }
 
-  const resolved = await resolveAgentLlm(await preferredChatModelId(subject, project.id));
+  const resolved = await resolveAgentLlm(
+    await preferredChatModelId(subject, found.context.project.id)
+  );
   if (!resolved.ok) {
     return jsonError(
       409,
@@ -70,13 +70,18 @@ export async function POST(
   const llm = resolved.val;
   const operator = (await checkAccess([ROLE_OPERATOR])) !== null;
   const caller = { subject, origin };
+  const project = await withBranch(caller, found.context.project);
   const { fullName, branch } = project.repo;
-  const [blocks, targets] = await Promise.all([builderBlocks(spec.value), builderTargets()]);
+  const [blocks, targets] = await Promise.all([
+    builderBlocks(spec.ok ? spec.value : null),
+    builderTargets(),
+  ]);
 
   const reply = await runPipelineAssistant(
     {
       conversation,
-      spec: spec.value,
+      spec: spec.ok ? spec.value : body.spec,
+      specProblems: spec.ok ? [] : spec.errors,
       host,
       repo: fullName,
       branch,

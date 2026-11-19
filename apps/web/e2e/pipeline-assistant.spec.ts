@@ -264,3 +264,50 @@ test('pipeline assistant: tailor a block to the source, apply it, make it reusab
     if (modelId) await page.request.delete(`/api/admin/llm-models/${modelId}`);
   }
 });
+
+test('pipeline assistant: a project that follows the default branch gets a pipeline that reads, and an answer', async ({
+  page,
+  request,
+  person: _person,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  let modelId: string | null = null;
+  await prepareCodeHost(request);
+  await connectBitbucket(page);
+  try {
+    // No branch named: the project follows the repository's (main).
+    const projectId = await createCodeProject(page.request, {
+      name: `Default branch (${tag})`,
+      repository: `acme/pipeline-demo-follow-${tag}`,
+    });
+    modelId = await addStubModel(page.request, tag);
+    const onModel = await page.request.patch(`/api/chat/projects/${projectId}`, {
+      data: { llmModelId: modelId },
+    });
+    expect(onModel.ok(), await onModel.text()).toBe(true);
+
+    await page.goto(`/deployments/${projectId}/pipeline`);
+    const main = page.getByRole('main');
+    // The suggested production deploys from the repository's default branch.
+    await expect(main.getByRole('textbox', { name: 'Branch that deploys production' })).toHaveValue(
+      'main',
+      { timeout: 30_000 }
+    );
+
+    await page.getByRole('button', { name: 'Open the Pipeline assistant' }).click();
+    const panel = page.getByRole('dialog', { name: 'Pipeline assistant' });
+    await panel
+      .getByLabel('Ask the assistant')
+      .fill(scripted('Test, lint and build it.', [{ text: 'It already deploys from main.' }]));
+    const asked = page.waitForResponse(
+      (r) => r.url().endsWith('/pipeline-builder/assistant') && r.request().method() === 'POST'
+    );
+    await panel.getByRole('button', { name: 'Ask' }).click();
+    expect((await asked).status()).toBe(200);
+    await expect(panel).toContainText('It already deploys from main.');
+    await expect(panel.getByRole('alert')).toHaveCount(0);
+  } finally {
+    if (modelId) await page.request.delete(`/api/admin/llm-models/${modelId}`);
+  }
+});

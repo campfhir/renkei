@@ -84,6 +84,15 @@ describe('asking', () => {
     );
   });
 
+  it('a refusal lists what it named, and the next question clears it', () => {
+    const refused = run([
+      { type: 'asked', id: 'q1', text: 'Fix it' },
+      { type: 'failed', error: 'The conversation is too long.', problems: ['Start a new one.'] },
+    ]);
+    expect(refused.problems).toEqual(['Start a new one.']);
+    expect(run([{ type: 'asked', id: 'q2', text: 'Again' }], refused).problems).toEqual([]);
+  });
+
   it('a failed question leaves the thread, goes back in the box, and says why', () => {
     const state = run([
       { type: 'draft', text: 'Build with pnpm' },

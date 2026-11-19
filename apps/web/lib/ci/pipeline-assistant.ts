@@ -102,7 +102,10 @@ export interface AssistantDeps {
 
 export interface AssistantInput {
   conversation: AssistantTurn[];
-  spec: PipelineSpec;
+  /** The pipeline as the builder has it — read whole, or as sent when it does not read yet. */
+  spec: unknown;
+  /** Why the builder's pipeline does not read yet; empty when it does. */
+  specProblems?: string[];
   host: Host;
   repo: string;
   branch: string;
@@ -185,6 +188,11 @@ function systemPrompt(input: AssistantInput): string {
     `Targets: ${targets || 'none yet (an operator adds them under Targets)'}.`,
     '',
     `The pipeline in the builder now (JSON):\n${JSON.stringify(input.spec)}`,
+    ...(input.specProblems && input.specProblems.length > 0
+      ? [
+          `It does not read yet, so it cannot be saved:\n${input.specProblems.map((p) => `- ${p}`).join('\n')}\nWhatever the person asks, your proposal must fix these; say what you changed.`,
+        ]
+      : []),
     '',
     input.operator
       ? 'The person is an operator. When they ask to reuse a block in other projects, call propose_building_block with a general version of it: values only this project has (service names, paths, ports, URLs, image tags) become inputs, with this project’s value as the default only when it is a sensible default for others. Choose a key no organization block has.'

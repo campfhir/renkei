@@ -22,7 +22,7 @@ import { randomBytes } from 'node:crypto';
 import { createMemoryDataStore, getDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { invalidateConnectorConfigCache } from '@renkei/connector-config';
 import { ATLASSIAN_BITBUCKET, GITHUB } from '@renkei/provider-grants';
-import type { PipelineSpec } from '@renkei/ci-blocks';
+import { readPipelineSpec, type PipelineSpec } from '@renkei/ci-blocks';
 import {
   builderPage,
   freshBranch,
@@ -206,6 +206,42 @@ describe('on GitHub', () => {
       existingFile: null,
       lastWritten: null,
     });
+  });
+
+  it('a project that follows the default branch deploys production from it, and opens the pull request against it', async () => {
+    const following = { ...project(GITHUB), repo: { ...project(GITHUB).repo, branch: '' } };
+    const github = host({
+      ...answers,
+      [`GET ${repo}`]: { body: { default_branch: 'trunk' } },
+      [`GET ${repo}/branches`]: {
+        body: [
+          { name: 'trunk', commit: { sha: 'trunk-sha' } },
+          { name: 'develop', commit: { sha: 'dev-sha' } },
+        ],
+      },
+    });
+    githubBrowse.githubAuthOf.mockReturnValue(github);
+    const page = await builderPage(caller, following);
+    expect(page.spec.environments.map((e) => [e.name, e.branch])).toEqual([
+      ['dev', 'develop'],
+      ['production', 'trunk'],
+    ]);
+    expect(page.facts.branch).toBe('trunk');
+    // It reads as a pipeline the builder can save.
+    expect(readPipelineSpec(page.spec).ok).toBe(true);
+
+    const trunkSpec = {
+      ...spec,
+      environments: [{ ...spec.environments[0], branch: 'trunk' }],
+    };
+    const opened = await openPipelinePullRequest(caller, following, trunkSpec, new Date());
+    expect(opened).toMatchObject({ ok: true });
+    expect(
+      github.calls.find((c) => c.method === 'POST' && c.path.endsWith('/git/refs'))?.json
+    ).toEqual({ ref: 'refs/heads/renkei/pipeline', sha: 'trunk-sha' });
+    expect(
+      github.calls.find((c) => c.method === 'POST' && c.path.endsWith('/pulls'))?.json
+    ).toMatchObject({ base: 'trunk' });
   });
 
   it('opens a pull request from a new branch, then adds to it while it is open', async () => {
