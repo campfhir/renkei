@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-19',
     entries: [
       {
+        kind: 'fixed',
+        title: 'Restoring an evicted sandbox no longer fails at random',
+        detail:
+          "Bringing back a sandbox's files after it was put away for being idle could, now and then, fail on a perfectly good archive; it now always reads the archive to its end.",
+      },
+      {
         kind: 'added',
         title: 'List a Salesforce org’s Apex classes and triggers',
         detail:

@@ -122,6 +122,12 @@ export async function readArchive(roots: string[], input: Readable): Promise<voi
     [
       '--extract',
       '--file=-',
+      // Read the stream to its end. Without this, tar stops at the
+      // end-of-archive blocks and closes its input while the record's
+      // trailing padding may still be on its way in — a write into a closed
+      // pipe that failed a good archive as "Premature close", whenever tar
+      // won that race (most often on a busy machine).
+      '--ignore-zeros',
       '--numeric-owner',
       '--preserve-permissions',
       '--same-owner',
