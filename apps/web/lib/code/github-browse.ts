@@ -37,6 +37,17 @@ async function refOf(auth: GitHubAuth, base: string, branch: string): Promise<st
   return str(rec(info.body).default_branch) || null;
 }
 
+/** A project's branch, or the repository's default when the project names none; null when unread. */
+export async function branchToRead(
+  auth: GitHubAuth,
+  fullName: string,
+  branch: string
+): Promise<string | null> {
+  const [owner, repo] = fullName.split('/');
+  if (!owner || !repo) return branch || null;
+  return refOf(auth, repoBase(owner, repo), branch);
+}
+
 export interface GitHubAccount {
   slug: string;
   name: string;

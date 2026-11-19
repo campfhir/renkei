@@ -268,6 +268,23 @@ it('does not let a person who is not an operator make a building block', async (
   expect(reply).toMatchObject({ buildingBlock: null });
 });
 
+it('works from a pipeline that does not read yet, told what is wrong with it', async () => {
+  const complete = model([{ text: 'Production needs a branch; I set it to main.' }]);
+  const broken = { checks: [], environments: [{ name: 'production', branch: '', steps: [] }] };
+  await runPipelineAssistant(
+    input({
+      spec: broken,
+      specProblems: ['production needs the branch whose merges deploy it.'],
+    }),
+    deps(complete)
+  );
+  const system: string = complete.mock.calls[0][0].system;
+  expect(system).toContain(JSON.stringify(broken));
+  expect(system).toContain(
+    'It does not read yet, so it cannot be saved:\n- production needs the branch whose merges deploy it.'
+  );
+});
+
 it('says what the model’s failure means', async () => {
   const complete = jest.fn().mockResolvedValue({ ok: false, err: { type: 'rate_limit' } } as never);
   expect(await runPipelineAssistant(input(), deps(complete))).toEqual({

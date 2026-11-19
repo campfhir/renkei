@@ -42,6 +42,8 @@ export interface AssistantState {
   draft: string;
   busy: boolean;
   error: string | null;
+  /** What the refusal named, each in its words. */
+  problems: string[];
   /** Messages whose proposal the person applied. */
   applied: string[];
   /** The message whose building block is being saved. */
@@ -57,7 +59,7 @@ export type AssistantAction =
   /** The person asked; `text` is the draft unless a button asked for them. */
   | { type: 'asked'; id: string; text: string }
   | { type: 'answered'; id: string; answer: AssistantAnswer }
-  | { type: 'failed'; error: string }
+  | { type: 'failed'; error: string; problems?: string[] }
   | { type: 'applied'; id: string }
   | { type: 'savingBlock'; id: string }
   | { type: 'blockSaved'; id: string; blockId: string }
@@ -69,6 +71,7 @@ export const initialAssistant: AssistantState = {
   draft: '',
   busy: false,
   error: null,
+  problems: [],
   applied: [],
   saving: null,
   saved: {},
@@ -90,6 +93,7 @@ export function assistantReducer(state: AssistantState, action: AssistantAction)
         draft: text === state.draft.trim() ? '' : state.draft,
         busy: true,
         error: null,
+        problems: [],
       };
     }
     case 'answered':
@@ -116,6 +120,7 @@ export function assistantReducer(state: AssistantState, action: AssistantAction)
         ...state,
         busy: false,
         error: action.error,
+        problems: action.problems ?? [],
         messages: unanswered ? state.messages.slice(0, -1) : state.messages,
         draft: unanswered && !state.draft.trim() ? unanswered.text : state.draft,
       };

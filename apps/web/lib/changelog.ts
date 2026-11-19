@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'fixed',
+        title: 'Pipelines for projects on the default branch',
+        detail:
+          'A code project that follows its repository\'s default branch now gets a suggested pipeline whose production deploys from that branch, and its pull request opens against it; before, production had no branch, so the pipeline could not be saved and the pipeline assistant answered "The pipeline in the builder does not read." The assistant also now works from a pipeline that does not read yet, and fixes what is wrong with it.',
+      },
+      {
+        kind: 'fixed',
         title: 'Restoring an evicted sandbox no longer fails at random',
         detail:
           "Bringing back a sandbox's files after it was put away for being idle could, now and then, fail on a perfectly good archive; it now always reads the archive to its end.",

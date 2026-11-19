@@ -34,7 +34,11 @@ import {
 } from '@renkei/ci-blocks';
 import { ATLASSIAN_BITBUCKET, GITHUB } from '@renkei/provider-grants';
 import type { ProjectRow } from '@/lib/chat/projects';
-import { bitbucketAuthOf, listSource as listBitbucketSource } from '@/lib/code/bitbucket-browse';
+import {
+  bitbucketAuthOf,
+  branchToRead as bitbucketBranch,
+  listSource as listBitbucketSource,
+} from '@/lib/code/bitbucket-browse';
 import {
   listVariables,
   readEnvironments as readBitbucketEnvironments,
@@ -42,7 +46,11 @@ import {
   repoBase,
   variablesPath,
 } from '@/lib/code/bitbucket-pipelines';
-import { githubAuthOf, listSource as listGithubSource } from '@/lib/code/github-browse';
+import {
+  branchToRead as githubBranch,
+  githubAuthOf,
+  listSource as listGithubSource,
+} from '@/lib/code/github-browse';
 import {
   commitWorkflowFile,
   ownerRepoOf,
@@ -255,9 +263,34 @@ function readHost(
     : readBitbucket(caller, project, lastWritten);
 }
 
+/**
+ * The project with its branch named: a project that follows the
+ * repository's default branch stores none, but production deploys from a
+ * named branch and the pull request needs one to go against. Unchanged
+ * when the host cannot say.
+ */
+export async function withBranch(
+  caller: Caller,
+  project: CodeRepoProject
+): Promise<CodeRepoProject> {
+  if (project.repo.branch) return project;
+  const host = hostOf(project.repo.provider);
+  const branch =
+    host === 'github'
+      ? await githubBranch(githubAuthOf(caller), project.repo.fullName, '')
+      : host === 'bitbucket'
+        ? await bitbucketBranch(bitbucketAuthOf(caller), project.repo.fullName, '')
+        : null;
+  return branch ? { ...project, repo: { ...project.repo, branch } } : project;
+}
+
 // ——— the page ———
 
-export async function builderPage(caller: Caller, project: CodeRepoProject): Promise<BuilderPage> {
+export async function builderPage(
+  caller: Caller,
+  following: CodeRepoProject
+): Promise<BuilderPage> {
+  const project = await withBranch(caller, following);
   const host = hostOf(project.repo.provider) ?? 'bitbucket';
   const saved = await getDataStore().ciPipelines.get(project.id);
   const read = saved && saved.host === host ? readPipelineSpec(saved.spec) : null;
@@ -503,10 +536,11 @@ async function openGithub(write: HostWrite): Promise<OpenOutcome> {
  */
 export async function openPipelinePullRequest(
   caller: Caller,
-  project: CodeRepoProject,
+  following: CodeRepoProject,
   spec: PipelineSpec,
   now: Date
 ): Promise<OpenOutcome> {
+  const project = await withBranch(caller, following);
   const host = hostOf(project.repo.provider);
   if (!host) return { ok: false, status: 409, error: 'The repository is on neither host.' };
   const [blocks, targets] = await Promise.all([builderBlocks(spec), builderTargets()]);
@@ -537,9 +571,7 @@ export async function openPipelinePullRequest(
     };
   }
   const nameOf = (key: string) =>
-    spec.blocks?.find((b) => b.key === key)?.name ??
-    blocks.find((b) => b.key === key)?.name ??
-    key;
+    spec.blocks?.find((b) => b.key === key)?.name ?? blocks.find((b) => b.key === key)?.name ?? key;
   const text = pullRequestText(spec, nameOf, host, read.facts.existingFile !== null);
   const write: HostWrite = {
     caller,

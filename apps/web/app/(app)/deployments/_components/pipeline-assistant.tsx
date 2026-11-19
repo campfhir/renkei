@@ -122,9 +122,16 @@ export default function PipelineAssistant({
       ) : null}
 
       {state.error ? (
-        <p role="alert" className="text-xs text-red-700 dark:text-red-400">
-          {state.error}
-        </p>
+        <div role="alert" className="shrink-0 text-xs text-red-700 dark:text-red-400">
+          <p>{state.error}</p>
+          {state.problems.length > 0 ? (
+            <ul className="mt-1 list-disc pl-4">
+              {state.problems.map((p) => (
+                <li key={p}>{p}</li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
       ) : null}
 
       <form

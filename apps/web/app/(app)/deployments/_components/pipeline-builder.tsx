@@ -168,7 +168,7 @@ export default function PipelineBuilder({
     const asked = assistantReducer(assistant, { type: 'asked', id, text });
     if (asked === assistant) return;
     assistantDispatch({ type: 'asked', id, text });
-    const result = await sendJsonFull<AssistantAnswer>(
+    const result = await sendJsonFull<AssistantAnswer & { problems?: string[] }>(
       `${url}/assistant`,
       'POST',
       askRequest(asked, state.spec)
@@ -177,6 +177,7 @@ export default function PipelineBuilder({
       assistantDispatch({
         type: 'failed',
         error: result.error ?? 'The assistant did not answer.',
+        problems: result.data?.problems ?? [],
       });
       return;
     }

@@ -41,7 +41,8 @@ export async function GET(
   return NextResponse.json({
     ...page,
     canEdit,
-    project: { name: project.name, repo: project.repo.fullName, branch: project.repo.branch },
+    // The branch it read: the repository's default when the project follows it.
+    project: { name: project.name, repo: project.repo.fullName, branch: page.facts.branch },
   });
 }
 
