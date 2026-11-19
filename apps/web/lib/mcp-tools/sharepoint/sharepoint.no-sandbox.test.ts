@@ -86,6 +86,14 @@ const TOOLS = [
   'sharepoint_get_document_metadata',
   'sharepoint_list_columns',
   'sharepoint_update_document_metadata',
+  // lists.ts
+  'sharepoint_list_lists',
+  'sharepoint_get_list',
+  'sharepoint_list_items',
+  'sharepoint_get_list_item',
+  'sharepoint_create_list_item',
+  'sharepoint_update_list_item',
+  'sharepoint_delete_list_item',
   // watches.ts
   'sharepoint_watch_library',
   'sharepoint_unwatch_library',

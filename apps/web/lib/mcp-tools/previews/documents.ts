@@ -346,6 +346,67 @@ function family(service: Service): Record<string, PreviewBuilder> {
           },
         };
       },
+      sharepoint_create_list_item: (args: Args, names: Names): PreviewSpec => {
+        const list = listName(args, names);
+        const fields = record(args.fields);
+        const title = text(fields.Title);
+        return {
+          verb: 'Add',
+          icon: 'doc',
+          title: title ? `Add “${title}” to ${list}` : `Add an item to ${list}`,
+          subtitle: sub(args, names),
+          confirmLabel: 'Add item',
+          body: {
+            kind: 'change',
+            subject: ref(title || 'New item', 'List item', listWhere(args, names)),
+            rows: Object.entries(fields).map(([label, value]) => ({ label, value: show(value) })),
+          },
+        };
+      },
+      sharepoint_update_list_item: (args: Args, names: Names): PreviewSpec => {
+        const list = listName(args, names);
+        const item = named(names, 'listItem', args.itemId) || 'the item';
+        return {
+          verb: 'Update',
+          icon: 'tag',
+          title: `Change ${item === 'the item' ? item : `“${item}”`} in ${list}`,
+          subtitle: sub(args, names),
+          confirmLabel: 'Save changes',
+          body: {
+            kind: 'change',
+            subject: ref(
+              item === 'the item' ? 'The item' : item,
+              'List item',
+              listWhere(args, names)
+            ),
+            rows: Object.entries(record(args.fields)).map(([label, value]) => ({
+              label,
+              value: show(value),
+            })),
+            notes: ['Columns not listed keep their values.'],
+          },
+        };
+      },
+      sharepoint_delete_list_item: (args: Args, names: Names): PreviewSpec => {
+        const list = listName(args, names);
+        const item = named(names, 'listItem', args.itemId);
+        return {
+          verb: 'Delete',
+          tone: 'danger',
+          icon: 'trash',
+          title: item ? `Delete “${item}” from ${list}` : `Delete an item from ${list}`,
+          subtitle: sub(args, names),
+          confirmLabel: 'Delete item',
+          body: {
+            kind: 'document',
+            mode: 'delete',
+            type: 'List item',
+            title: item || 'The item',
+            location: [siteLabel(names, args.site), list].filter(Boolean),
+            versionNote: 'It goes to the site’s recycle bin, where a site owner can restore it.',
+          },
+        };
+      },
       sharepoint_watch_library: (args: Args, names: Names) =>
         watch(args, true, sub(args, names), siteLabel(names, args.site)),
       sharepoint_unwatch_library: (args: Args, names: Names) =>
@@ -353,6 +414,20 @@ function family(service: Service): Record<string, PreviewBuilder> {
     });
   }
   return builders;
+}
+
+/** A list as a person names it: its looked-up title, else the title given, else "the list". */
+function listName(args: Args, names: Names): string {
+  const list = text(args.list);
+  const looked = named(names, 'list', list);
+  if (looked) return looked;
+  if (!list || list.startsWith('https://') || /^[0-9a-f-]{36}$/i.test(list)) return 'the list';
+  return list;
+}
+
+function listWhere(args: Args, names: Names): string {
+  const list = listName(args, names);
+  return [siteLabel(names, args.site), list === 'the list' ? '' : list].filter(Boolean).join(' · ');
 }
 
 /** A page's title: the one the call is setting, else the one it has now. */

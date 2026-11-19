@@ -1084,6 +1084,24 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
     label: 'Changed a SharePoint document’s details',
     short: 'Changed a document’s details',
   },
+  sharepoint_create_list_item: {
+    category: 'created',
+    entity: 'list item',
+    label: 'Added an item to a SharePoint list',
+    short: 'Added a list item',
+  },
+  sharepoint_update_list_item: {
+    category: 'updated',
+    entity: 'list item',
+    label: 'Changed a SharePoint list item',
+    short: 'Changed a list item',
+  },
+  sharepoint_delete_list_item: {
+    category: 'deleted',
+    entity: 'list item',
+    label: 'Deleted a SharePoint list item',
+    short: 'Deleted a list item',
+  },
   sharepoint_watch_library: {
     category: 'updated',
     entity: 'library',

@@ -30,6 +30,9 @@ export function sharepointScopeFor(toolName: string): string[] {
     case 'sharepoint_share_document':
     case 'sharepoint_add_user_to_document':
     case 'sharepoint_remove_user_from_document':
+    case 'sharepoint_create_list_item':
+    case 'sharepoint_update_list_item':
+    case 'sharepoint_delete_list_item':
       return ['Sites.ReadWrite.All'];
 
     // Watching a library indexes it for OTHER readers to find, so it needs

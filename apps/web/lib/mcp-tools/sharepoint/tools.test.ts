@@ -631,6 +631,280 @@ describe('onedrive tools', () => {
   });
 });
 
+describe('sharepoint list tools', () => {
+  const SITE = 'https://contoso.sharepoint.com/sites/eng';
+  const LIST_ID = '11111111-2222-4333-8444-555555555555';
+  const siteRoute = {
+    match: '/sites/contoso.sharepoint.com:',
+    body: { id: 'site-1', displayName: 'Eng' },
+  };
+  const listsRoute = {
+    match: '/sites/site-1/lists?',
+    body: {
+      value: [
+        {
+          id: LIST_ID,
+          displayName: 'Project Tracker',
+          webUrl: `${SITE}/Lists/Project Tracker`,
+          list: { template: 'genericList' },
+        },
+        {
+          id: 'lib-1',
+          displayName: 'Documents',
+          webUrl: `${SITE}/Shared Documents`,
+          list: { template: 'documentLibrary' },
+        },
+        { id: 'hidden-1', displayName: 'Workflow Tasks', list: { hidden: true } },
+      ],
+    },
+  };
+
+  it('lists a site’s lists, marking libraries and leaving hidden ones out', async () => {
+    routes = [siteRoute, listsRoute];
+    const tools = await toolsOf(registerSharePointTools);
+
+    const text = textOf(await tools.get('sharepoint_list_lists')!({ site: SITE }));
+
+    expect(text).toContain('Project Tracker (genericList)');
+    expect(text).toContain('Documents (document library)');
+    expect(text).not.toContain('Workflow Tasks');
+  });
+
+  it('finds a list by the title a person uses, whatever its case', async () => {
+    routes = [
+      siteRoute,
+      {
+        match: `/lists/${LIST_ID}/columns`,
+        body: {
+          value: [
+            { name: 'Title', displayName: 'Title', text: {}, required: true },
+            {
+              name: 'Due_x0020_Date',
+              displayName: 'Due Date',
+              dateTime: {},
+              indexed: true,
+            },
+            { name: 'Status', displayName: 'Status', choice: { choices: ['Open', 'Done'] } },
+            { name: '_ModerationStatus', displayName: 'Approval', text: {} },
+          ],
+        },
+      },
+      listsRoute,
+    ];
+    const tools = await toolsOf(registerSharePointTools);
+
+    const text = textOf(
+      await tools.get('sharepoint_get_list')!({ site: SITE, list: 'project tracker' })
+    );
+
+    expect(text).toContain('internal name: Due_x0020_Date');
+    expect(text).toContain('dateTime, indexed');
+    expect(text).toContain('choices: Open, Done');
+    expect(text).not.toContain('_ModerationStatus');
+  });
+
+  it('names the lists that exist when the one asked for does not', async () => {
+    routes = [siteRoute, listsRoute];
+    const tools = await toolsOf(registerSharePointTools);
+
+    const result = (await tools.get('sharepoint_get_list')!({ site: SITE, list: 'Risks' })) as {
+      content: { text: string }[];
+      isError?: boolean;
+    };
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('Project Tracker');
+    expect(textOf(result)).not.toContain('Workflow Tasks');
+  });
+
+  it('resolves a pasted list view URL to its list without a separate site', async () => {
+    routes = [siteRoute, { match: `/lists/${LIST_ID}/items?`, body: { value: [] } }, listsRoute];
+    const tools = await toolsOf(registerSharePointTools);
+
+    const text = textOf(
+      await tools.get('sharepoint_list_items')!({
+        list: `${SITE}/Lists/Project%20Tracker/AllItems.aspx`,
+      })
+    );
+
+    expect(text).toBe('Project Tracker is empty.');
+  });
+
+  it('queries items with the filter as given, allowing non-indexed columns, and pages by token', async () => {
+    routes = [
+      siteRoute,
+      {
+        match: `/lists/${LIST_ID}/items?`,
+        body: {
+          value: [
+            {
+              id: '7',
+              fields: {
+                '@odata.etag': 'x',
+                Title: 'Fix login',
+                Status: 'Open',
+                ContentType: 'Item',
+                _UIVersionString: '1.0',
+              },
+            },
+          ],
+          '@odata.nextLink':
+            'https://graph.microsoft.com/v1.0/sites/site-1/lists/x/items?$skiptoken=Paged%3dTRUE%26p_ID%3d7',
+        },
+      },
+      listsRoute,
+    ];
+    const tools = await toolsOf(registerSharePointTools);
+
+    const text = textOf(
+      await tools.get('sharepoint_list_items')!({
+        site: SITE,
+        list: 'Project Tracker',
+        filter: "fields/Status eq 'Open'",
+        columns: ['Status'],
+        max: 10,
+      })
+    );
+
+    const call = requests.find((request) => request.url.includes('/items?'))!;
+    const query = new URL(call.url).searchParams;
+    expect(query.get('$filter')).toBe("fields/Status eq 'Open'");
+    expect(query.get('$expand')).toBe('fields($select=Title,Status)');
+    expect(query.get('$top')).toBe('10');
+
+    expect(text).toContain('Fix login');
+    expect(text).toContain('itemId: 7');
+    expect(text).toContain('Status: Open');
+    // System fields bury what the list is for.
+    expect(text).not.toContain('ContentType');
+    expect(text).not.toContain('_UIVersionString');
+    expect(text).not.toContain('@odata');
+    // The token alone, never a URL a later call could be pointed elsewhere with.
+    expect(text).toContain('pageToken: Paged=TRUE&p_ID=7');
+    expect(text).not.toContain('graph.microsoft.com');
+  });
+
+  it('sends the next page’s token back as $skiptoken', async () => {
+    routes = [
+      siteRoute,
+      { match: `/lists/${LIST_ID}/items?`, body: { value: [] } },
+      // An id is read directly, not matched against every list.
+      {
+        match: `/lists/${LIST_ID}?`,
+        body: { id: LIST_ID, displayName: 'Project Tracker', list: { template: 'genericList' } },
+      },
+    ];
+    const tools = await toolsOf(registerSharePointTools);
+
+    await tools.get('sharepoint_list_items')!({
+      site: SITE,
+      list: LIST_ID,
+      pageToken: 'Paged=TRUE&p_ID=7',
+    });
+
+    const call = requests.find((request) => request.url.includes('/items?'))!;
+    expect(new URL(call.url).searchParams.get('$skiptoken')).toBe('Paged=TRUE&p_ID=7');
+  });
+
+  it('adds an item with its fields under `fields`, as Graph requires', async () => {
+    routes = [
+      siteRoute,
+      {
+        match: `/lists/${LIST_ID}/items`,
+        body: { id: '42', fields: { Title: 'Fix login' }, webUrl: `${SITE}/Lists/x/42` },
+      },
+      listsRoute,
+    ];
+    const tools = await toolsOf(registerSharePointTools);
+
+    const text = textOf(
+      await tools.get('sharepoint_create_list_item')!({
+        site: SITE,
+        list: 'Project Tracker',
+        fields: { Title: 'Fix login', Status: 'Open' },
+      })
+    );
+
+    const post = requests.find((request) => request.method === 'POST')!;
+    expect(post.url).toContain(`/sites/site-1/lists/${LIST_ID}/items`);
+    expect(JSON.parse(post.body!)).toEqual({ fields: { Title: 'Fix login', Status: 'Open' } });
+    expect(text).toContain('Added "Fix login" to Project Tracker.');
+    expect(text).toContain('itemId: 42');
+  });
+
+  it('refuses to add a row to a document library and sends nothing', async () => {
+    routes = [siteRoute, listsRoute];
+    const tools = await toolsOf(registerSharePointTools);
+
+    const result = (await tools.get('sharepoint_create_list_item')!({
+      site: SITE,
+      list: 'Documents',
+      fields: { Title: 'x' },
+    })) as { content: { text: string }[]; isError?: boolean };
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('document library');
+    expect(requests.some((request) => request.method === 'POST')).toBe(false);
+  });
+
+  it('changes only the named columns of an item', async () => {
+    routes = [
+      siteRoute,
+      { match: `/lists/${LIST_ID}/items/7/fields`, body: { Title: 'Fix login', Status: 'Done' } },
+      listsRoute,
+    ];
+    const tools = await toolsOf(registerSharePointTools);
+
+    const text = textOf(
+      await tools.get('sharepoint_update_list_item')!({
+        site: SITE,
+        list: 'Project Tracker',
+        itemId: '7',
+        fields: { Status: 'Done' },
+      })
+    );
+
+    const patch = requests.find((request) => request.method === 'PATCH')!;
+    expect(JSON.parse(patch.body!)).toEqual({ Status: 'Done' });
+    expect(text).toContain('Updated 1 field(s) on "Fix login" in Project Tracker: Status.');
+  });
+
+  it('refuses an update with no fields before calling Graph', async () => {
+    const tools = await toolsOf(registerSharePointTools);
+
+    const result = (await tools.get('sharepoint_update_list_item')!({
+      site: SITE,
+      list: 'Project Tracker',
+      itemId: '7',
+      fields: {},
+    })) as { content: { text: string }[]; isError?: boolean };
+
+    expect(result.isError).toBe(true);
+    expect(requests).toEqual([]);
+  });
+
+  it('deletes an item and says when Graph refused it', async () => {
+    routes = [
+      siteRoute,
+      { match: `/lists/${LIST_ID}/items/7`, status: 403, body: { error: 'denied' } },
+      listsRoute,
+    ];
+    const tools = await toolsOf(registerSharePointTools);
+
+    const result = (await tools.get('sharepoint_delete_list_item')!({
+      site: SITE,
+      list: 'Project Tracker',
+      itemId: '7',
+    })) as { content: { text: string }[]; isError?: boolean };
+
+    expect(requests.find((request) => request.method === 'DELETE')!.url).toContain(
+      `/lists/${LIST_ID}/items/7`
+    );
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('The item was not deleted.');
+  });
+});
+
 describe('scope maps', () => {
   /**
    * Every registered tool must appear in its namespace's switch. A missing
@@ -662,6 +936,19 @@ describe('scope maps', () => {
     expect(writeTools.length).toBeGreaterThan(5);
     for (const name of writeTools) {
       expect(onedriveScopeFor(name)).toContain('Files.ReadWrite');
+    }
+  });
+
+  it('puts list item writes on the write scope and list reads on the read scope', () => {
+    for (const name of [
+      'sharepoint_create_list_item',
+      'sharepoint_update_list_item',
+      'sharepoint_delete_list_item',
+    ]) {
+      expect(sharepointScopeFor(name)).toEqual(['Sites.ReadWrite.All']);
+    }
+    for (const name of ['sharepoint_list_lists', 'sharepoint_get_list', 'sharepoint_list_items']) {
+      expect(sharepointScopeFor(name)).toEqual(['Sites.Read.All']);
     }
   });
 

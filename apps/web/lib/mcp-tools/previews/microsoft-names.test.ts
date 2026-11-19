@@ -107,6 +107,38 @@ describe('OneDrive and SharePoint cards', () => {
     clean(card(DOCUMENT_PREVIEWS, 'sharepoint_watch_library')({ site: SITE }));
     clean(card(DOCUMENT_PREVIEWS, 'sharepoint_create_page')({ site: SITE, title: 'T' }));
   });
+
+  it('names the list and the item a list act touches, never their ids', () => {
+    const names = {
+      [nameKey('site', SITE)]: 'Finance',
+      [nameKey('list', PAGE)]: 'Project Tracker',
+      [nameKey('listItem', '7')]: 'Fix login',
+    };
+    const remove = card(DOCUMENT_PREVIEWS, 'sharepoint_delete_list_item');
+    const args = { site: SITE, list: PAGE, itemId: '7' };
+    expect(remove(args, names)).toContain('Delete “Fix login” from Project Tracker');
+    expect(remove(args)).toContain('Delete an item from the list');
+    clean(remove(args, names));
+    clean(remove(args));
+
+    const update = card(DOCUMENT_PREVIEWS, 'sharepoint_update_list_item');
+    const changed = update({ ...args, fields: { Status: 'Done' } }, names);
+    expect(changed).toContain('Change “Fix login” in Project Tracker');
+    expect(changed).toContain('Done');
+    clean(update({ ...args, fields: { Status: 'Done' } }));
+
+    // A title the caller typed is what a person calls the list already.
+    expect(
+      card(
+        DOCUMENT_PREVIEWS,
+        'sharepoint_create_list_item'
+      )({
+        site: SITE,
+        list: 'Risks',
+        fields: { Title: 'Vendor exit' },
+      })
+    ).toContain('Add “Vendor exit” to Risks');
+  });
 });
 
 describe('OneNote cards', () => {

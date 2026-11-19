@@ -195,9 +195,10 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
     hint:
       'sharepoint_find_sites, sharepoint_list_libraries, sharepoint_list_pages, ' +
       'sharepoint_read_page, sharepoint_list_folder, sharepoint_search_documents, ' +
-      'sharepoint_get_document_metadata, and indexing a watched library into knowledge — every ' +
+      'sharepoint_get_document_metadata, sharepoint_list_lists, sharepoint_list_items, and indexing a watched library into knowledge — every ' +
       'SharePoint site the user can already open. Requires admin consent on the Entra app.',
-    userHint: 'Read SharePoint sites, pages and document libraries you already have access to.',
+    userHint:
+      'Read SharePoint sites, pages, lists and document libraries you already have access to.',
     group: 'sharepoint',
     defaultChecked: false,
   },
@@ -208,11 +209,13 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
     hint:
       'sharepoint_create_page, sharepoint_update_page, sharepoint_request_document_upload, ' +
       'sharepoint_rename_document, sharepoint_move_document, sharepoint_delete_document, ' +
-      'sharepoint_update_document_metadata, sharepoint_share_document. Does NOT change ' +
+      'sharepoint_update_document_metadata, sharepoint_share_document, and adding, changing and ' +
+      'deleting SharePoint list items. Does NOT create lists or columns, and does NOT change ' +
       'site-level permissions — Graph offers no delegated API for that, and Renkei deliberately ' +
       'does not offer it; manage site access in SharePoint itself. Carries Sites.Read.All. ' +
       'Requires admin consent on the Entra app.',
-    userHint: 'Create and change SharePoint pages and documents you already have access to.',
+    userHint:
+      'Create and change SharePoint pages, list items and documents you already have access to.',
     group: 'sharepoint',
     defaultChecked: false,
   },
