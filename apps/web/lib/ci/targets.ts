@@ -81,7 +81,7 @@ export async function targetsPage(
   if (!view.ok) return { error: view.error };
   const { bitbucket, github } = accounts.value;
   const [bitbucketRead, githubRead] = await Promise.all([
-    bitbucket?.token ? readBitbucketRunners(bitbucket, options) : Promise.resolve(null),
+    bitbucket ? readBitbucketRunners(bitbucket, options) : Promise.resolve(null),
     github?.privateKey ? readGithubRunners(github, options) : Promise.resolve(null),
   ]);
   const runners = [
@@ -91,7 +91,7 @@ export async function targetsPage(
   return {
     accounts: view.value,
     hosts: {
-      bitbucket: hostRead(Boolean(bitbucket?.token), bitbucketRead),
+      bitbucket: hostRead(Boolean(bitbucket), bitbucketRead),
       github: hostRead(Boolean(github?.privateKey), githubRead),
     },
     targets: list.map((target) => {

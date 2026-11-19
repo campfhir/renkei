@@ -13,6 +13,9 @@ import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import {
   HOST_NAMES,
   accountCards,
+  BITBUCKET_AUTH_CHOICES,
+  bitbucketAuthOf,
+  needsSecret,
   accountProblems,
   accountRequest,
   initialTargetsPage,
@@ -222,15 +225,41 @@ export default function TargetsPage() {
                             onChange={(e) =>
                               dispatch({
                                 type: 'accountField',
-                                patch: { auth: e.target.value === 'basic' ? 'basic' : 'bearer' },
+                                patch: { auth: bitbucketAuthOf(e.target.value) },
                               })
                             }
                           >
-                            <option value="bearer">A workspace access token</option>
-                            <option value="basic">A bot account’s API token</option>
+                            {BITBUCKET_AUTH_CHOICES.map((choice) => (
+                              <option key={choice.value} value={choice.value}>
+                                {choice.label}
+                              </option>
+                            ))}
                           </select>
                         </label>
                       </div>
+                      {accountForm.auth === 'connector' ? (
+                        <p className={hint}>
+                          {accountForm.consumer
+                            ? 'Reads the runners with the consumer people connect Bitbucket through, by client credentials. The consumer must be private and have the Runners: Read permission.'
+                            : 'The Bitbucket connector has no OAuth consumer registered yet: register it under Connectors, or give a key and secret here.'}
+                        </p>
+                      ) : null}
+                      {accountForm.auth === 'oauth' ? (
+                        <label className={label}>
+                          Key
+                          <input
+                            className={`${input} font-mono`}
+                            autoComplete="off"
+                            value={accountForm.clientId}
+                            onChange={(e) =>
+                              dispatch({
+                                type: 'accountField',
+                                patch: { clientId: e.target.value },
+                              })
+                            }
+                          />
+                        </label>
+                      ) : null}
                       {accountForm.auth === 'basic' ? (
                         <label className={label}>
                           Bot account’s email
@@ -244,25 +273,32 @@ export default function TargetsPage() {
                           />
                         </label>
                       ) : null}
-                      <label className={label}>
-                        {accountForm.auth === 'basic' ? 'API token' : 'Access token'}
-                        <input
-                          className={`${input} font-mono`}
-                          type="password"
-                          autoComplete="off"
-                          value={accountForm.secret}
-                          placeholder={
-                            accountForm.hasSecret ? 'Stored — leave blank to keep it' : ''
-                          }
-                          onChange={(e) =>
-                            dispatch({ type: 'accountField', patch: { secret: e.target.value } })
-                          }
-                        />
-                        <span className={hint}>
-                          Needs read access to the workspace’s runners. Never shown again once
-                          saved.
-                        </span>
-                      </label>
+                      {accountForm.auth === 'connector' ? null : (
+                        <label className={label}>
+                          {accountForm.auth === 'oauth'
+                            ? 'Secret'
+                            : accountForm.auth === 'basic'
+                              ? 'API token'
+                              : 'Access token'}
+                          <input
+                            className={`${input} font-mono`}
+                            type="password"
+                            autoComplete="off"
+                            value={accountForm.secret}
+                            placeholder={
+                              needsSecret(accountForm) ? '' : 'Stored — leave blank to keep it'
+                            }
+                            onChange={(e) =>
+                              dispatch({ type: 'accountField', patch: { secret: e.target.value } })
+                            }
+                          />
+                          <span className={hint}>
+                            {accountForm.auth === 'oauth'
+                              ? 'A private OAuth consumer on bitbucket.org with the Runners: Read permission. Never shown again once saved.'
+                              : 'Needs read access to the workspace’s runners. Never shown again once saved.'}
+                          </span>
+                        </label>
+                      )}
                     </>
                   ) : (
                     <>

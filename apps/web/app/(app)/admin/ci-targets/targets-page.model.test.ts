@@ -28,8 +28,9 @@ const runner = (overrides: Partial<Runner>): Runner => ({
 
 const data: TargetsPageData = {
   accounts: {
-    bitbucket: { workspace: 'acme', auth: 'bearer', email: '', hasToken: true },
+    bitbucket: { workspace: 'acme', auth: 'bearer', email: '', clientId: '', hasToken: true },
     github: { org: 'acme-labs', appId: '42', hasKey: true },
+    bitbucketConsumer: false,
   },
   hosts: {
     bitbucket: { connected: true, readAt: '2026-11-18T10:00:00.000Z', error: null, count: 3 },
@@ -127,7 +128,10 @@ describe('the service accounts', () => {
 
   it('asks a new bot account for its email and token', () => {
     const state = run([
-      { type: 'loaded', data: { ...data, accounts: { bitbucket: null, github: null } } },
+      {
+        type: 'loaded',
+        data: { ...data, accounts: { bitbucket: null, github: null, bitbucketConsumer: false } },
+      },
       { type: 'openAccount', host: 'bitbucket' },
       { type: 'accountField', patch: { account: 'acme', auth: 'basic', email: 'nope' } },
     ]);
@@ -145,6 +149,92 @@ describe('the service accounts', () => {
       email: 'ci-bot@acme.test',
       token: 'api-token',
     });
+  });
+});
+
+describe('a Bitbucket account read as an OAuth consumer', () => {
+  const fresh = (bitbucketConsumer: boolean) =>
+    run([
+      {
+        type: 'loaded',
+        data: { ...data, accounts: { bitbucket: null, github: null, bitbucketConsumer } },
+      },
+      { type: 'openAccount', host: 'bitbucket' },
+      { type: 'accountField', patch: { account: 'acme' } },
+    ]);
+
+  it('starts a new account on the Bitbucket connector’s consumer, which needs nothing pasted', () => {
+    const state = fresh(true);
+    expect(state.account).toMatchObject({ auth: 'connector', consumer: true });
+    expect(accountProblems(state.account!)).toEqual([]);
+    expect(accountRequest(state.account!)).toEqual({
+      url: '/api/admin/ci-accounts/bitbucket',
+      body: { workspace: 'acme', auth: 'connector' },
+    });
+  });
+
+  it('starts on a consumer’s key and secret when the connector has none, and asks for both', () => {
+    const state = fresh(false);
+    expect(state.account?.auth).toBe('oauth');
+    expect(accountProblems(state.account!)).toEqual([
+      'Paste the consumer’s key.',
+      'Paste the consumer’s secret.',
+    ]);
+    const filled = run(
+      [{ type: 'accountField', patch: { clientId: ' OwnKey123 ', secret: 'own-secret' } }],
+      state
+    );
+    expect(accountProblems(filled.account!)).toEqual([]);
+    expect(accountRequest(filled.account!).body).toEqual({
+      workspace: 'acme',
+      auth: 'oauth',
+      clientId: 'OwnKey123',
+      token: 'own-secret',
+    });
+  });
+
+  it('says the connector has no consumer when that is chosen without one', () => {
+    const state = run([{ type: 'accountField', patch: { auth: 'connector' } }], fresh(false));
+    expect(accountProblems(state.account!)).toEqual([
+      'The Bitbucket connector has no OAuth consumer registered yet: register it under Connectors, or give a key and secret here.',
+    ]);
+  });
+
+  it('does not count a stored access token as the consumer’s secret', () => {
+    const state = run(
+      [
+        { type: 'openAccount', host: 'bitbucket' },
+        { type: 'accountField', patch: { auth: 'oauth', clientId: 'OwnKey123' } },
+      ],
+      loaded
+    );
+    expect(accountProblems(state.account!)).toEqual(['Paste the consumer’s secret.']);
+    const back = run([{ type: 'accountField', patch: { auth: 'bearer' } }], state);
+    expect(accountProblems(back.account!)).toEqual([]);
+  });
+
+  it('says on the card which consumer reads the runners', () => {
+    const withAuth = (auth: 'connector' | 'oauth') =>
+      accountCards(
+        {
+          ...data,
+          accounts: {
+            ...data.accounts,
+            bitbucket: {
+              workspace: 'acme',
+              auth,
+              email: '',
+              clientId: 'OwnKey123',
+              hasToken: true,
+            },
+          },
+        },
+        NOW
+      )[0].how;
+    expect(withAuth('connector')).toBe(
+      'The Bitbucket connector’s OAuth consumer, by client credentials.'
+    );
+    expect(withAuth('oauth')).toBe('OAuth consumer OwnKey123, by client credentials.');
   });
 });
 

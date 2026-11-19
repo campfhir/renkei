@@ -2,8 +2,9 @@
 /**
  * Reading each host's runners with the organization's service accounts:
  * GitHub through the App's installation token, Bitbucket through its
- * workspace’s runners endpoint; what each refusal says;
- * and the minute's cache.
+ * workspace’s runners endpoint, signing in with a token or as an OAuth
+ * consumer (client credentials, its token kept until it nearly expires);
+ * what each refusal says; and the minute's cache.
  */
 
 import { createVerify, generateKeyPairSync } from 'node:crypto';
@@ -13,7 +14,7 @@ const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 20
 const pem = privateKey.export({ type: 'pkcs1', format: 'pem' }).toString();
 
 let answers: Record<string, { status: number; body: unknown }>;
-let calls: { url: string; method: string; authorization: string }[];
+let calls: { url: string; method: string; authorization: string; body: string }[];
 
 beforeEach(() => {
   forgetRunners();
@@ -26,6 +27,7 @@ beforeEach(() => {
       url,
       method: init?.method ?? 'GET',
       authorization: headers.get('authorization') ?? '',
+      body: typeof init?.body === 'string' ? init.body : '',
     });
     const key = Object.keys(answers).find((k) => url.startsWith(k));
     const answer = key ? answers[key] : { status: 404, body: { message: 'Not Found' } };
@@ -119,6 +121,7 @@ describe('Bitbucket runners', () => {
     workspace: 'acme',
     auth: 'bearer' as const,
     email: '',
+    clientId: '',
     token: 'workspace-token',
   };
 
@@ -160,6 +163,7 @@ describe('Bitbucket runners', () => {
       workspace: 'acme',
       auth: 'basic',
       email: 'ci-bot@acme.test',
+      clientId: '',
       token: 'api-token',
     });
     expect(calls[0].authorization).toBe(
@@ -173,5 +177,117 @@ describe('Bitbucket runners', () => {
     expect(read.ok).toBe(false);
     expect(read.ok ? '' : read.error).toContain('workspace acme’s runners');
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe('Bitbucket runners, read as an OAuth consumer', () => {
+  const TOKEN = 'https://bitbucket.org/site/oauth2/access_token';
+  const LIST = 'https://api.bitbucket.org/2.0/workspaces/acme/pipelines-config/runners';
+  const consumer = {
+    workspace: 'acme',
+    auth: 'oauth' as const,
+    email: '',
+    clientId: 'ConsumerKey123',
+    token: 'consumer-secret',
+  };
+  const listed = {
+    status: 200,
+    body: {
+      values: [
+        { uuid: '{r1}', name: 'app-01', labels: ['self.hosted'], state: { status: 'ONLINE' } },
+      ],
+    },
+  };
+
+  it('swaps the key and secret for a token of its own, and lists the runners with it', async () => {
+    answers = {
+      [TOKEN]: { status: 200, body: { access_token: 'cc-token', expires_in: 7200 } },
+      [LIST]: listed,
+    };
+    const read = await readBitbucketRunners(consumer);
+    expect(read.ok && read.runners.map((r) => r.name)).toEqual(['app-01']);
+    expect(calls[0]).toEqual({
+      url: TOKEN,
+      method: 'POST',
+      authorization: `Basic ${Buffer.from('ConsumerKey123:consumer-secret').toString('base64')}`,
+      body: 'grant_type=client_credentials',
+    });
+    expect(calls[1].authorization).toBe('Bearer cc-token');
+  });
+
+  it('keeps the token until it nearly expires, so a fresh read asks only for the runners', async () => {
+    answers = {
+      [TOKEN]: { status: 200, body: { access_token: 'cc-token', expires_in: 7200 } },
+      [LIST]: listed,
+    };
+    await readBitbucketRunners(consumer);
+    await readBitbucketRunners(consumer, { fresh: true });
+    expect(calls.map((c) => c.method)).toEqual(['POST', 'GET', 'GET']);
+  });
+
+  it('reads with the Bitbucket connector’s consumer the same way', async () => {
+    answers = {
+      [TOKEN]: { status: 200, body: { access_token: 'connector-token', expires_in: 7200 } },
+      [LIST]: listed,
+    };
+    await readBitbucketRunners({ ...consumer, auth: 'connector', clientId: 'ConnectorKey' });
+    expect(calls[0].authorization).toBe(
+      `Basic ${Buffer.from('ConnectorKey:consumer-secret').toString('base64')}`
+    );
+    expect(calls[1].authorization).toBe('Bearer connector-token');
+  });
+
+  it('says what to change when Bitbucket gives no token', async () => {
+    answers = {
+      [TOKEN]: {
+        status: 400,
+        body: {
+          error: 'unauthorized_client',
+          error_description: 'Cannot use client_credentials with a consumer marked as "public".',
+        },
+      },
+    };
+    expect(await readBitbucketRunners(consumer)).toEqual({
+      ok: false,
+      error:
+        'Bitbucket gives a token only to a private OAuth consumer: in the consumer’s settings, tick “This is a private consumer”.',
+    });
+    answers = { [TOKEN]: { status: 400, body: { error: 'invalid_client' } } };
+    expect(await readBitbucketRunners(consumer)).toEqual({
+      ok: false,
+      error:
+        'Bitbucket did not accept the OAuth consumer’s key and secret; check them and save again.',
+    });
+    expect(await readBitbucketRunners({ ...consumer, auth: 'connector' })).toEqual({
+      ok: false,
+      error:
+        'Bitbucket did not accept the Bitbucket connector’s OAuth consumer; check its key and secret under Connectors.',
+    });
+    expect(calls.every((c) => c.url === TOKEN)).toBe(true);
+  });
+
+  it('names the permission a consumer lacks, and asks for a new token next time', async () => {
+    answers = {
+      [TOKEN]: { status: 200, body: { access_token: 'cc-token', expires_in: 7200 } },
+      [LIST]: { status: 403, body: { error: { message: 'Forbidden' } } },
+    };
+    expect(await readBitbucketRunners(consumer)).toEqual({
+      ok: false,
+      error:
+        'Bitbucket would not let the OAuth consumer read workspace acme’s runners: give the consumer the Runners: Read permission.',
+    });
+    await readBitbucketRunners(consumer);
+    expect(calls.map((c) => c.method)).toEqual(['POST', 'GET', 'POST', 'GET']);
+  });
+
+  it('asks nothing of Bitbucket when the connector has no consumer', async () => {
+    const read = await readBitbucketRunners({
+      ...consumer,
+      auth: 'connector',
+      clientId: '',
+      token: '',
+    });
+    expect(read).toEqual({ ok: false, error: expect.stringContaining('no OAuth consumer') });
+    expect(calls).toHaveLength(0);
   });
 });

@@ -9,31 +9,52 @@
  *   and lists `GET /orgs/{org}/actions/runners` — the App needs read
  *   access to the organization's self-hosted runners.
  * - Bitbucket: `GET /2.0/workspaces/{workspace}/pipelines-config/runners`,
- *   paged, with a workspace access token or a bot account's API token
- *   holding `read:runner:bitbucket`. Should a read fail, targets keep the
- *   labels they were given and pipelines are unaffected; only this list
- *   goes blank, saying why.
+ *   paged. With an OAuth consumer, its key and secret are first swapped
+ *   for an access token of the consumer's own (the client credentials
+ *   grant, `POST https://bitbucket.org/site/oauth2/access_token`), kept
+ *   until a minute before it expires; Bitbucket gives one only to a
+ *   private consumer, and the consumer needs the Runners: Read
+ *   permission. Otherwise a workspace access token or a bot account's API
+ *   token holding `read:runner:bitbucket` is sent as it is.
+ *
+ * Should a read fail, targets keep the labels they were given and
+ * pipelines are unaffected; only this list goes blank, saying why.
  */
 
-import { createSign } from 'node:crypto';
+import { createHash, createSign } from 'node:crypto';
 import { parseBitbucketRunners, parseGithubRunners, type Runner } from '@renkei/ci-blocks';
 import { isRecord } from '@renkei/guards';
 import { GITHUB_API_BASE } from '@/lib/mcp-tools/github/client';
 import { BITBUCKET_API_BASE } from '@/lib/mcp-tools/bitbucket/client';
 import { REQUEST_TIMEOUT_MS, isTimeoutError, timeoutSignal } from '@/lib/mcp-tools/fetch-guard';
-import type { BitbucketAccount, GithubAccount } from './accounts';
+import { NO_CONSUMER, type BitbucketAccount, type GithubAccount } from './accounts';
 
 const CACHE_MS = 60_000;
+
 const MAX_PAGES = 3;
 
 export type RunnersRead =
   { ok: true; runners: Runner[]; readAt: string } | { ok: false; error: string };
 
 const cache = new Map<string, { at: number; value: RunnersRead }>();
+/** OAuth consumers' access tokens, by key and a hash of the secret. */
+const consumerTokens = new Map<string, { token: string; until: number }>();
 
-/** Forget what was read — after an account changes, and for tests. */
+/**
+ * Bitbucket's token endpoint. A deployment may point it elsewhere
+ * (BITBUCKET_OAUTH_TOKEN_URL), as the browser suite does at its stand-in.
+ */
+export function bitbucketTokenUrl(): string {
+  return (
+    process.env.BITBUCKET_OAUTH_TOKEN_URL?.trim() ||
+    'https://bitbucket.org/site/oauth2/access_token'
+  );
+}
+
+/** Forget what was read, and the consumers' tokens — after an account changes, and for tests. */
 export function forgetRunners(): void {
   cache.clear();
+  consumerTokens.clear();
 }
 
 const base64url = (value: string | Buffer) => Buffer.from(value).toString('base64url');
@@ -148,7 +169,7 @@ export async function readBitbucketRunners(
   account: BitbucketAccount,
   options: { fresh?: boolean } = {}
 ): Promise<RunnersRead> {
-  const key = `bitbucket:${account.workspace}:${account.auth}:${account.email}`;
+  const key = `bitbucket:${account.workspace}:${account.auth}:${account.email}:${account.clientId}`;
   const cached = cache.get(key);
   if (!options.fresh && cached && Date.now() - cached.at < CACHE_MS) return cached.value;
   const value = await bitbucketRunnersNow(account);
@@ -156,14 +177,78 @@ export async function readBitbucketRunners(
   return value;
 }
 
+const signsInAsConsumer = (account: BitbucketAccount) =>
+  account.auth === 'connector' || account.auth === 'oauth';
+
+/**
+ * The consumer's own access token, by the client credentials grant: the
+ * key and secret in Basic, as Bitbucket's token endpoint takes them.
+ */
+async function consumerToken(
+  account: BitbucketAccount
+): Promise<{ ok: true; token: string } | { ok: false; error: string }> {
+  const key = `${account.clientId}:${createHash('sha256').update(account.token).digest('hex')}`;
+  const kept = consumerTokens.get(key);
+  if (kept && Date.now() < kept.until) return { ok: true, token: kept.token };
+  const answered = await call(
+    bitbucketTokenUrl(),
+    {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Basic ${Buffer.from(`${account.clientId}:${account.token}`).toString('base64')}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({ grant_type: 'client_credentials' }).toString(),
+    },
+    'Bitbucket'
+  );
+  if (!answered.ok) return answered;
+  const body = isRecord(answered.body) ? answered.body : {};
+  const token = typeof body.access_token === 'string' ? body.access_token : '';
+  if (answered.status === 200 && token) {
+    const expiresIn = typeof body.expires_in === 'number' ? body.expires_in : 3600;
+    consumerTokens.set(key, { token, until: Date.now() + Math.max(0, expiresIn - 60) * 1000 });
+    return { ok: true, token };
+  }
+  const description = typeof body.error_description === 'string' ? body.error_description : '';
+  if (/public/i.test(description)) {
+    return {
+      ok: false,
+      error:
+        'Bitbucket gives a token only to a private OAuth consumer: in the consumer’s settings, tick “This is a private consumer”.',
+    };
+  }
+  if (
+    answered.status === 401 ||
+    body.error === 'invalid_client' ||
+    body.error === 'unauthorized_client'
+  ) {
+    return {
+      ok: false,
+      error:
+        account.auth === 'connector'
+          ? 'Bitbucket did not accept the Bitbucket connector’s OAuth consumer; check its key and secret under Connectors.'
+          : 'Bitbucket did not accept the OAuth consumer’s key and secret; check them and save again.',
+    };
+  }
+  return { ok: false, error: `Bitbucket answered ${answered.status} when asked for a token.` };
+}
+
 async function bitbucketRunnersNow(account: BitbucketAccount): Promise<RunnersRead> {
-  const headers = {
-    Accept: 'application/json',
-    Authorization:
+  let authorization: string;
+  if (signsInAsConsumer(account)) {
+    if (!account.clientId || !account.token) return { ok: false, error: NO_CONSUMER };
+    const minted = await consumerToken(account);
+    if (!minted.ok) return minted;
+    authorization = `Bearer ${minted.token}`;
+  } else {
+    authorization =
       account.auth === 'basic'
         ? `Basic ${Buffer.from(`${account.email}:${account.token}`).toString('base64')}`
-        : `Bearer ${account.token}`,
-  };
+        : `Bearer ${account.token}`;
+  }
+  const headers = { Accept: 'application/json', Authorization: authorization };
   const first = `${BITBUCKET_API_BASE}/workspaces/${encodeURIComponent(account.workspace)}/pipelines-config/runners`;
   let next: string | null = `${first}?pagelen=100`;
   const runners: Runner[] = [];
@@ -171,6 +256,14 @@ async function bitbucketRunnersNow(account: BitbucketAccount): Promise<RunnersRe
     const listed = await call(next, { headers }, 'Bitbucket');
     if (!listed.ok) return listed;
     if (listed.status !== 200) {
+      // A token Bitbucket has stopped taking is asked for again next time.
+      if (signsInAsConsumer(account)) consumerTokens.clear();
+      if (listed.status === 403 && signsInAsConsumer(account)) {
+        return {
+          ok: false,
+          error: `Bitbucket would not let the OAuth consumer read workspace ${account.workspace}’s runners: give the consumer the Runners: Read permission.`,
+        };
+      }
       return {
         ok: false,
         error: refusal('Bitbucket', listed.status, `workspace ${account.workspace}’s runners`),

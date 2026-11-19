@@ -9,9 +9,10 @@ jest.mock('./runners', () => ({ readBitbucketRunners: jest.fn(), readGithubRunne
 
 import { randomBytes } from 'node:crypto';
 import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
-import { invalidateConnectorConfigCache } from '@renkei/connector-config';
+import { invalidateConnectorConfigCache, setConnectorConfig } from '@renkei/connector-config';
+import { loadKeyring } from '@renkei/crypto';
 import { readBitbucketRunners, readGithubRunners } from './runners';
-import { accountsView, saveBitbucketAccount, saveGithubAccount } from './accounts';
+import { accountsView, readAccounts, saveBitbucketAccount, saveGithubAccount } from './accounts';
 import {
   createTarget,
   parseTargetPayload,
@@ -80,8 +81,9 @@ describe('the service accounts', () => {
     expect(await accountsView()).toEqual({
       ok: true,
       value: {
-        bitbucket: { workspace: 'acme', auth: 'bearer', email: '', hasToken: true },
+        bitbucket: { workspace: 'acme', auth: 'bearer', email: '', clientId: '', hasToken: true },
         github: { org: 'acme-labs', appId: '42', hasKey: true },
+        bitbucketConsumer: false,
       },
     });
   });
@@ -99,6 +101,83 @@ describe('the service accounts', () => {
       ok: false,
       error: 'Paste the whole private key file, from -----BEGIN to -----END.',
     });
+  });
+});
+
+describe('a Bitbucket account read as an OAuth consumer', () => {
+  async function registerConnectorConsumer() {
+    const key = loadKeyring('TOKEN_ENCRYPTION_KEY');
+    if (!key.ok) throw new Error('no keyring');
+    await setConnectorConfig(
+      'atlassian-bitbucket',
+      {
+        enabled: true,
+        settings: { clientId: 'ConnectorKey' },
+        secrets: { clientSecret: 'connector-secret' },
+      },
+      key.val
+    );
+    invalidateConnectorConfigCache();
+  }
+
+  it('uses the Bitbucket connector’s consumer as it is registered, storing no secret of its own', async () => {
+    expect(await saveBitbucketAccount({ workspace: 'acme', auth: 'connector' })).toEqual({
+      ok: false,
+      error:
+        'The Bitbucket connector has no OAuth consumer registered yet: register it under Connectors, or give this account a key and secret of its own.',
+    });
+    await registerConnectorConsumer();
+    expect(await saveBitbucketAccount({ workspace: 'acme', auth: 'connector' })).toEqual({
+      ok: true,
+      value: true,
+    });
+    const view = await accountsView();
+    expect(view.ok && view.value.bitbucket).toEqual({
+      workspace: 'acme',
+      auth: 'connector',
+      email: '',
+      clientId: 'ConnectorKey',
+      hasToken: true,
+    });
+    expect(view.ok && view.value.bitbucketConsumer).toBe(true);
+    const accounts = await readAccounts();
+    expect(accounts.ok && accounts.value.bitbucket).toMatchObject({
+      clientId: 'ConnectorKey',
+      token: 'connector-secret',
+    });
+  });
+
+  it('keeps a consumer of its own: the key shown, the secret write-only', async () => {
+    expect(
+      await saveBitbucketAccount({ workspace: 'acme', auth: 'oauth', clientId: '', token: 's' })
+    ).toEqual({ ok: false, error: 'The key is the one on the OAuth consumer’s settings.' });
+    expect(
+      await saveBitbucketAccount({
+        workspace: 'acme',
+        auth: 'oauth',
+        clientId: 'OwnKey123',
+        token: 'own-secret',
+      })
+    ).toEqual({ ok: true, value: true });
+    // A blank secret keeps the stored one.
+    expect(
+      await saveBitbucketAccount({ workspace: 'acme-labs', auth: 'oauth', clientId: 'OwnKey123' })
+    ).toEqual({ ok: true, value: true });
+    const view = await accountsView();
+    expect(view.ok && view.value.bitbucket).toEqual({
+      workspace: 'acme-labs',
+      auth: 'oauth',
+      email: '',
+      clientId: 'OwnKey123',
+      hasToken: true,
+    });
+  });
+
+  it('does not take a token stored for another way of signing in as the consumer’s secret', async () => {
+    await saveBitbucketAccount({ workspace: 'acme', auth: 'bearer', token: 'access-token' });
+    expect(
+      await saveBitbucketAccount({ workspace: 'acme', auth: 'oauth', clientId: 'OwnKey123' })
+    ).toEqual({ ok: false, error: 'Paste the consumer’s secret.' });
   });
 });
 

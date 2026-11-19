@@ -51,6 +51,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'added',
+        title: 'Read Bitbucket runners as an OAuth consumer',
+        detail:
+          'The Targets page can read a Bitbucket workspace’s runners with an OAuth consumer’s client credentials instead of an API token: the one people already connect Bitbucket through, with nothing to paste, or a consumer of its own. Bitbucket asks that the consumer be private and have the Runners: Read permission, and the page says which is missing.',
+      },
+      {
+        kind: 'added',
         title: 'Building blocks for pipelines',
         detail:
           'Operators keep the organization’s CI building blocks in Organization settings: a step written once — what it runs on, its inputs, the variables it needs, its commands — and shown as a Bitbucket step and a GitHub Actions job. Draft one with AI, publish it as a numbered version, and start from six starter blocks for Node, Python, Go and on-premises deploys.',
