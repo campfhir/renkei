@@ -9,6 +9,8 @@ import {
   fileStatus,
   fileText,
   initialBuilder,
+  isDirty,
+  ownBlocks,
   partCards,
   pullRequestNote,
   saveRequest,
@@ -410,5 +412,110 @@ describe('saving and the pull request', () => {
     expect(pullRequestNote(state)).toBe(
       'One check needs fixing before it runs; the pull request can open now and merge once it is.'
     );
+  });
+});
+
+describe('the assistant’s pipeline, with blocks of the project’s own', () => {
+  const ownDeploy = {
+    key: 'deploy-sync-worker',
+    name: 'Deploy sync-worker',
+    description: 'Restarts the unit and checks /health.',
+    version: 1,
+    definition: { ...systemd, inputs: [], commands: 'sudo systemctl restart sync-worker' },
+  };
+  const tailored = {
+    checks: [build],
+    environments: [
+      {
+        name: 'production',
+        branch: 'main',
+        steps: [
+          build,
+          { block: 'deploy-sync-worker', version: 1, inputs: {}, target: 'onprem-workers' },
+        ],
+      },
+    ],
+    blocks: [ownDeploy],
+  };
+  const applied = run(
+    [
+      { type: 'select', step: { part: null, index: 0 } },
+      { type: 'applyProposal', spec: tailored },
+    ],
+    loaded
+  );
+
+  it('fills the builder — nothing is saved until the person saves — and says so', () => {
+    expect(applied.spec).toEqual(tailored);
+    expect(applied.selected).toBeNull();
+    expect(isDirty(applied)).toBe(true);
+    expect(canSave(applied)).toBe(true);
+    expect(applied.notice).toBe(
+      'The assistant’s pipeline is in the builder. Check it, then save or open the pull request to keep it.'
+    );
+    expect(saveRequest(applied)).toEqual({ spec: tailored });
+  });
+
+  it('shows the project’s block in its row, marked as its own, with where it is used', () => {
+    const production = partCards(applied)[1];
+    expect(production.steps[1]).toMatchObject({
+      name: 'Deploy sync-worker',
+      kind: 'deploy',
+      own: true,
+      missing: false,
+      newer: null,
+      target: 'onprem-workers',
+      summary: 'No inputs',
+    });
+    expect(partCards(applied)[0].steps[0].own).toBe(false);
+    expect(ownBlocks(applied)).toEqual([
+      {
+        key: 'deploy-sync-worker',
+        name: 'Deploy sync-worker',
+        description: 'Restarts the unit and checks /health.',
+        kind: 'deploy',
+        version: 1,
+        usedIn: ['production'],
+      },
+    ]);
+  });
+
+  it('writes the file with it, and its checks pass where the host is ready', () => {
+    const file = fileText(applied);
+    expect(file?.ok).toBe(true);
+    if (file?.ok) {
+      expect(file.value).toContain('sudo systemctl restart sync-worker');
+      expect(file.value).toContain(
+        '# block: deploy-sync-worker@v1, this project’s own, target onprem-workers'
+      );
+    }
+    expect(checks(applied).filter((c) => c.state === 'fail')).toEqual([]);
+  });
+
+  it('offers the project’s blocks first in the picker, and adds one to another row', () => {
+    expect(blockChoices(applied, 'production').map((c) => [c.key, c.own])).toEqual([
+      ['deploy-sync-worker', true],
+      ['deploy-systemd', false],
+      ['go-lint', false],
+      ['go-test-build', false],
+    ]);
+    // No deploys on pull requests, the project’s own included.
+    expect(blockChoices(applied, null).some((c) => c.own)).toBe(false);
+    const withDev = run(
+      [
+        { type: 'openEnvironmentForm' },
+        { type: 'addEnvironment' },
+        { type: 'removeStep', step: { part: 'dev', index: 1 } },
+        { type: 'addStep', part: 'dev', block: 'deploy-sync-worker' },
+      ],
+      applied
+    );
+    expect(withDev.spec?.environments[1].steps[1]).toEqual({
+      block: 'deploy-sync-worker',
+      version: 1,
+      inputs: {},
+      target: 'onprem-workers',
+    });
+    expect(ownBlocks(withDev)[0].usedIn).toEqual(['production', 'dev']);
   });
 });

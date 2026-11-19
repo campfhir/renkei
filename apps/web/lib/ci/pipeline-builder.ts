@@ -536,7 +536,10 @@ export async function openPipelinePullRequest(
       error: `${HOST_LABEL[host]} did not list the branch ${base}, so there is nothing to open the pull request against.`,
     };
   }
-  const nameOf = (key: string) => blocks.find((b) => b.key === key)?.name ?? key;
+  const nameOf = (key: string) =>
+    spec.blocks?.find((b) => b.key === key)?.name ??
+    blocks.find((b) => b.key === key)?.name ??
+    key;
   const text = pullRequestText(spec, nameOf, host, read.facts.existingFile !== null);
   const write: HostWrite = {
     caller,

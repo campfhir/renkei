@@ -20,7 +20,7 @@
 
 import { Document, isMap, isScalar, isSeq } from 'yaml';
 import { isRecord } from '@renkei/guards';
-import { trimDashes, type BlockDefinition, type Read } from './definition';
+import { readBlockDefinition, trimDashes, type BlockDefinition, type Read } from './definition';
 import { renderBitbucketStep, renderGithubJob, type BlockUse, type Host } from './render';
 import { BITBUCKET_OUTCOME, GITHUB_OUTCOME, reportCommand, type ReportTo } from './report';
 import type { Runner, TargetLabels } from './targets';
@@ -48,12 +48,33 @@ export interface PipelineSpec {
   /** Run on every pull request; nothing deploys. */
   checks: PipelineStep[];
   environments: PipelineEnvironment[];
+  /**
+   * Blocks of this project's own — written for its source (the pipeline
+   * builder's assistant drafts them) and kept with its pipeline, not in
+   * the organization's catalogue. A step names one by its key, and it
+   * comes before an organization block of the same key; its version is
+   * the draft's, and a step uses whichever the pipeline holds. Left out
+   * when there are none.
+   */
+  blocks?: ProjectBlock[];
 }
 
 /** A block as the pipeline needs it: what the store keeps at one version. */
 export interface PipelineBlock {
   key: string;
   name: string;
+  version: number;
+  definition: BlockDefinition;
+  /** True for a block of the project's own (PipelineSpec.blocks). */
+  project?: true;
+}
+
+/** A block of the project's own, as its pipeline keeps it. */
+export interface ProjectBlock {
+  key: string;
+  name: string;
+  /** What it does, and anything a person must check. */
+  description?: string;
   version: number;
   definition: BlockDefinition;
 }
@@ -84,6 +105,7 @@ const BRANCH_NAME = /^(?!\/|.*\/\/|.*\.\.|.*\/$)[A-Za-z0-9._/-]{1,200}$/;
 const BLOCK_KEY = /^[a-z][a-z0-9-]{0,79}$/;
 export const MAX_STEPS = 12;
 export const MAX_ENVIRONMENTS = 6;
+export const MAX_PROJECT_BLOCKS = 12;
 
 /** Where a step sits, as a person would say it: “Pull requests, step 1”. */
 export function partName(environment: string | null): string {
@@ -161,7 +183,84 @@ export function readPipelineSpec(value: unknown): Read<PipelineSpec> {
       steps: readSteps(raw.steps, name || 'An environment', errors),
     });
   }
-  return errors.length > 0 ? { ok: false, errors } : { ok: true, value: { checks, environments } };
+  const blocks = readProjectBlocks(value.blocks, errors);
+  return errors.length > 0
+    ? { ok: false, errors }
+    : {
+        ok: true,
+        value: { checks, environments, ...(blocks.length > 0 ? { blocks } : {}) },
+      };
+}
+
+/** A pipeline's own blocks, each definition read whole as a published one is. */
+export function readProjectBlocks(value: unknown, errors: string[]): ProjectBlock[] {
+  const list = Array.isArray(value) ? value : [];
+  if (list.length > MAX_PROJECT_BLOCKS) {
+    errors.push(`A pipeline keeps at most ${MAX_PROJECT_BLOCKS} blocks of its own.`);
+  }
+  const blocks: ProjectBlock[] = [];
+  for (const raw of list.slice(0, MAX_PROJECT_BLOCKS)) {
+    if (!isRecord(raw)) {
+      errors.push('A block of the project’s own is not one.');
+      continue;
+    }
+    const key = typeof raw.key === 'string' ? raw.key.trim() : '';
+    const name = typeof raw.name === 'string' ? raw.name.trim().slice(0, 200) : '';
+    const label = name || key || 'A block of the project’s own';
+    if (!BLOCK_KEY.test(key)) {
+      errors.push(
+        `${label} needs a key: lower case letters, digits and -, starting with a letter.`
+      );
+      continue;
+    }
+    if (blocks.some((b) => b.key === key)) {
+      errors.push(`The project has two blocks keyed ${key}.`);
+      continue;
+    }
+    if (!name) errors.push(`The project’s block ${key} needs a name.`);
+    const version =
+      typeof raw.version === 'number' && Number.isInteger(raw.version) && raw.version >= 1
+        ? raw.version
+        : 1;
+    const definition = readBlockDefinition(raw.definition);
+    if (!definition.ok) {
+      for (const error of definition.errors) errors.push(`${label}: ${error}`);
+      continue;
+    }
+    const description =
+      typeof raw.description === 'string' ? raw.description.trim().slice(0, 1000) : '';
+    blocks.push({
+      key,
+      name,
+      ...(description ? { description } : {}),
+      version,
+      definition: definition.value,
+    });
+  }
+  return blocks;
+}
+
+/**
+ * The block a step uses: the project's own of that key, at whatever
+ * version the pipeline holds, else the organization's at the step's.
+ */
+export function blockOfStep(
+  spec: PipelineSpec,
+  organization: (key: string, version: number) => PipelineBlock | null
+): (key: string, version: number) => PipelineBlock | null {
+  return (key, version) => {
+    const own = spec.blocks?.find((b) => b.key === key);
+    if (own) {
+      return {
+        key: own.key,
+        name: own.name,
+        version: own.version,
+        definition: own.definition,
+        project: true,
+      };
+    }
+    return organization(key, version);
+  };
 }
 
 // ——— rendering ———
@@ -196,13 +295,14 @@ function resolveParts(
 ): Read<{ part: Part; steps: RenderedStep[]; ids: string[] }[]> {
   const errors: string[] = [];
   const taken = new Set<string>();
+  const blockAt = blockOfStep(spec, context.block);
   const resolved = partsOf(spec).map((part) => {
     const prefix = part.environment ? slug(part.environment.name) : 'pull-request';
     const steps: RenderedStep[] = [];
     const ids: string[] = [];
     part.steps.forEach((step, index) => {
       const where = `${partName(part.environment?.name ?? null)}, step ${index + 1}`;
-      const block = context.block(step.block, step.version);
+      const block = blockAt(step.block, step.version);
       if (!block) {
         errors.push(`${where}: the organization has no block ${step.block} v${step.version}.`);
         return;
@@ -240,7 +340,8 @@ const NO_ALIASES = { aliasDuplicateObjects: false } as const;
 
 function marker(rendered: RenderedStep): string {
   const target = rendered.step.target ? `, target ${rendered.step.target}` : '';
-  return ` block: ${rendered.block.key}@v${rendered.block.version}${target}`;
+  const own = rendered.block.project ? ', this project’s own' : '';
+  return ` block: ${rendered.block.key}@v${rendered.block.version}${own}${target}`;
 }
 
 /** A Bitbucket deploy step that reports: signed with its own OIDC token, before and after. */
@@ -468,6 +569,7 @@ export function pipelineChecks(
   const add = (state: CheckState, text: string, fix: CheckFix = null, at?: PipelineCheck['at']) =>
     checks.push({ state, text, fix, ...(at ? { at } : {}) });
   const targetByName = new Map(targets.map((t) => [t.name, t]));
+  const blockAt = blockOfStep(spec, blocks.at);
 
   // The file itself.
   const rendered = renderPipeline(spec, {
@@ -490,9 +592,10 @@ export function pipelineChecks(
     const produced = new Set<string>();
     part.steps.forEach((step, index) => {
       const at = { environment: environmentName, index };
-      const block = blocks.at(step.block, step.version);
+      const block = blockAt(step.block, step.version);
       if (!block) return; // said above
-      const latest = blocks.latest(step.block);
+      // A project's own block has no published versions to fall behind.
+      const latest = block.project ? null : blocks.latest(step.block);
       if (latest && latest.version > step.version) {
         add(
           'warn',
@@ -608,7 +711,7 @@ export function pipelineChecks(
     add('warn', 'Pull requests run nothing: add a block that tests or builds.');
   }
   const deploys = spec.environments.some((e) =>
-    e.steps.some((step) => blocks.at(step.block, step.version)?.definition.kind === 'deploy')
+    e.steps.some((step) => blockAt(step.block, step.version)?.definition.kind === 'deploy')
   );
   if (deploys) {
     add(
