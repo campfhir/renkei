@@ -1,5 +1,8 @@
 /**
- * The Microsoft Fabric delegated scopes Renkei's Fabric connector uses —
+ * The Microsoft Fabric delegated scopes Renkei's Fabric connector uses to
+ * READ — changes to Fabric go through a code project's pipeline (pull
+ * requests the tools open, deployed by the "Fabric: deploy items" block as
+ * its own identity), so no option here writes —
  * grouped checkboxes via ScopePicker, the entra-developer-scopes.ts shape.
  * Pure data, importable from client components; the server config reader
  * re-exports the default.
@@ -30,7 +33,7 @@ export function shortFabricScope(scope: string): string {
 
 export const FABRIC_SCOPE_GROUPS: ScopeGroup[] = [
   { id: 'browse', label: 'Browsing' },
-  { id: 'build', label: 'Building' },
+  { id: 'build', label: 'Notebooks and pipelines' },
 ];
 
 export const FABRIC_SCOPE_OPTIONS: ScopeOption[] = [
@@ -65,52 +68,37 @@ export const FABRIC_SCOPE_OPTIONS: ScopeOption[] = [
     label: 'See capacities',
     hint:
       'fabric_list_capacities — the capacities the person may assign a workspace to, so ' +
-      'fabric_create_workspace_preview can put a new workspace on one by name.',
+      'fabric_setup_pipeline_preview can name one for an environment’s workspace.',
     userHint: 'See which Fabric capacities you can put a new workspace on.',
     group: 'browse',
     defaultChecked: true,
   },
   {
-    id: 'Workspace.ReadWrite.All',
-    scopes: [fabricScope('Workspace.Read.All'), fabricScope('Workspace.ReadWrite.All')],
-    label: 'Create and change workspaces',
-    hint:
-      'fabric_create_workspace_preview, fabric_update_workspace_preview (name, description) — ' +
-      'each preview + confirm on a card. Fabric still checks that the person may create ' +
-      'workspaces and is an admin of the one being changed.',
-    userHint:
-      'Create Fabric workspaces and rename or re-describe ones you administer — each change ' +
-      'confirmed by you on a card first.',
-    group: 'build',
-    defaultChecked: true,
-  },
-  {
     id: 'Notebook.ReadWrite.All',
     scopes: [fabricScope('Workspace.Read.All'), fabricScope('Notebook.ReadWrite.All')],
-    label: 'Read, create and edit notebooks',
+    label: 'Read notebooks',
     hint:
-      'fabric_get_notebook_definition (the notebook as Jupyter .ipynb — Fabric serves ' +
-      'definitions as a long-running operation, so this may finish later and notify the ' +
-      'person), fabric_create_notebook_preview, fabric_update_notebook_preview (rename, ' +
-      'describe, replace its content) — writes preview + confirm. Fabric requires ' +
-      'read-and-write access even to read a definition.',
+      'fabric_get_notebook_definition (the notebook as Jupyter .ipynb or Fabric’s git source — ' +
+      'Fabric serves definitions as a long-running operation, so this may finish later and ' +
+      'notify the person) and fabric_export_items_preview for notebooks (into a code project as ' +
+      'a pull request). Fabric requires read-and-write permission even to read a definition; ' +
+      'Renkei never writes with it — changes go through CI.',
     userHint:
-      'Read your notebooks’ code, create notebooks and change them — each change confirmed ' +
-      'by you on a card first.',
+      'Read your notebooks’ code, and copy them into a repository as a pull request. Changes ' +
+      'reach Fabric only through a pipeline, never from Renkei directly.',
     group: 'build',
     defaultChecked: true,
   },
   {
     id: 'DataPipeline.ReadWrite.All',
     scopes: [fabricScope('Workspace.Read.All'), fabricScope('DataPipeline.ReadWrite.All')],
-    label: 'Read, create and edit data pipelines',
+    label: 'Read data pipelines',
     hint:
-      'fabric_get_pipeline_definition (its activities as JSON, a long-running operation like ' +
-      'a notebook’s), fabric_create_pipeline_preview, fabric_update_pipeline_preview — writes ' +
-      'preview + confirm.',
+      'fabric_get_pipeline_definition (its activities as JSON, a long-running operation like a ' +
+      'notebook’s) and fabric_export_items_preview for pipelines. Read-and-write because Fabric ' +
+      'asks it to read a definition; Renkei never writes with it.',
     userHint:
-      'Read your data pipelines’ activities, create pipelines and change them — each change ' +
-      'confirmed by you on a card first.',
+      'Read your data pipelines’ activities, and copy them into a repository as a pull request.',
     group: 'build',
     defaultChecked: true,
   },

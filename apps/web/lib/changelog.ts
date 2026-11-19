@@ -46,6 +46,17 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-19',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Microsoft Fabric connector, deployed through CI',
+        detail:
+          "Connect Microsoft Fabric on its own card to browse your workspaces, lakehouse tables, notebooks and data pipelines from the Fabric page or a chat; a definition Fabric takes a while to prepare fills in live, and you are notified if you have moved on. Changes go through CI: a chat proposes notebooks, pipelines and each environment's workspace as a pull request on a code project, and the new Fabric building blocks deploy them when merged, signing in with the repository's OpenID Connect token.",
+      },
+    ],
+  },
+  {
     date: '2026-11-18',
     heading: 'CI and deployments',
     entries: [
@@ -96,12 +107,6 @@ export const CHANGELOG: ChangelogRelease[] = [
   {
     date: '2026-11-17',
     entries: [
-      {
-        kind: 'added',
-        title: 'Microsoft Fabric connector',
-        detail:
-          'Connect Microsoft Fabric on its own card to browse your workspaces, lakehouse tables, notebooks and data pipelines, and to create or change workspaces, notebooks and pipelines from a chat — each change confirmed on a card. A notebook or pipeline definition Fabric takes a while to prepare opens on a page that fills in live, and you are notified if you have moved on.',
-      },
       {
         kind: 'fixed',
         title: 'Code projects on a branch with a slash show their files',

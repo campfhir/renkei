@@ -19,6 +19,58 @@ jest.mock('../widgets', () => ({
   previewToolMeta: (uri: string) => ({ ui: { resourceUri: uri, kind: 'approval' } }),
 }));
 
+// The code project side: a GitHub project the person edits, and what a
+// pull request would carry (lib/fabric/repo.ts is tested on its own).
+const proposed: { files: { path: string; text: string }[]; base: string; title: string }[] = [];
+const pipelineWrites: unknown[] = [];
+jest.mock('@/lib/fabric/repo', () => ({
+  resolveRepoProject: jest.fn(async (_subject: string, ref: string) =>
+    ref === 'Sales repo' || ref === '99999999-9999-4999-8999-999999999999'
+      ? {
+          host: 'github',
+          project: {
+            id: '99999999-9999-4999-8999-999999999999',
+            name: 'Sales repo',
+            repo: { provider: 'github', fullName: 'acme/sales', branch: 'main' },
+          },
+        }
+      : `No code project named "${ref}" that you can open.`
+  ),
+  proposalBase: jest.fn(async (_project: unknown, asked?: string) => asked ?? 'develop'),
+  proposalBranch: () => 'renkei/fabric/test',
+  existingLogicalId: jest.fn(async (_c: unknown, _r: unknown, _b: string, path: string) =>
+    path === 'fabric/Load orders.Notebook/.platform' ? 'kept-logical-id' : null
+  ),
+  proposeFiles: jest.fn(
+    async (_caller: unknown, _repo: unknown, proposal: (typeof proposed)[number]) => {
+      proposed.push(proposal);
+      return {
+        ok: true,
+        url: 'https://github.com/acme/sales/pull/7',
+        branch: 'renkei/fabric/test',
+      };
+    }
+  ),
+}));
+jest.mock('@/lib/fabric/pipeline', () => ({
+  ...jest.requireActual('@/lib/fabric/pipeline'),
+  fabricBlockVersions: jest.fn(async () => ({ validate: 1, deploy: 1 })),
+  savedSpec: jest.fn(async () => ({
+    checks: [],
+    environments: [{ name: 'dev', branch: 'develop', steps: [] }],
+  })),
+  writeFabricPipeline: jest.fn(async (_c: unknown, _r: unknown, plan: unknown) => {
+    pipelineWrites.push(plan);
+    return {
+      ok: true,
+      url: 'https://github.com/acme/sales/pull/8',
+      branch: 'renkei/pipeline',
+      updated: false,
+      text: '',
+    };
+  }),
+}));
+
 import type { McpServer } from '@modelcontextprotocol/server';
 import { createMemoryDataStore, getDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import type { MCPToolContext } from '../common';
@@ -150,18 +202,24 @@ async function call(name: string, args: Record<string, unknown> = {}): Promise<T
 const text = (result: ToolResult) => result.content[0]?.text ?? '';
 
 describe('registration', () => {
-  it('a browse-only grant gets the reads and none of the writes', async () => {
+  it('a browse-only grant gets the reads and the pull-request tools, no definitions', async () => {
     const names = [...(await tools(['Workspace.Read.All', 'Item.Read.All'])).keys()].sort();
     expect(names).toEqual([
       'fabric_check_access',
+      'fabric_export_items_confirm',
+      'fabric_export_items_preview',
       'fabric_get_operation',
       'fabric_get_workspace',
       'fabric_list_items',
       'fabric_list_workspaces',
+      'fabric_propose_items_confirm',
+      'fabric_propose_items_preview',
+      'fabric_setup_pipeline_confirm',
+      'fabric_setup_pipeline_preview',
     ]);
   });
 
-  it('the full grant gets every read, definition and write', async () => {
+  it('the full grant gets every read and definition, and nothing writes to Fabric directly', async () => {
     const names = [...(await tools()).keys()];
     expect(names).toEqual(
       expect.arrayContaining([
@@ -169,11 +227,9 @@ describe('registration', () => {
         'fabric_list_capacities',
         'fabric_get_notebook_definition',
         'fabric_get_pipeline_definition',
-        'fabric_create_workspace_confirm',
-        'fabric_update_notebook_confirm',
-        'fabric_update_pipeline_confirm',
       ])
     );
+    expect(names.filter((name) => /^fabric_(create|update)_/.test(name))).toEqual([]);
   });
 });
 
@@ -302,132 +358,165 @@ describe('reading a notebook', () => {
   });
 });
 
-describe('writes are cards first', () => {
-  it('a new notebook is previewed with what it holds, and refused when it is not Jupyter', async () => {
-    const preview = await call('fabric_create_notebook_preview', {
-      workspace: 'Sales',
-      displayName: 'Daily load',
-      ipynb: IPYNB,
+describe('changes are pull requests', () => {
+  beforeEach(() => {
+    proposed.length = 0;
+    pipelineWrites.length = 0;
+  });
+
+  it('a new notebook is previewed as the folder it becomes, and refused when it is not a notebook', async () => {
+    const preview = await call('fabric_propose_items_preview', {
+      project: 'Sales repo',
+      items: [{ type: 'Notebook', displayName: 'Daily load', content: IPYNB }],
     });
     expect(preview.structuredContent).toMatchObject({
-      action: 'Create notebook',
-      confirmTool: 'fabric_create_notebook_confirm',
-      fields: [{ label: 'Content', value: '2 cell(s): 1 code, 1 markdown/raw · python' }],
-      confirmArgs: { workspaceId: WS, displayName: 'Daily load', content: IPYNB },
+      action: 'Propose Fabric change',
+      confirmTool: 'fabric_propose_items_confirm',
+      groupLists: [
+        {
+          label: 'Items',
+          groups: ['New fabric/Daily load.Notebook/ — notebook, 2 cell(s), 1 code'],
+        },
+      ],
+      confirmArgs: { projectId: '99999999-9999-4999-8999-999999999999', base: 'develop' },
     });
-    expect(requests.filter((r) => r.method !== 'GET')).toEqual([]);
+    expect(requests).toEqual([]);
+    expect(proposed).toEqual([]);
 
-    const refused = await call('fabric_create_notebook_preview', {
-      workspace: 'Sales',
-      displayName: 'Broken',
-      ipynb: '{"cells": "no"}',
+    const refused = await call('fabric_propose_items_preview', {
+      project: 'Sales repo',
+      items: [{ type: 'Notebook', displayName: 'Broken', content: '{"cells": "no"}' }],
     });
     expect(refused.isError).toBe(true);
   });
 
-  it('creating a notebook sends its definition as Fabric takes it and follows the operation', async () => {
-    fabric[`POST /workspaces/${WS}/notebooks`] = [
-      { status: 202, headers: { 'x-ms-operation-id': 'op-c', 'Retry-After': '1' } },
-    ];
-    fabric['GET /operations/op-c'] = [{ status: 200, body: { status: 'Succeeded' } }];
-    fabric['GET /operations/op-c/result'] = [
-      { status: 200, body: { id: NB, displayName: 'Daily load' } },
-    ];
-    const result = await call('fabric_create_notebook_confirm', {
-      workspaceId: WS,
-      workspaceName: 'Sales',
-      displayName: 'Daily load',
-      description: '',
-      content: IPYNB,
+  it('the confirm commits Fabric’s git format, keeping a replaced item’s logical id, and never calls Fabric', async () => {
+    const result = await call('fabric_propose_items_confirm', {
+      projectId: '99999999-9999-4999-8999-999999999999',
+      base: 'develop',
+      itemsDirectory: 'fabric',
+      items: [{ type: 'Notebook', displayName: 'Load orders', content: IPYNB }],
     });
     expect(text(result)).toMatch(
-      new RegExp(`^Created notebook "Daily load" in "Sales" — id ${NB}`)
+      /^Opened a pull request into develop with Load orders: https:\/\/github.com\/acme\/sales\/pull\/7/
     );
-    const sent = requests.find((r) => r.method === 'POST')?.body;
-    expect(sent).toEqual({
-      displayName: 'Daily load',
-      definition: {
-        format: 'ipynb',
-        parts: [
-          { path: 'notebook-content.ipynb', payload: b64(IPYNB), payloadType: 'InlineBase64' },
-        ],
-      },
-    });
+    expect(proposed).toHaveLength(1);
+    const files = proposed[0].files;
+    expect(files.map((f) => f.path)).toEqual([
+      'fabric/Load orders.Notebook/notebook-content.py',
+      'fabric/Load orders.Notebook/.platform',
+    ]);
+    expect(files[0].text.startsWith('# Fabric notebook source')).toBe(true);
+    expect(JSON.parse(files[1].text).config.logicalId).toBe('kept-logical-id');
+    expect(requests).toEqual([]);
   });
 
-  it('changing a notebook shows old against new and warns the content is replaced whole', async () => {
-    const preview = await call('fabric_update_notebook_preview', {
+  it('exporting reads each definition in Fabric’s git format and proposes it', async () => {
+    fabric[`POST /workspaces/${WS}/notebooks/${NB}/getDefinition?format=fabricGitSource`] = [
+      {
+        status: 200,
+        body: {
+          definition: {
+            parts: [
+              {
+                path: 'notebook-content.py',
+                payload: b64('# Fabric notebook source\n'),
+                payloadType: 'InlineBase64',
+              },
+              {
+                path: '.platform',
+                payload: b64('{"config":{"logicalId":"from-fabric"}}'),
+                payloadType: 'InlineBase64',
+              },
+            ],
+          },
+        },
+      },
+    ];
+    const preview = await call('fabric_export_items_preview', {
       workspace: 'Sales',
-      notebook: 'Load orders',
-      displayName: 'Load orders v2',
-      ipynb: IPYNB,
+      items: [{ type: 'Notebook', item: 'Load orders' }],
+      project: 'Sales repo',
     });
     expect(preview.structuredContent).toMatchObject({
-      tone: 'caution',
-      confirmArgs: { workspaceId: WS, itemId: NB, displayName: 'Load orders v2', content: IPYNB },
+      groupLists: [{ groups: ['Replaces fabric/Load orders.Notebook/ — from “Sales”'] }],
     });
-    const fields = (preview.structuredContent?.fields ?? []) as {
-      label: string;
-      oldValue?: string;
-    }[];
-    expect(fields.map((f) => f.label)).toEqual(['Name', 'Replaces', 'Content']);
-    expect(fields[0].oldValue).toBe('Load orders');
-  });
-
-  it('the confirm renames, then replaces the content, on the resolved ids', async () => {
-    fabric[`PATCH /workspaces/${WS}/notebooks/${NB}`] = [{ status: 200, body: { id: NB } }];
-    fabric[`POST /workspaces/${WS}/notebooks/${NB}/updateDefinition`] = [{ status: 200 }];
-    const result = await call('fabric_update_notebook_confirm', {
-      workspaceId: WS,
-      itemId: NB,
-      itemName: 'Load orders',
-      displayName: 'Load orders v2',
-      content: IPYNB,
-    });
+    const confirmArgs = preview.structuredContent?.confirmArgs as Record<string, unknown>;
+    const result = await call('fabric_export_items_confirm', confirmArgs);
     expect(text(result)).toMatch(
-      /^Notebook "Load orders v2": renamed to "Load orders v2", content replaced\./
+      /^Opened a pull request into develop with Load orders from “Sales”/
     );
-    expect(requests.map((r) => `${r.method} ${r.path}`)).toEqual([
-      `PATCH /workspaces/${WS}/notebooks/${NB}`,
-      `POST /workspaces/${WS}/notebooks/${NB}/updateDefinition`,
+    expect(proposed[0].files.map((f) => f.path)).toEqual([
+      'fabric/Load orders.Notebook/notebook-content.py',
+      'fabric/Load orders.Notebook/.platform',
     ]);
   });
 
-  it('a pipeline preview lists its activities; the workspace is created on the capacity named', async () => {
-    const pipeline = JSON.stringify({
-      properties: { activities: [{ name: 'Copy orders', type: 'Copy' }] },
-    });
-    const preview = await call('fabric_create_pipeline_preview', {
-      workspace: 'Sales',
-      displayName: 'Nightly',
-      pipelineJson: pipeline,
-    });
-    expect(preview.structuredContent).toMatchObject({
-      groupLists: [{ label: 'Activities', groups: ['Copy orders (Copy)'] }],
-    });
-
+  it('workspaces go through the pipeline: an environment’s workspace and capacity become its deploy step', async () => {
     fabric['GET /capacities'] = [
       {
         status: 200,
         body: { value: [{ id: CAP, displayName: 'F64 West', sku: 'F64', region: 'West US' }] },
       },
     ];
-    const workspacePreview = await call('fabric_create_workspace_preview', {
-      displayName: 'Finance',
-      capacity: 'F64 West',
+    const preview = await call('fabric_setup_pipeline_preview', {
+      project: 'Sales repo',
+      environments: [
+        { name: 'dev', workspaceName: 'Sales (dev)', capacity: 'F64 West' },
+        { name: 'production', branch: 'main', workspaceName: 'Sales', existingWorkspace: 'Sales' },
+      ],
     });
-    expect(workspacePreview.structuredContent).toMatchObject({
-      confirmArgs: { displayName: 'Finance', description: '', capacityId: CAP },
+    expect(preview.structuredContent).toMatchObject({
+      action: 'Set up Fabric deployment',
+      confirmArgs: {
+        environments: [
+          { name: 'dev', workspaceName: 'Sales (dev)', capacityId: CAP },
+          { name: 'production', branch: 'main', workspaceName: 'Sales', workspaceId: WS },
+        ],
+      },
     });
-    fabric['POST /workspaces'] = [{ status: 201, body: { id: WS2, displayName: 'Finance' } }];
-    await call('fabric_create_workspace_confirm', {
-      displayName: 'Finance',
-      description: '',
-      capacityId: CAP,
+    const confirmArgs = preview.structuredContent?.confirmArgs as Record<string, unknown>;
+    const result = await call('fabric_setup_pipeline_confirm', confirmArgs);
+    expect(text(result)).toMatch(
+      /^Opened the pipeline’s pull request: https:\/\/github.com\/acme\/sales\/pull\/8/
+    );
+    const plan = pipelineWrites[0] as {
+      spec: { checks: unknown[]; environments: { name: string; steps: unknown[] }[] };
+    };
+    expect(plan.spec.checks).toEqual([
+      { block: 'fabric-validate', version: 1, inputs: { items_directory: 'fabric' } },
+    ]);
+    expect(plan.spec.environments.map((e) => [e.name, e.steps])).toEqual([
+      [
+        'dev',
+        [
+          {
+            block: 'fabric-deploy',
+            version: 1,
+            inputs: { workspace_name: 'Sales (dev)', items_directory: 'fabric', capacity_id: CAP },
+          },
+        ],
+      ],
+      [
+        'production',
+        [
+          {
+            block: 'fabric-deploy',
+            version: 1,
+            inputs: { workspace_name: 'Sales', items_directory: 'fabric', workspace_id: WS },
+          },
+        ],
+      ],
+    ]);
+    // Workspaces were only read: nothing was created or renamed in Fabric.
+    expect(requests.filter((r) => r.method !== 'GET')).toEqual([]);
+  });
+
+  it('a project the person cannot change is refused before any card', async () => {
+    const result = await call('fabric_propose_items_preview', {
+      project: 'Someone else’s',
+      items: [{ type: 'Notebook', displayName: 'X', content: IPYNB }],
     });
-    expect(requests.find((r) => r.method === 'POST')?.body).toEqual({
-      displayName: 'Finance',
-      capacityId: CAP,
-    });
+    expect(result.isError).toBe(true);
   });
 });

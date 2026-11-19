@@ -8,7 +8,7 @@
  * definition, so the definition reads stand on the ReadWrite scopes.
  *
  * The `default:` branch is load-bearing: a new tool nobody mapped stands
- * on every write scope, which can only hide it, never under-gate it.
+ * on both definition scopes, which can only hide it, never under-gate it.
  */
 export function fabricScopeFor(toolName: string): string[] {
   switch (toolName) {
@@ -27,27 +27,27 @@ export function fabricScopeFor(toolName: string): string[] {
     case 'fabric_list_capacities':
       return ['Capacity.Read.All'];
 
-    case 'fabric_create_workspace_preview':
-    case 'fabric_create_workspace_confirm':
-    case 'fabric_update_workspace_preview':
-    case 'fabric_update_workspace_confirm':
-      return ['Workspace.Read.All', 'Workspace.ReadWrite.All'];
+    // Pull requests on a code project: nothing reaches Fabric until merged,
+    // so they stand on the workspace read the references resolve with; the
+    // code host's own grant is what the commit and pull request use.
+    case 'fabric_propose_items_preview':
+    case 'fabric_propose_items_confirm':
+    case 'fabric_setup_pipeline_preview':
+    case 'fabric_setup_pipeline_confirm':
+      return ['Workspace.Read.All'];
 
     case 'fabric_get_notebook_definition':
-    case 'fabric_create_notebook_preview':
-    case 'fabric_create_notebook_confirm':
-    case 'fabric_update_notebook_preview':
-    case 'fabric_update_notebook_confirm':
       return ['Workspace.Read.All', 'Notebook.ReadWrite.All'];
-
     case 'fabric_get_pipeline_definition':
-    case 'fabric_create_pipeline_preview':
-    case 'fabric_create_pipeline_confirm':
-    case 'fabric_update_pipeline_preview':
-    case 'fabric_update_pipeline_confirm':
       return ['Workspace.Read.All', 'DataPipeline.ReadWrite.All'];
 
+    // Reads definitions as fabric_get_*_definition do; each item's own
+    // scope is checked against the grant in the preview.
+    case 'fabric_export_items_preview':
+    case 'fabric_export_items_confirm':
+      return ['Workspace.Read.All'];
+
     default:
-      return ['Workspace.ReadWrite.All', 'Notebook.ReadWrite.All', 'DataPipeline.ReadWrite.All'];
+      return ['Notebook.ReadWrite.All', 'DataPipeline.ReadWrite.All'];
   }
 }

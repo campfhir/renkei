@@ -58,7 +58,11 @@ test('fabric: connect, browse a workspace, and watch a notebook definition arriv
   await page.goto('/admin/connectors/fabric');
   await expect(page.getByRole('heading', { name: 'Microsoft Fabric', level: 1 })).toBeVisible();
   const form = page.locator('[data-coach="admin-connector-form"]');
-  await expect(form.getByText('Read, create and edit notebooks')).toBeVisible();
+  // Read-only: changes go through CI, so nothing that changes a workspace is offered.
+  await expect(form.getByRole('checkbox', { name: /^Read notebooks/ })).toBeVisible();
+  await expect(form.getByRole('checkbox', { name: /^Create and change workspaces/ })).toHaveCount(
+    0
+  );
   await registerConnector(
     page.request,
     'fabric',

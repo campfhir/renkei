@@ -308,10 +308,11 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     configKey: 'fabric',
     label: 'Microsoft Fabric',
     summary:
-      'Work in Microsoft Fabric as yourself: browse workspaces, lakehouses and their tables, ' +
-      'read notebooks (as Jupyter .ipynb) and data pipelines, and create or change workspaces, ' +
-      'notebooks and pipelines — each change confirmed on a card. Reading a definition can take ' +
-      'Fabric a while; the page shows it arrive, and you are notified if you have moved on.',
+      'Work with Microsoft Fabric as yourself: browse workspaces, lakehouses and their tables, ' +
+      'and read notebooks and data pipelines. Changes go through CI: notebooks, pipelines and ' +
+      'workspaces are proposed as pull requests on a code project, and its pipeline deploys ' +
+      'them when merged. Reading a definition can take Fabric a while; the page shows it ' +
+      'arrive, and you are notified if you have moved on.',
     toolPrefix: 'fabric_*',
     category: 'microsoft',
     keywords: [

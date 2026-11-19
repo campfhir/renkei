@@ -7,14 +7,14 @@
  * (fabricScopeFor in ./scopes.ts).
  *
  * What it covers: workspaces (list, read, create, rename), what is in one
- * (items, a lakehouse's tables, capacities to put one on), notebooks and
- * data pipelines (read their definitions, create, rename, replace their
- * content). Reading a definition is a long-running operation in Fabric,
- * kept as a Fabric operation row that a page streams and the worker
- * finishes (./definitions.ts). Every write is preview + confirm on the
- * directory_action_preview card. Querying data and OneLake files come
- * later. Fabric stays the authority: the person's workspace role is
- * checked on every call.
+ * (items, a lakehouse's tables, capacities to put one on), and notebooks
+ * and data pipelines (read their definitions — a long-running operation in
+ * Fabric, kept as a Fabric operation row that a page streams and the
+ * worker finishes, ./definitions.ts). Nothing here writes to Fabric:
+ * changes are pull requests on a code project (./proposals.ts) — items in
+ * Fabric's git format, and each environment's workspace in the project's
+ * pipeline — deployed when merged, by the "Fabric: deploy items" block.
+ * Querying data and OneLake files come later.
  */
 
 import type { McpServer } from '@modelcontextprotocol/server';
@@ -24,7 +24,7 @@ import { fabricScopeFor } from './scopes';
 import type { FabricAuth } from './fabric-auth';
 import { registerReadTools } from './reads';
 import { registerDefinitionTools } from './definitions';
-import { registerWriteTools } from './writes';
+import { registerProposalTools } from './proposals';
 
 export const FABRIC_MCP_CONNECTOR = 'fabric';
 
@@ -36,5 +36,5 @@ export async function registerFabricTools(
   const server = withScopeGate(rawServer, context.fabricScopes, (name) => fabricScopeFor(name));
   await registerReadTools(server, context, auth);
   await registerDefinitionTools(server, context, auth);
-  await registerWriteTools(server, context, auth);
+  await registerProposalTools(server, context, auth);
 }

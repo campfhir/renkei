@@ -29,7 +29,9 @@ export default async function FabricPage(): Promise<React.ReactNode> {
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         Your workspaces, lakehouses, notebooks and data pipelines, with the role you hold in each.
         Fabric can take a while to hand over a definition: it opens on a page of its own that fills
-        in when Fabric is ready, and you are notified if you have moved on.
+        in when Fabric is ready, and you are notified if you have moved on. Changes go through CI —
+        ask in a chat to propose them to a code project, and its pipeline deploys them when merged
+        (see Deployments).
       </p>
       {!grant ? (
         <div className="rounded-lg border border-gray-200 p-4 text-sm dark:border-gray-800">

@@ -45,14 +45,14 @@ export default function FabricConnector({
         {connected && displayName ? (
           <>
             Connected as <strong>{displayName}</strong>. Workspaces, lakehouses, notebooks and data
-            pipelines are read and changed on this grant, with the role you hold in each workspace.
-            Every change is a card you confirm first.{' '}
+            pipelines are read on this grant, with the role you hold in each workspace. Changes go
+            through CI: a pull request on a code project, deployed by its pipeline.{' '}
             <Link href="/fabric" className="text-blue-600 hover:underline dark:text-blue-400">
               Open Fabric
             </Link>
           </>
         ) : (
-          'Browse your Fabric workspaces, lakehouses and their tables, read notebooks and data pipelines, and create or change workspaces, notebooks and pipelines — each change confirmed on a card. A separate connection from Microsoft 365 (Fabric is its own API in Entra); your workspace role still decides what you may do.'
+          'Browse your Fabric workspaces, lakehouses and their tables, and read notebooks and data pipelines. Changes go through CI: notebooks, pipelines and workspaces are proposed as pull requests on a code project and deployed by its pipeline. A separate connection from Microsoft 365 (Fabric is its own API in Entra).'
         )}
       </p>
 

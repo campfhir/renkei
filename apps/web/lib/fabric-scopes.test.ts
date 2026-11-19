@@ -27,10 +27,14 @@ describe('FABRIC_SCOPE_OPTIONS', () => {
     }
   });
 
-  it('carries the workspace read inside every building bundle', () => {
+  it('carries the workspace read inside every notebook and pipeline bundle', () => {
     for (const option of FABRIC_SCOPE_OPTIONS.filter((o) => o.group === 'build')) {
       expect(option.scopes).toContain(fabricScope('Workspace.Read.All'));
     }
+  });
+
+  it('asks for nothing that changes workspaces: that goes through CI', () => {
+    expect(DEFAULT_FABRIC_SCOPES.split(' ')).not.toContain(fabricScope('Workspace.ReadWrite.All'));
   });
 
   it('defaults to every option plus the identity scopes, once each, and nothing of Graph', () => {
