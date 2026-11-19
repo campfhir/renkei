@@ -64,7 +64,13 @@ export const CHANGELOG: ChangelogRelease[] = [
         kind: 'fixed',
         title: 'The pipeline assistant no longer stops halfway',
         detail:
-          'A large pipeline proposal that ran past the model’s reply limit, or a long read of the repository, used to end the answer at "Next I’ll propose the pipeline change" with nothing proposed. The assistant now keeps working until it answers, sending a cut-off proposal again in a shorter form.',
+          'A large pipeline proposal that ran past the model’s reply limit, or a long read of the repository, used to end the answer at "Next I’ll propose the pipeline change" with nothing proposed. The assistant now keeps working toward what you asked until it answers, sending a cut-off proposal again in a shorter form; after three proposals that do not read it stops and says what was wrong.',
+      },
+      {
+        kind: 'changed',
+        title: 'The pipeline assistant counts toward your usage',
+        detail:
+          'What the pipeline assistant spends on the model now shows in usage, as the spend of the person who asked.',
       },
       {
         kind: 'changed',

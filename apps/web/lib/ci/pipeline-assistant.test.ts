@@ -9,8 +9,10 @@
 
 import type { BlockDefinition, PipelineBlock } from '@renkei/ci-blocks';
 import {
+  MAX_ROUNDS,
   UNFINISHED,
   cleanPath,
+  gaveUp,
   readConversation,
   runPipelineAssistant,
   type AssistantDeps,
@@ -258,6 +260,58 @@ it('keeps going as long as it takes, reading until its budget is spent, then ans
     content: 'That is 40 directories already; propose from what you have seen.',
     isError: true,
   });
+});
+
+it('gives up after three proposals that do not read, saying what was wrong with the last', async () => {
+  const bad = (n: number) => ({
+    calls: [
+      {
+        name: 'propose_pipeline',
+        input: { summary: 'x', checks: [{ block: `nope-${n}`, version: 1 }], environments: [] },
+      },
+    ],
+  });
+  const complete = model([bad(1), bad(2), bad(3), { text: 'never asked' }]);
+  const reply = await runPipelineAssistant(input(), deps(complete));
+  expect(complete).toHaveBeenCalledTimes(3);
+  expect(reply).toMatchObject({
+    proposal: null,
+    reply: gaveUp(
+      [
+        'Pull requests, step 1: there is no block nope-3; use an organization block or add one to "blocks".',
+      ],
+      false
+    ),
+  });
+});
+
+it('counts a proposal cut off at the reply limit as a failed one, and keeps one that read', async () => {
+  const good = {
+    name: 'propose_pipeline',
+    input: { summary: 'Good.', checks: [], environments: [] },
+  };
+  const cut = { calls: [{ name: 'propose_pipeline', input: {} }], stop: 'max_tokens' as const };
+  const complete = model([{ calls: [good] }, cut, cut, cut, { text: 'never asked' }]);
+  const reply = await runPipelineAssistant(input(), deps(complete));
+  expect(complete).toHaveBeenCalledTimes(4);
+  expect(reply).toMatchObject({
+    proposal: { summary: 'Good.' },
+    reply: gaveUp(['It was cut off at the model’s reply limit before it was complete.'], true),
+  });
+});
+
+it('stops at the backstop of rounds and says it did not finish', async () => {
+  const complete: jest.Mock = jest.fn(async () => ({
+    ok: true,
+    val: {
+      content: [{ type: 'tool_use', id: 'c', name: 'no_such_tool', input: {} }],
+      stopReason: 'tool_use',
+      usage: { inputTokens: 1, outputTokens: 1 },
+    },
+  }));
+  const reply = await runPipelineAssistant(input(), deps(complete));
+  expect(complete).toHaveBeenCalledTimes(MAX_ROUNDS);
+  expect(reply).toMatchObject({ reply: UNFINISHED, proposal: null });
 });
 
 it('says it did not finish when its reply was cut off with nothing in it', async () => {
