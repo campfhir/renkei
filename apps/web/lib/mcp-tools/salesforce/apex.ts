@@ -1,4 +1,7 @@
 /**
+ * salesforce_list_apex: which Apex classes and triggers the org has, by
+ * name, a page at a time, without their source.
+ *
  * salesforce_read_apex: an Apex class's or trigger's source, a window of
  * numbered lines at a time, or the lines that mention something.
  *
@@ -15,14 +18,19 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import {
+  APEX_LIST_DEFAULT,
+  APEX_LIST_MAX,
   APEX_OBJECT,
   HIDDEN_BODY,
+  apexListPage,
+  apexListQuery,
   apexNameSuggestionQuery,
   apexSourceQuery,
   findInSource,
   isSoqlIdentifier,
   sourceLines,
   sourceWindow,
+  triggerEvents,
   type ApexKind,
 } from '@renkei/connector-salesforce';
 import type { MCPToolContext } from '../common';
@@ -80,11 +88,136 @@ function headerOf(found: Found, totalLines: number): string {
   );
 }
 
+/** One listed class or trigger, on one line. */
+function listLine(kind: ApexKind, record: Record<string, unknown>): string {
+  const ns = str(record.NamespacePrefix);
+  const events = kind === 'trigger' ? triggerEvents(record) : [];
+  const on =
+    kind === 'trigger' && str(record.TableEnumOrId)
+      ? ` on ${str(record.TableEnumOrId)}${events.length > 0 ? ` (${events.join(', ')})` : ''}`
+      : '';
+  const length =
+    typeof record.LengthWithoutComments === 'number' && record.LengthWithoutComments >= 0
+      ? `, ${record.LengthWithoutComments.toLocaleString('en-US')} characters`
+      : '';
+  const modified = str(record.LastModifiedDate).slice(0, 10);
+  const by = str(rec(record.LastModifiedBy).Name);
+  return (
+    `- ${ns ? `${ns}.` : ''}${str(record.Name)}${on} — API ${str(record.ApiVersion)}, ` +
+    `${str(record.Status)}${length}` +
+    (modified ? `, last changed ${modified}${by ? ` by ${by}` : ''}` : '')
+  );
+}
+
+const PLURAL: Record<ApexKind, string> = { class: 'classes', trigger: 'triggers' };
+
 export function registerApexReadTools(
   server: McpServer,
   context: MCPToolContext,
   auth: SalesforceAuth
 ): void {
+  server.registerTool(
+    'salesforce_list_apex',
+    {
+      title: 'Salesforce · Read — List Apex classes and triggers',
+      description:
+        'The Apex classes and triggers in the org, by name, without their source: API version, ' +
+        'status, size and who last changed each; for a trigger, the object it fires on and its ' +
+        'events. By default the org’s own code only (includePackages: true adds installed ' +
+        'packages’). Filter with nameContains, or object for the triggers on one object. Each ' +
+        'answer says how many match and, when there are more, the afterName to pass for the ' +
+        'next page. Read one with salesforce_read_apex.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        kind: z
+          .enum(['class', 'trigger'])
+          .optional()
+          .describe('Only classes or only triggers; default both.'),
+        nameContains: z
+          .string()
+          .min(1)
+          .max(80)
+          .optional()
+          .describe('Part of the name, case-insensitive, e.g. Account.'),
+        object: z
+          .string()
+          .optional()
+          .describe('Only the triggers on this object (API name, e.g. Account or Site_Visit__c).'),
+        includePackages: z
+          .boolean()
+          .optional()
+          .describe('Also list installed packages’ code (default false: the org’s own only).'),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(APEX_LIST_MAX)
+          .optional()
+          .describe(`How many of each kind to name (default ${APEX_LIST_DEFAULT}).`),
+        afterName: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('The next page: names after this one, as the previous answer said.'),
+      }),
+    },
+    async (args) => {
+      if (args.object !== undefined && !isSoqlIdentifier(args.object)) {
+        return errText(`"${args.object}" is not an object API name.`);
+      }
+      if (args.object && args.kind === 'class') {
+        return errText('Classes do not fire on an object; pass kind: "trigger" with object.');
+      }
+      const access = await readAccess(auth);
+      if (typeof access === 'string') return errText(access);
+      const kinds: ApexKind[] = args.kind
+        ? [args.kind]
+        : args.object
+          ? ['trigger']
+          : ['class', 'trigger'];
+      const limit = args.limit ?? APEX_LIST_DEFAULT;
+      const scope = args.includePackages ? '' : ' of the org’s own';
+      const filters = [
+        args.nameContains ? `with "${args.nameContains}" in the name` : '',
+        args.object ? `on ${args.object}` : '',
+        args.afterName ? `after ${args.afterName}` : '',
+      ].filter(Boolean);
+      const sections: string[] = [];
+      for (const kind of kinds) {
+        const page = await sfQueryPolicy(
+          context,
+          access,
+          apexListQuery(kind, {
+            nameContains: args.nameContains,
+            object: args.object,
+            includePackages: args.includePackages,
+            afterName: args.afterName,
+          })
+        );
+        if (!page.ok) return errText(`Apex ${PLURAL[kind]} could not be listed: ${page.error}`);
+        const { shown, afterName } = apexListPage(page.records, limit, page.next !== null);
+        const what = `Apex ${PLURAL[kind]}${scope}${filters.length > 0 ? ` ${filters.join(', ')}` : ''}`;
+        if (page.totalSize === 0) {
+          sections.push(`No ${what}.`);
+          continue;
+        }
+        sections.push(
+          [
+            `${page.totalSize} ${what}` +
+              (shown.length < page.totalSize ? ` — the first ${shown.length}:` : ':'),
+            ...shown.map((record) => listLine(kind, record)),
+            ...(afterName
+              ? [
+                  `More: call again with kind: "${kind}", afterName: "${afterName}" (and the same filters).`,
+                ]
+              : []),
+          ].join('\n')
+        );
+      }
+      return textResult(sections.join('\n\n'));
+    }
+  );
+
   server.registerTool(
     'salesforce_read_apex',
     {
@@ -96,7 +229,7 @@ export function registerApexReadTools(
         'of the code — pass lineNumbers: false for the source exactly as saved, to copy or edit. ' +
         'Pass `find` to get the line numbers that mention a method, field or text, then read ' +
         'around them. Use this rather than salesforce_query for Apex source: a query returns the ' +
-        'body as one string, cut short.',
+        'body as one string, cut short. To find a name, use salesforce_list_apex.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         name: z.string().min(1).describe('The class or trigger name, e.g. AccountService.'),
