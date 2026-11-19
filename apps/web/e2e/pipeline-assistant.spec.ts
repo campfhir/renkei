@@ -1,7 +1,7 @@
 /**
  * The pipeline builder's assistant, end to end in a browser, on a
  * Bitbucket repository: an operator asks it to tailor the pipeline; the
- * question reaches the server with the pipeline on screen; the model (the
+ * assistant opens from the app's floating dock; the question reaches the server with the pipeline on screen; the model (the
  * stub, on the project's own model) lists and reads the repository
  * through the stand-in host and proposes a pipeline with a block of the
  * project's own; applied, the block is in its row and in the file the
@@ -108,8 +108,14 @@ test('pipeline assistant: tailor a block to the source, apply it, make it reusab
 
     await page.goto(`/deployments/${projectId}/pipeline`);
     const main = page.getByRole('main');
-    const panel = main.getByRole('region', { name: 'Pipeline assistant' });
-    await expect(panel).toContainText('It reads this repository’s source', { timeout: 30_000 });
+    // The assistant floats in the dock, collapsed until its button is pressed.
+    const cta = page.getByRole('button', { name: 'Open the Pipeline assistant' });
+    await expect(main.getByRole('region', { name: 'Found in this repository' })).toBeVisible({
+      timeout: 30_000,
+    });
+    await cta.click();
+    const panel = page.getByRole('dialog', { name: 'Pipeline assistant' });
+    await expect(panel).toContainText('It reads this repository’s source');
 
     // --- Tailor it: the model reads the repository, then proposes. ---
     const ownBlock = {
@@ -184,6 +190,9 @@ test('pipeline assistant: tailor a block to the source, apply it, make it reusab
     await expect(file).toContainText(`# block: ${ownKey}@v1, this project’s own`);
     await main.getByRole('tab', { name: 'Builder' }).click();
 
+    // The window floats over the page: collapse it to reach Save.
+    await panel.getByRole('button', { name: 'Collapse the Pipeline assistant' }).click();
+    await expect(panel).toBeHidden();
     // Save keeps it with the project; a reload shows it saved.
     const saved = page.waitForResponse(
       (r) => r.url().endsWith('/pipeline-builder') && r.request().method() === 'PUT'
@@ -198,6 +207,8 @@ test('pipeline assistant: tailor a block to the source, apply it, make it reusab
     );
 
     // --- Reusable: an operator has it made a building block, saved as a draft. ---
+    // A reload leaves the dock collapsed and the conversation new.
+    await page.getByRole('button', { name: 'Open the Pipeline assistant' }).click();
     const reuse = scripted(`Make Build billing ${tag} reusable for other projects.`, [
       {
         tools: [
@@ -239,8 +250,7 @@ test('pipeline assistant: tailor a block to the source, apply it, make it reusab
 
     // At a phone's width: the panel is there, and nothing scrolls sideways.
     await page.setViewportSize({ width: 390, height: 844 });
-    await panel.scrollIntoViewIfNeeded();
-    await expect(panel).toBeVisible();
+    await expect(panel).toBeInViewport({ ratio: 1 });
     const overflow = await page.evaluate(() => {
       const frame = document.querySelector('main .overflow-y-auto');
       return Math.max(

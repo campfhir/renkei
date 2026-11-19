@@ -52,7 +52,7 @@ export const CHANGELOG: ChangelogRelease[] = [
         kind: 'added',
         title: 'Pipeline assistant: blocks tailored to the source',
         detail:
-          "A code project's Pipeline tab under Deployments has an assistant beside the builder: it reads the repository and proposes the pipeline with blocks written for this project where the organization's don't fit, which you apply, check and save as usual. Operators can have it turn one of those blocks into a general building block, saved as a draft in the catalogue to review and publish for every project.",
+          "A code project's Pipeline tab under Deployments has an assistant in a floating button you can drag to any corner, opening a window you resize to taste: it reads the repository and proposes the pipeline with blocks written for this project where the organization's don't fit, which you apply, check and save as usual. Operators can have it turn one of those blocks into a general building block, saved as a draft in the catalogue to review and publish for every project.",
       },
       {
         kind: 'added',

@@ -1,7 +1,8 @@
 'use client';
 
 /**
- * The pipeline builder's assistant: a chat beside the pipeline that reads
+ * The pipeline builder's assistant, drawn in the app's floating dock
+ * (components/assistant-dock): a chat that reads
  * the repository and tailors the blocks to its source. Each answer can
  * carry a proposal — the pipeline as it would be, with blocks of the
  * project's own — that the person applies to the builder; nothing is
@@ -26,7 +27,6 @@ import {
   type AssistantState,
 } from './pipeline-assistant.model';
 import {
-  cardClass,
   inputClass,
   linkButtonClass,
   primaryButtonClass,
@@ -62,9 +62,11 @@ export default function PipelineAssistant({
   }, [count, state.busy]);
 
   return (
-    <section aria-label="Pipeline assistant" className={`${cardClass} space-y-3`}>
+    <div className="flex h-full flex-col gap-3 p-3">
       <div className="flex items-baseline gap-2">
-        <h2 className="text-sm font-semibold">Tailor it with the assistant</h2>
+        <p className="text-xs font-semibold text-gray-600 dark:text-gray-400">
+          Tailor the pipeline to this repository
+        </p>
         {count > 0 ? (
           <button
             type="button"
@@ -77,7 +79,7 @@ export default function PipelineAssistant({
         ) : null}
       </div>
       {count === 0 ? (
-        <p className="text-xs text-gray-500">
+        <p className="min-h-0 flex-1 overflow-y-auto text-xs text-gray-500">
           It reads this repository’s source and fits the blocks to it, writing blocks of this
           project’s own where the organization’s don’t fit.
           {operator
@@ -91,7 +93,7 @@ export default function PipelineAssistant({
         <ol
           ref={thread}
           aria-label="Conversation"
-          className="max-h-[28rem] space-y-3 overflow-y-auto pr-1"
+          className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1"
         >
           {state.messages.map((message) => (
             <li key={message.id}>
@@ -130,7 +132,7 @@ export default function PipelineAssistant({
           e.preventDefault();
           if (canAsk(state)) onAsk(state.draft);
         }}
-        className="space-y-2"
+        className="shrink-0 space-y-2"
       >
         <label className="sr-only" htmlFor="pipeline-assistant-question">
           Ask the assistant
@@ -154,7 +156,7 @@ export default function PipelineAssistant({
           {state.busy ? 'Working…' : 'Ask'}
         </button>
       </form>
-    </section>
+    </div>
   );
 }
 

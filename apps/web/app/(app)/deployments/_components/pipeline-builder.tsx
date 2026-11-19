@@ -8,7 +8,9 @@
  * organization's blocks — on every pull request, then each environment's
  * branch — or the file it writes, the checks before it runs, and Save and
  * "Open a pull request". One column on a phone; the checks beside the rows
- * on a wide screen. What the page decides is pipeline-builder.model.ts.
+ * on a wide screen. Editors get the assistant in the app's floating dock
+ * (components/assistant-dock), which tailors the blocks to the source. What
+ * the page decides is pipeline-builder.model.ts.
  */
 
 import { useCallback, useEffect, useReducer, useRef, type Dispatch } from 'react';
@@ -37,6 +39,7 @@ import {
   type PartCard,
   type StepCard,
 } from './pipeline-builder.model';
+import { AssistantDockPanel, useAssistantDock } from '@/components/assistant-dock/assistant-dock';
 import PipelineAssistant from './pipeline-assistant';
 import {
   askRequest,
@@ -95,6 +98,7 @@ export default function PipelineBuilder({
   const [state, dispatch] = useReducer(builderReducer, initialBuilder);
   const [assistant, assistantDispatch] = useReducer(assistantReducer, initialAssistant);
   const nextId = useRef(0);
+  const dock = useAssistantDock();
   const url = `/api/code/projects/${projectId}/pipeline-builder`;
 
   const load = useCallback(
@@ -283,6 +287,22 @@ export default function PipelineBuilder({
               </div>
             ) : null}
 
+            {data.canEdit ? (
+              // The assistant floats above the page, in the app's dock.
+              <AssistantDockPanel id="pipeline-assistant" title="Pipeline assistant">
+                <PipelineAssistant
+                  state={assistant}
+                  dispatch={assistantDispatch}
+                  spec={state.spec}
+                  blockName={blockName}
+                  operator={operator}
+                  onAsk={(text) => void ask(text)}
+                  onApply={apply}
+                  onSaveBlock={(message) => void saveBlock(message)}
+                />
+              </AssistantDockPanel>
+            ) : null}
+
             <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
               <div className="min-w-0 space-y-4">
                 <div
@@ -314,7 +334,10 @@ export default function PipelineBuilder({
                       state={state}
                       operator={operator}
                       busy={assistant.busy}
-                      onReuse={(block) => void ask(reuseQuestion(block))}
+                      onReuse={(block) => {
+                        dock.open();
+                        void ask(reuseQuestion(block));
+                      }}
                     />
                   </>
                 ) : (
@@ -323,18 +346,6 @@ export default function PipelineBuilder({
               </div>
 
               <aside className="min-w-0 space-y-4">
-                {data.canEdit ? (
-                  <PipelineAssistant
-                    state={assistant}
-                    dispatch={assistantDispatch}
-                    spec={state.spec}
-                    blockName={blockName}
-                    operator={operator}
-                    onAsk={(text) => void ask(text)}
-                    onApply={apply}
-                    onSaveBlock={(message) => void saveBlock(message)}
-                  />
-                ) : null}
                 <ChecksPanel state={state} dispatch={dispatch} projectId={projectId} host={host} />
                 <section className={`${cardClass} space-y-2`} aria-label="Open a pull request">
                   <button
