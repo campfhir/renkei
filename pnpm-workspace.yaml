@@ -16,7 +16,7 @@ catalog:
   # declare pdfjs itself, and a catalog entry is what keeps those declarations
   # from drifting apart: one exact pin, so `pnpm audit` has a single version to
   # talk about and no app can silently resolve a different one.
-  pdfjs-dist: 6.4.299
+  pdfjs-dist: 6.5.438
 # A release has to be a day old before pnpm will resolve to it: the window
 # in which a hijacked package's malicious version is usually noticed and
 # pulled. Exact pins already in the lockfile are unaffected; this governs
