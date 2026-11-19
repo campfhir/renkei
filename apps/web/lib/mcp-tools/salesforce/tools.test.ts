@@ -614,6 +614,85 @@ describe('Apex source', () => {
   });
 });
 
+describe('Apex listing', () => {
+  const classRow = (Name: string, NamespacePrefix: string | null = null) => ({
+    Id: `01p${Name}`,
+    Name,
+    NamespacePrefix,
+    ApiVersion: 62,
+    Status: 'Active',
+    LengthWithoutComments: 1234,
+    LastModifiedDate: '2026-10-02T09:00:00.000+0000',
+    LastModifiedBy: { Name: 'Ada Lovelace' },
+  });
+  let queries: string[];
+
+  beforeEach(() => {
+    queries = [];
+    override = (method, path, query) => {
+      if (method !== 'GET' || path !== `${V}/query`) return undefined;
+      const q = new URLSearchParams(query).get('q') ?? '';
+      queries.push(q);
+      if (/FROM ApexClass WHERE NamespacePrefix = null AND Name > 'BillingService'/.test(q))
+        return answer(200, { totalSize: 1, done: true, records: [classRow('ZedJob')] });
+      if (/FROM ApexClass WHERE NamespacePrefix = null/.test(q))
+        return answer(200, {
+          totalSize: 3,
+          done: true,
+          records: [classRow('AccountService'), classRow('BillingService'), classRow('ZedJob')],
+        });
+      if (/FROM ApexTrigger WHERE NamespacePrefix = null AND TableEnumOrId = 'Account'/.test(q))
+        return answer(200, {
+          totalSize: 1,
+          done: true,
+          records: [
+            {
+              ...classRow('AccountTrigger'),
+              TableEnumOrId: 'Account',
+              UsageBeforeInsert: true,
+              UsageAfterUpdate: true,
+            },
+          ],
+        });
+      if (/FROM ApexTrigger/.test(q)) return answer(200, { totalSize: 0, done: true, records: [] });
+      return undefined;
+    };
+  });
+
+  it("lists the org's own classes and triggers by name, without their source", async () => {
+    const result = await call('salesforce_list_apex', {});
+    expect(result.isError).toBeUndefined();
+    expect(text(result)).toContain('3 Apex classes of the org’s own:');
+    expect(text(result)).toContain(
+      '- AccountService — API 62, Active, 1,234 characters, last changed 2026-10-02 by Ada Lovelace'
+    );
+    expect(text(result)).toContain('No Apex triggers of the org’s own.');
+    expect(queries.every((q) => !q.includes('Body'))).toBe(true);
+  });
+
+  it('pages by name, saying where the next page starts', async () => {
+    const first = await call('salesforce_list_apex', { kind: 'class', limit: 2 });
+    expect(text(first)).toContain('3 Apex classes of the org’s own — the first 2:');
+    expect(text(first)).not.toContain('ZedJob');
+    expect(text(first)).toContain('afterName: "BillingService"');
+
+    const next = await call('salesforce_list_apex', { kind: 'class', afterName: 'BillingService' });
+    expect(text(next)).toContain('- ZedJob');
+    expect(text(next)).not.toContain('More:');
+  });
+
+  it("lists an object's triggers with the events they fire on", async () => {
+    const result = await call('salesforce_list_apex', { object: 'Account' });
+    expect(text(result)).toContain(
+      '- AccountTrigger on Account (before insert, after update) — API 62'
+    );
+    expect(queries.some((q) => q.includes('FROM ApexClass'))).toBe(false);
+
+    const refused = await call('salesforce_list_apex', { kind: 'class', object: 'Account' });
+    expect(refused.isError).toBe(true);
+  });
+});
+
 describe('cards first', () => {
   it('previews a delete with what goes with it, and confirms on ids, all or none', async () => {
     const preview = await call('salesforce_delete_records_preview', {
