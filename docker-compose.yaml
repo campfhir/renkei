@@ -151,7 +151,7 @@ services:
   # ecosystem in .github/dependabot.yml). The scan of this image is the
   # operator's: CI scans only the images it builds.
   postgres:
-    image: pgvector/pgvector:pg16@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a
+    image: pgvector/pgvector:pg16@sha256:0dd3149a06e4579a0d70d8fef9945636cd514005e7237deb27f9b67886f8dc4f
     container_name: renkei-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-renkei}
