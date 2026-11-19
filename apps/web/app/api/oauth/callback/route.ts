@@ -25,6 +25,7 @@ import {
 import { getWebexUserApp } from '@/lib/webex-app';
 import { getMicrosoftApp, type MicrosoftApp } from '@/lib/microsoft-app';
 import { getEntraDeveloperApp } from '@/lib/entra-developer-app';
+import { getFabricApp } from '@/lib/fabric-app';
 import { getZoomApp } from '@/lib/zoom-app';
 import { getDataStore, type ActorFields } from '@renkei/db';
 import { webhookEventsQueue } from '@renkei/queue';
@@ -37,6 +38,7 @@ import {
   WEBEX_USER,
   MICROSOFT,
   ENTRA_DEVELOPER,
+  FABRIC,
   ZOOM,
   ONBASE,
   ONBASE_ADMIN,
@@ -174,6 +176,8 @@ function connectorLabel(provider: string | null): string {
       return 'Microsoft 365';
     case ENTRA_DEVELOPER:
       return 'Entra Developer';
+    case FABRIC:
+      return 'Microsoft Fabric';
     case ZOOM:
       return 'Zoom';
     case 'onbase':
@@ -459,6 +463,12 @@ async function handleCallback(
         code,
         pendingSignIn.scopes
       );
+    }
+    if (pendingSignIn.provider === FABRIC) {
+      // A THIRD Entra app registration (lib/fabric-app.ts), whose token is
+      // for Fabric's API alone: the same exchange, identified from the
+      // id_token only, since the token cannot read Graph's /me.
+      return handleFabricCallback(request, pendingSignIn.subject, code, pendingSignIn.scopes);
     }
     const salesforceKind = salesforceKindOfProvider(pendingSignIn.provider ?? '');
     if (salesforceKind) {
@@ -1595,9 +1605,13 @@ interface MicrosoftExchange {
  * Exchange an authorization code at the org's own tenant token endpoint
  * (the delegate builds it from `directoryTenantId`) and identify who
  * granted — the id_token claims (oid, tid, preferred_username) with GET /me
- * on the pending token as fallback. Shared by the Microsoft 365 and Entra
- * Developer callbacks: two app registrations, one exchange. A NextResponse
- * is the failure already phrased for the browser.
+ * on the pending token as fallback. Shared by the Microsoft 365, Entra
+ * Developer and Fabric callbacks: three app registrations, one exchange. A
+ * NextResponse is the failure already phrased for the browser.
+ *
+ * `graphFallback: false` for a token minted for another resource (Fabric):
+ * it cannot read Graph, so the id_token is the only witness — openid and
+ * profile are always requested, so oid and preferred_username are there.
  */
 async function exchangeMicrosoftCode(
   label: string,
@@ -1605,7 +1619,8 @@ async function exchangeMicrosoftCode(
   provider: string,
   code: string,
   requestedScopes: string | null,
-  actor: ActorFields
+  actor: ActorFields,
+  graphFallback = true
 ): Promise<MicrosoftExchange | NextResponse> {
   const exchanged = await delegateGrants().exchange({
     provider,
@@ -1630,7 +1645,7 @@ async function exchangeMicrosoftCode(
   let displayName = typeof claims?.name === 'string' ? claims.name : null;
   let email = typeof claims?.email === 'string' ? claims.email : null;
 
-  if (!oid || !upn || !email) {
+  if (graphFallback && (!oid || !upn || !email)) {
     const pending = grantFetch({ provider, pending: handle });
     const meResponse = await pendingGet(pending, 'https://graph.microsoft.com/v1.0/me', actor);
     const me = await jsonRecord(meResponse);
@@ -1729,6 +1744,85 @@ async function handleEntraDeveloperCallback(
     action: 'connector.connected',
     targetKind: 'connector',
     targetLabel: ENTRA_DEVELOPER,
+  });
+  invalidateToolCatalogCache(subject);
+  return NextResponse.redirect(new URL(`/connectors`, originResult.val));
+}
+
+/**
+ * Complete the OAuth flow for the Microsoft Fabric app — the THIRD Entra
+ * app registration (lib/fabric-app.ts). Same exchange as the other two,
+ * identified from the id_token alone (the token is for Fabric, not Graph),
+ * stored under its own grant provider; no `grant.connected` event, since
+ * nothing is indexed.
+ */
+async function handleFabricCallback(
+  request: NextRequest,
+  subject: string | null,
+  code: string,
+  requestedScopes: string | null
+): Promise<NextResponse> {
+  if (!subject) {
+    logger.error(
+      'a Microsoft Fabric connect callback arrived on a pending row that names no person; no grant can be owned, so the person was sent to sign in again',
+      { component: 'auth/oauth' }
+    );
+    return NextResponse.json(
+      { error: 'Sign in again before connecting Microsoft Fabric' },
+      { status: 400 }
+    );
+  }
+  const actor = await whoIs(subject);
+
+  const originResult = await getOrigin(request);
+  if (!originResult.ok) return originFailed('Microsoft Fabric', actor, originResult.err);
+  const app = await getFabricApp(originResult.val);
+  if (!app) {
+    return NextResponse.json(
+      { error: 'Microsoft Fabric integration not configured for this organization' },
+      { status: 503 }
+    );
+  }
+
+  const exchanged = await exchangeMicrosoftCode(
+    'Microsoft Fabric',
+    app,
+    FABRIC,
+    code,
+    requestedScopes,
+    actor,
+    false
+  );
+  if (exchanged instanceof NextResponse) return exchanged;
+  const { handle, oid, tid, upn, displayName, email } = exchanged;
+
+  const stored = await delegateGrants().commit({
+    provider: FABRIC,
+    handle,
+    subject,
+    accountId: oid,
+    displayName: displayName ?? upn,
+    clientId: app.clientId,
+    requestedScopes: (requestedScopes || app.scopes).split(' '),
+    // tid keeps refresh pointed at the right authority; upn names the
+    // person on the card and in the tools' "connected as" line.
+    metadata: { tid, upn, email: email ?? null },
+  });
+  if (!stored.ok) return storeFailed('Microsoft Fabric', actor, stored.err);
+
+  logger.info('{actor} connected Microsoft Fabric as {upn}; sent back to the connectors page', {
+    component: 'auth/oauth',
+    ...actor,
+    accountId: oid,
+    tid,
+    upn,
+    microsoftUser: displayName ?? upn,
+  });
+  recordAuditEvent({
+    actorSubject: subject,
+    action: 'connector.connected',
+    targetKind: 'connector',
+    targetLabel: FABRIC,
   });
   invalidateToolCatalogCache(subject);
   return NextResponse.redirect(new URL(`/connectors`, originResult.val));

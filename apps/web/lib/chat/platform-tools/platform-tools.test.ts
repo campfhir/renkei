@@ -5,7 +5,7 @@
  * else.
  */
 
-import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
+import { createMemoryDataStore, getDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { getThemePrefs } from '@renkei/user-prefs';
 import { UTILIZATION_PERIODS } from '@/app/(app)/utilization/window';
 import { ROLE_OPERATOR, ROLE_USER } from '@/lib/access';
@@ -198,6 +198,31 @@ describe('renkei_link', () => {
     expect(mine.text).toContain(`${ORIGIN}/chat/prompts/${libraryId}`);
     const theirs = await call('renkei_link', { to: 'quarterly' }, contextFor('grace'));
     expect(theirs.isError).toBe(true);
+  });
+
+  it('leads to the Fabric page only for someone who connected Fabric', async () => {
+    const before = await call('renkei_link', { to: 'lakehouse' });
+    expect(before.text).toContain(`${ORIGIN}/connectors#connector-fabric`);
+    expect(before.text).not.toContain(`${ORIGIN}/fabric)`);
+
+    await getDataStore().providerGrants.upsertSealed('fabric', {
+      accountId: 'oid-ada',
+      clientId: 'client',
+      displayName: 'Ada',
+      subject: ME,
+      encryptedAccessToken: 'sealed',
+      encryptedRefreshToken: 'sealed',
+      keepStoredRefreshToken: false,
+      expiresAt: new Date(Date.now() + 3600_000),
+      requestedScopes: [],
+      grantedScopes: null,
+      metadata: {},
+    });
+    const after = await call('renkei_link', { to: 'lakehouse' });
+    expect(after.text).toContain(`${ORIGIN}/fabric)`);
+    expect(after.text).not.toContain('#connector-fabric');
+    const listed = await call('renkei_link', {});
+    expect(listed.text).toContain(`[Fabric](${ORIGIN}/fabric)`);
   });
 
   it('lists the main pages when asked for nothing in particular', async () => {

@@ -40,6 +40,7 @@
     "@renkei/connector-onbase": "workspace:*",
     "@renkei/connector-salesforce": "workspace:*",
     "@renkei/connector-sandbox": "workspace:*",
+    "@renkei/connector-fabric": "workspace:*",
     "@renkei/connector-webex": "workspace:*",
     "@renkei/connector-zoom": "workspace:*",
     "@renkei/crypto": "workspace:*",

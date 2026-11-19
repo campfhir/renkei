@@ -21,6 +21,7 @@
     "@renkei/connector-config": "workspace:*",
     "@renkei/connector-microsoft": "workspace:*",
     "@renkei/connector-mistral-ocr": "workspace:*",
+    "@renkei/connector-fabric": "workspace:*",
     "@renkei/connector-webex": "workspace:*",
     "@renkei/connector-zoom": "workspace:*",
     "@renkei/crypto": "workspace:*",

@@ -246,6 +246,41 @@ export const CONNECTOR_TOURS: CoachMarkTour[] = [
     ],
   },
   {
+    id: 'connect-fabric',
+    area: 'Connectors',
+    version: 1,
+    title: 'Connecting Microsoft Fabric',
+    description:
+      'Fabric workspaces, lakehouses, notebooks and data pipelines, on a connection of its own.',
+    startPath: '/connectors',
+    autoStart: false,
+    requires: ['card-fabric'],
+    audience: 'everyone',
+    steps: [
+      {
+        id: 'card',
+        title: 'Your Fabric workspaces',
+        target: 'card-fabric',
+        placement: 'auto',
+        body: 'Browse your workspaces and lakehouse tables, read notebooks and data pipelines, and create or change them. Fabric is its own API in Microsoft’s sign-in, so it connects separately from Microsoft 365 — and your role in each workspace still decides what you may do.',
+      },
+      {
+        id: 'scopes',
+        title: 'What Renkei may do',
+        target: 'fabric-scopes',
+        placement: 'auto',
+        body: 'Seeing workspaces, seeing tables, and building notebooks, pipelines and workspaces are separate permissions. Leave out what you will not use; every change is a card you confirm before it reaches Fabric.',
+      },
+      {
+        id: 'connect',
+        title: 'Connect',
+        target: 'fabric-connect',
+        placement: 'auto',
+        body: 'Approve on Microsoft’s screen and come back connected. Reading a notebook can take Fabric a while: its page shows it arrive, and you are notified if you have moved on.',
+      },
+    ],
+  },
+  {
     id: 'connect-salesforce',
     area: 'Connectors',
     version: 1,

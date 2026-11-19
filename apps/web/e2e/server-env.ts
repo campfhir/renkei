@@ -46,6 +46,7 @@ export function memoryServerEnv(): Record<string, string> {
     GITHUB_API_BASE_URL: `${SANDBOX_STUB_URL}/github`,
     JIRA_ADMIN_API_BASE_URL: `${SANDBOX_STUB_URL}/jira`,
     JIRA_AUTOMATION_API_BASE_URL: `${SANDBOX_STUB_URL}/automation`,
+    FABRIC_API_BASE_URL: `${SANDBOX_STUB_URL}/fabric`,
     BLOB_STORE_PROVIDER: process.env.BLOB_STORE_PROVIDER ?? 'local',
     BLOB_STORE_LOCAL_DIR:
       process.env.BLOB_STORE_LOCAL_DIR ?? path.join(WEB, 'test-results', 'blobs'),

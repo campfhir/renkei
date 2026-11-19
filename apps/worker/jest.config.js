@@ -44,6 +44,7 @@ export default {
       '<rootDir>/../../packages/connector-mistral-ocr/src/index.ts',
     '^@renkei/connector-config$': '<rootDir>/../../packages/connector-config/src/index.ts',
     '^@renkei/connector-atlassian$': '<rootDir>/../../packages/connector-atlassian/src/index.ts',
+    '^@renkei/connector-fabric$': '<rootDir>/../../packages/connector-fabric/src/index.ts',
     '^@renkei/connector-webex$': '<rootDir>/../../packages/connector-webex/src/index.ts',
     '^@renkei/gates$': '<rootDir>/../../packages/gates/src/index.ts',
     '^@renkei/knowledge$': '<rootDir>/../../packages/knowledge/src/index.ts',

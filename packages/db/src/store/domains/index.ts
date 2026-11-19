@@ -91,6 +91,7 @@ import { resourceKeys } from './resource-keys';
 import { delegateSigningKeys } from './delegate-signing-keys';
 import { delegateAccessEvents } from './delegate-access-events';
 import { delegateGitTickets } from './delegate-git-tickets';
+import { fabricOperations } from './fabric-operations';
 import { sealedEnvelopes } from './sealed-envelopes';
 import { legacyEnvelopes } from './legacy-envelopes';
 import { advisoryLocks } from './advisory-locks';
@@ -184,6 +185,7 @@ export const DOMAINS = {
   delegateSigningKeys,
   delegateAccessEvents,
   delegateGitTickets,
+  fabricOperations,
   sealedEnvelopes,
   legacyEnvelopes,
   advisoryLocks,

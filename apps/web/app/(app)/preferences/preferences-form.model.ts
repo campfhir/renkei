@@ -47,6 +47,7 @@ export type DeliveryEvent =
   | 'runFailed'
   | 'agentEditedByOthers'
   | BatchEvent
+  | 'fabricDefinitionReady'
   | 'chatShared'
   | 'agentShared';
 
@@ -66,7 +67,7 @@ export type NotificationGroup =
  */
 export const GROUP_FIELDS: Record<NotificationGroup, readonly (keyof NotificationPrefs)[]> = {
   runs: ['runStarted', 'runFinished', 'runFailed', 'agentEditedByOthers'],
-  batch: ['batchStarted', 'batchFinished', 'batchFailed'],
+  batch: ['batchStarted', 'batchFinished', 'batchFailed', 'fabricDefinitionReady'],
   sharing: ['chatShared', 'agentShared'],
   pauses: ['approvalNeeded', 'questionAsked'],
   overrides: ['agentOverrides'],

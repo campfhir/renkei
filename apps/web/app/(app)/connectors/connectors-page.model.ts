@@ -18,6 +18,7 @@ import {
   ATLASSIAN_CONFLUENCE,
   ATLASSIAN_JSM,
   ENTRA_DEVELOPER,
+  FABRIC,
   GITHUB,
   MICROSOFT,
   ONBASE,
@@ -130,6 +131,7 @@ export function anyConnectorCard(shown: ReadonlySet<string>, mcpServerCount: num
     shown.has('webex') ||
     microsoftShownKeys(shown).length > 0 ||
     shown.has('entra-developer') ||
+    shown.has('fabric') ||
     shown.has('zoom') ||
     shown.has('github') ||
     shown.has('salesforce') ||
@@ -195,6 +197,7 @@ export type SingleCardKey =
   | 'webex'
   | 'microsoft'
   | 'entra-developer'
+  | 'fabric'
   | 'zoom'
   | 'github'
   | 'hyland'
@@ -250,6 +253,7 @@ export function connectorCards(input: CardsInput): ConnectorCard[] {
   if (shown.has('webex')) single('webex', missing(WEBEX_USER));
   if (microsoftShownKeys(shown).length > 0) single('microsoft', missing(MICROSOFT));
   if (shown.has('entra-developer')) single('entra-developer', missing(ENTRA_DEVELOPER));
+  if (shown.has('fabric')) single('fabric', missing(FABRIC));
   if (shown.has('zoom')) single('zoom', missing(ZOOM));
   if (shown.has('github')) single('github', missing(GITHUB));
 

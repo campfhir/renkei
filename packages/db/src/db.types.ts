@@ -1601,6 +1601,28 @@ export interface DelegateSigningKeys {
   singleton: Generated<boolean>;
 }
 
+export interface FabricOperations {
+  created_at: Generated<Timestamp>;
+  error: string | null;
+  finished_at: Timestamp | null;
+  format: string | null;
+  id: string;
+  item_id: string;
+  item_name: Generated<string>;
+  kind: string;
+  next_poll_at: Timestamp | null;
+  notified_at: Timestamp | null;
+  operation_id: string | null;
+  percent_complete: number | null;
+  result: Json | null;
+  status: Generated<string>;
+  subject: string;
+  updated_at: Generated<Timestamp>;
+  watched_at: Timestamp | null;
+  workspace_id: string;
+  workspace_name: Generated<string>;
+}
+
 export interface DelegateGitTickets {
   created_at: Generated<Timestamp>;
   expires_at: Timestamp;
@@ -1866,6 +1888,7 @@ export interface DB {
   chats: Chats;
   delegate_access_events: DelegateAccessEvents;
   delegate_git_tickets: DelegateGitTickets;
+  fabric_operations: FabricOperations;
   delegate_instances: DelegateInstances;
   delegate_signing_keys: DelegateSigningKeys;
   device_key_requests: DeviceKeyRequests;
