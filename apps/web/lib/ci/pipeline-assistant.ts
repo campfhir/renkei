@@ -47,12 +47,19 @@ import { isRecord } from '@renkei/guards';
 import type { Result } from '@campfhir/safe-functions/types';
 
 export const MAX_CONVERSATION_TURNS = 20;
+/** The reply when a turn ends before the model finished (out of rounds, cut off). */
+export const UNFINISHED =
+  'I ran out of room before I finished, so nothing is proposed yet; say “continue” and I will pick up from here.';
+export const UNFINISHED_AFTER_PROPOSING =
+  'I ran out of room before I finished; say “continue” if there is more to do.';
 export const MAX_MESSAGE_CHARS = 4_000;
-const MAX_ROUNDS = 12;
+const MAX_ROUNDS = 16;
+/** The last rounds are for proposing: reading is refused so it answers with what it has. */
+const PROPOSE_ROUNDS = 2;
 const MAX_FILE_READS = 25;
 const MAX_FILE_CHARS = 40_000;
 const MAX_LISTED = 300;
-const MAX_OUTPUT_TOKENS = 8_000;
+const MAX_OUTPUT_TOKENS = 16_000;
 const TIMEOUT_MS = 120_000;
 const BLOCK_KEY = /^[a-z][a-z0-9-]{1,79}$/;
 
@@ -200,6 +207,7 @@ function systemPrompt(input: AssistantInput): string {
       ? 'The person is an operator. When they ask to reuse a block in other projects, call propose_building_block with a general version of it: values only this project has (service names, paths, ports, URLs, image tags) become inputs, with this project’s value as the default only when it is a sensible default for others. Choose a key no organization block has.'
       : 'Only operators add blocks to the organization’s catalogue; if asked, say so.',
     '',
+    'Finish the job in this turn: when you say you will do something next (read a file, propose the pipeline), do it now with a tool call rather than ending your reply. Keep descriptions in a proposal to a few words so it fits in one reply.',
     'Keep replies short: say what you read, what you changed and why, and anything the person must still do (a variable to set, a target to pick). The person reviews and applies a proposal; nothing is saved until they do.',
   ].join('\n');
 }
@@ -406,8 +414,16 @@ export async function runPipelineAssistant(
   const said: string[] = [];
   const organizationKeys = [...new Set(input.blocks.map((b) => b.key))];
 
+  let round = 0;
   const run = async (name: string, raw: unknown): Promise<ToolOutcome> => {
     const args = isRecord(raw) ? raw : {};
+    if ((name === 'list_files' || name === 'read_file') && round > MAX_ROUNDS - PROPOSE_ROUNDS) {
+      return {
+        content:
+          'No more reading in this turn: call propose_pipeline now with what you have read, or answer in words.',
+        isError: true,
+      };
+    }
     if (name === 'list_files') {
       const path = cleanPath(args.path ?? '');
       if (path === null) return { content: 'That is not a path in the repository.', isError: true };
@@ -476,7 +492,10 @@ export async function runPipelineAssistant(
     return { content: `There is no tool ${name}.`, isError: true };
   };
 
-  for (let round = 1; round <= MAX_ROUNDS; round += 1) {
+  // Whether the model ended its turn itself; false when the rounds ran out
+  // or its reply was cut off mid-call, so its last words are not an answer.
+  let finished = false;
+  for (round = 1; round <= MAX_ROUNDS; round += 1) {
     await deps.onStep?.(round === 1 ? 'Thinking it over' : 'Thinking over what it found');
     const completion = await deps.complete({
       system: systemPrompt(input),
@@ -493,11 +512,27 @@ export async function runPipelineAssistant(
     const calls = content.filter(
       (block): block is Extract<LlmContentBlock, { type: 'tool_use' }> => block.type === 'tool_use'
     );
-    if (calls.length === 0 || completion.val.stopReason !== 'tool_use') break;
+    const cutOff = completion.val.stopReason === 'max_tokens';
+    if (calls.length === 0) {
+      finished = !cutOff || text.length > 0;
+      break;
+    }
+    if (!cutOff && completion.val.stopReason !== 'tool_use') {
+      finished = true;
+      break;
+    }
     messages.push({ role: 'assistant', content });
     const results: LlmContentBlock[] = [];
     for (const call of calls) {
-      const outcome = await run(call.name, call.input);
+      // A call cut off at the output limit carries a partial input: never
+      // run it, tell the model to send it again, smaller.
+      const outcome: ToolOutcome = cutOff
+        ? {
+            content:
+              'Your reply reached the output limit before this call was complete, so it was not used. Send it again, whole and more compact: short descriptions, no repeated text.',
+            isError: true,
+          }
+        : await run(call.name, call.input);
       results.push({
         type: 'tool_result',
         toolUseId: call.id,
@@ -508,10 +543,12 @@ export async function runPipelineAssistant(
     messages.push({ role: 'user', content: results });
   }
 
-  const reply =
-    said[said.length - 1] ??
-    (proposal || buildingBlock
-      ? 'Here is what I propose.'
-      : 'I could not finish in the steps I have; ask again, or narrow it down.');
+  const proposed = proposal !== null || buildingBlock !== null;
+  const last = said[said.length - 1];
+  const reply = finished
+    ? (last ?? (proposed ? 'Here is what I propose.' : UNFINISHED))
+    : proposed
+      ? `${last ?? 'Here is what I propose.'}\n\n${UNFINISHED_AFTER_PROPOSING}`
+      : UNFINISHED;
   return { reply, proposal, buildingBlock, read };
 }

@@ -9,6 +9,7 @@
 
 import type { BlockDefinition, PipelineBlock } from '@renkei/ci-blocks';
 import {
+  UNFINISHED,
   cleanPath,
   readConversation,
   runPipelineAssistant,
@@ -58,7 +59,11 @@ const input = (overrides: Partial<AssistantInput> = {}): AssistantInput => ({
   ...overrides,
 });
 
-type Step = { text?: string; calls?: { name: string; input: unknown }[] };
+type Step = {
+  text?: string;
+  calls?: { name: string; input: unknown }[];
+  stop?: 'end_turn' | 'tool_use' | 'max_tokens';
+};
 function model(steps: Step[]) {
   const complete = jest.fn();
   steps.forEach((step, n) => {
@@ -74,7 +79,7 @@ function model(steps: Step[]) {
             input: call.input,
           })),
         ],
-        stopReason: step.calls ? 'tool_use' : 'end_turn',
+        stopReason: step.stop ?? (step.calls ? 'tool_use' : 'end_turn'),
         usage: { inputTokens: 1, outputTokens: 1 },
       },
     });
@@ -200,6 +205,58 @@ it('sends a proposal that does not read back with what is wrong, and takes the c
     isError: true,
   });
   expect(reply).toMatchObject({ proposal: { summary: 'Fixed.' } });
+});
+
+it('sends a proposal cut off at the output limit back to be sent again, instead of answering with its preamble', async () => {
+  const whole = {
+    summary: 'Passes the variables to the runners.',
+    checks: [{ block: 'node-test', version: 1, inputs: {} }],
+    environments: [],
+  };
+  const complete = model([
+    {
+      text: 'Next I’ll propose the pipeline change.',
+      calls: [{ name: 'propose_pipeline', input: { summary: 'Passes' } }],
+      stop: 'max_tokens',
+    },
+    { calls: [{ name: 'propose_pipeline', input: whole }] },
+    { text: 'Apply it, then set the variables.' },
+  ]);
+  const reply = await runPipelineAssistant(input(), deps(complete));
+  expect(results(complete)[0]).toEqual({
+    content:
+      'Your reply reached the output limit before this call was complete, so it was not used. Send it again, whole and more compact: short descriptions, no repeated text.',
+    isError: true,
+  });
+  expect(reply).toMatchObject({
+    reply: 'Apply it, then set the variables.',
+    proposal: { summary: 'Passes the variables to the runners.' },
+  });
+});
+
+it('says it did not finish when its steps run out, rather than passing off what it was about to do', async () => {
+  let n = 0;
+  const complete: jest.Mock = jest.fn(async () => ({
+    ok: true,
+    val: {
+      content: [
+        { type: 'text', text: 'Next I’ll check where they are defined.' },
+        { type: 'tool_use', id: `call-${(n += 1)}`, name: 'list_files', input: {} },
+      ],
+      stopReason: 'tool_use',
+      usage: { inputTokens: 1, outputTokens: 1 },
+    },
+  }));
+  const d = deps(complete);
+  const reply = await runPipelineAssistant(input(), d);
+  expect(reply).toMatchObject({ reply: UNFINISHED, proposal: null });
+  // The last rounds refuse reading so it proposes with what it has.
+  expect(results(complete).at(-1)).toEqual({
+    content:
+      'No more reading in this turn: call propose_pipeline now with what you have read, or answer in words.',
+    isError: true,
+  });
+  expect(d.listFiles).toHaveBeenCalledTimes(complete.mock.calls.length - 2);
 });
 
 it('refuses a path out of the repository, and stops reading after its limit', async () => {
