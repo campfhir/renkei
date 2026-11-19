@@ -86,6 +86,7 @@ import { delegateSigningKeyScenarios } from './delegate-signing-keys/scenarios';
 import { delegateAccessEventScenarios } from './delegate-access-events/scenarios';
 import { delegateGitTicketScenarios } from './delegate-git-tickets/scenarios';
 import { fabricOperationScenarios } from './fabric-operations/scenarios';
+import { ciAssistantJobScenarios } from './ci-assistant-jobs/scenarios';
 import { sandboxInstanceScenarios } from './sandbox-instances/scenarios';
 import { sandboxScenarios } from './sandboxes/scenarios';
 import { sandboxArchiveScenarios } from './sandbox-archives/scenarios';
@@ -188,6 +189,7 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...delegateAccessEventScenarios,
   ...delegateGitTicketScenarios,
   ...fabricOperationScenarios,
+  ...ciAssistantJobScenarios,
   ...sandboxInstanceScenarios,
   ...sandboxScenarios,
   ...sandboxArchiveScenarios,

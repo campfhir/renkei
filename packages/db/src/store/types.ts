@@ -130,6 +130,7 @@ export type * from './domains/delegate-signing-keys';
 export type * from './domains/delegate-access-events';
 export type * from './domains/delegate-git-tickets';
 export type * from './domains/fabric-operations';
+export type * from './domains/ci-assistant-jobs';
 export type * from './domains/sealed-envelopes';
 export type * from './domains/legacy-envelopes';
 export type * from './domains/advisory-locks';

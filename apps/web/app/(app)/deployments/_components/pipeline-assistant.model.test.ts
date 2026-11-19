@@ -93,6 +93,46 @@ describe('asking', () => {
     expect(run([{ type: 'asked', id: 'q2', text: 'Again' }], refused).problems).toEqual([]);
   });
 
+  it('is worked out in the background: the job’s steps show, then its answer', () => {
+    const started = run([
+      { type: 'asked', id: 'q1', text: 'Build with pnpm' },
+      { type: 'started', job: 'job-1' },
+      { type: 'progressed', job: 'job-1', step: 'Reading package.json' },
+    ]);
+    expect(started).toMatchObject({ busy: true, job: 'job-1', step: 'Reading package.json' });
+    // Another job's steps are not this one's.
+    expect(run([{ type: 'progressed', job: 'job-0', step: 'x' }], started).step).toBe(
+      'Reading package.json'
+    );
+    const done = run([{ type: 'answered', id: 'a1', job: 'job-1', answer: answer() }], started);
+    expect(done).toMatchObject({ busy: false, job: null, step: null });
+    expect(done.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
+  });
+
+  it('an answer to a question given up on (a new conversation) is dropped', () => {
+    const abandoned = run([
+      { type: 'asked', id: 'q1', text: 'Build with pnpm' },
+      { type: 'started', job: 'job-1' },
+      { type: 'reset' },
+    ]);
+    expect(
+      run([{ type: 'answered', id: 'a1', job: 'job-1', answer: answer() }], abandoned)
+    ).toEqual(initialAssistant);
+    expect(
+      run([{ type: 'failed', job: 'job-1', error: 'interrupted' }], abandoned).error
+    ).toBeNull();
+    // A new question's job is followed instead.
+    const next = run(
+      [
+        { type: 'asked', id: 'q2', text: 'Again' },
+        { type: 'started', job: 'job-2' },
+        { type: 'answered', id: 'a1', job: 'job-1', answer: answer() },
+      ],
+      abandoned
+    );
+    expect(next).toMatchObject({ busy: true, job: 'job-2' });
+  });
+
   it('a failed question leaves the thread, goes back in the box, and says why', () => {
     const state = run([
       { type: 'draft', text: 'Build with pnpm' },

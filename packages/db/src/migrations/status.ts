@@ -213,6 +213,7 @@ export const EXPECTED_MIGRATIONS = [
   '187-drop-pipeline-templates',
   '188-fabric-operations',
   '189-fabric-ci-blocks',
+  '190-ci-assistant-jobs',
 ];
 
 export interface MigrationStatus {

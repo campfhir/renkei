@@ -276,7 +276,7 @@ describe('before it runs', () => {
         'Bitbucket has no deployment environment named dev: add it in the repository’s Deployments settings, or use one it has (Production).',
         null,
       ],
-      ['warn', 'develop does not exist yet: dev deploys once it does.', null],
+      ['warn', 'develop does not exist yet: the pull request makes it from main, and dev deploys once this pipeline reaches it.', null],
     ]);
   });
 

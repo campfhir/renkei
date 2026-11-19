@@ -115,7 +115,7 @@ export default function PipelineAssistant({
           ))}
           {state.busy ? (
             <li role="status" className="text-xs text-gray-500">
-              Reading the repository and working it out…
+              {state.step ? `${state.step}…` : 'Reading the repository and working it out…'}
             </li>
           ) : null}
         </ol>

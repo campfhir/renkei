@@ -716,6 +716,19 @@ export interface ChatWidgetDecisions {
   state_key: string;
 }
 
+export interface CiAssistantJobs {
+  created_at: Generated<Timestamp>;
+  error: string | null;
+  finished_at: Timestamp | null;
+  id: string;
+  project_id: string;
+  result: Json | null;
+  status: Generated<string>;
+  step: string | null;
+  subject: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface CiBlocks {
   created_at: Generated<Timestamp>;
   created_by: string | null;
@@ -1893,6 +1906,7 @@ export interface DB {
   delegate_signing_keys: DelegateSigningKeys;
   device_key_requests: DeviceKeyRequests;
   key_delegations: KeyDelegations;
+  ci_assistant_jobs: CiAssistantJobs;
   ci_block_versions: CiBlockVersions;
   ci_blocks: CiBlocks;
   ci_deployments: CiDeployments;

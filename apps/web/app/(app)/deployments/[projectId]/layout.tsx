@@ -20,20 +20,26 @@ export default async function DeploymentAppLayout({
   const app = await appProject(projectId, `/deployments/${projectId}`);
   return (
     <div className="mx-auto max-w-6xl space-y-4">
-      <BackLink href="/deployments" label="Deployments" />
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h1 className="font-mono text-xl font-bold break-all">{app.name}</h1>
-        <span className="text-sm text-gray-500">
-          {app.host === 'github' ? 'GitHub' : 'Bitbucket'} ·{' '}
-          <span className="font-mono break-all">{app.repo}</span>
-        </span>
-        <Link
-          href={`/code/${app.id}`}
-          className="text-sm text-blue-600 hover:underline dark:text-blue-400"
-        >
-          Open the code project
-        </Link>
-      </div>
+      {/* The chevron sits in the title row (components/back-link.tsx), the
+          repository and its link on the line under the name. */}
+      <header className="space-y-1">
+        <div className="flex items-center gap-2">
+          <BackLink href="/deployments" label="Deployments" />
+          <h1 className="min-w-0 font-mono text-xl font-bold break-all">{app.name}</h1>
+        </div>
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 pl-9">
+          <span className="text-sm text-gray-500">
+            {app.host === 'github' ? 'GitHub' : 'Bitbucket'} ·{' '}
+            <span className="font-mono break-all">{app.repo}</span>
+          </span>
+          <Link
+            href={`/code/${app.id}`}
+            className="text-sm text-blue-600 hover:underline dark:text-blue-400"
+          >
+            Open the code project
+          </Link>
+        </div>
+      </header>
       <AppTabs projectId={app.id} />
       {children}
     </div>

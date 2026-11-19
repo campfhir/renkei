@@ -175,6 +175,18 @@ test('pipeline builder: add a deploy, open the pull request, update it @smoke', 
     await shot(page, testInfo, 'pipeline-builder-00-file');
     await main.getByRole('tab', { name: 'Builder' }).click();
 
+    // An environment whose branch does not exist yet: the pull request makes it from main.
+    await main
+      .getByRole('button', { name: '+ Add an environment (a branch that deploys somewhere)' })
+      .click();
+    const environmentForm = main.getByRole('form', { name: 'Add an environment' });
+    await environmentForm.getByRole('textbox', { name: 'Environment' }).fill('staging');
+    await environmentForm.getByRole('textbox', { name: 'Deploys on merge to' }).fill('staging');
+    await environmentForm.getByRole('button', { name: 'Add environment' }).click();
+    await expect(checks).toContainText(
+      'staging does not exist yet: the pull request makes it from main'
+    );
+
     // The pull request, through the route and the host.
     const opened = page.waitForResponse(
       (r) => r.url().endsWith('/pipeline-builder/pull-request') && r.request().method() === 'POST'
@@ -182,7 +194,9 @@ test('pipeline builder: add a deploy, open the pull request, update it @smoke', 
     await main.getByRole('button', { name: 'Open a pull request with the pipeline' }).click();
     expect((await opened).status()).toBe(200);
     const status = main.getByRole('status');
-    await expect(status).toContainText('Pull request opened with the pipeline.');
+    await expect(status).toContainText(
+      'Pull request opened with the pipeline. staging did not exist, so it was made from main.'
+    );
     await expect(status.getByRole('link', { name: 'Open it on Bitbucket' })).toHaveAttribute(
       'href',
       `https://bitbucket.org/acme/pipeline-demo-${tag}/pull-requests/1`

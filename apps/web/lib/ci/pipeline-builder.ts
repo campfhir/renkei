@@ -347,7 +347,8 @@ export function pullRequestText(
   spec: PipelineSpec,
   blockName: (key: string) => string,
   host: Host,
-  replaces: boolean
+  replaces: boolean,
+  created: { branches: string[]; from: string } = { branches: [], from: '' }
 ): { title: string; description: string } {
   const row = (steps: PipelineSpec['checks']) =>
     steps.length > 0
@@ -362,6 +363,12 @@ export function pullRequestText(
     ),
     '',
     `Once merged, ${HOST_LABEL[host]} runs it: merging to an environment’s branch deploys that environment.`,
+    ...(created.branches.length > 0
+      ? [
+          '',
+          `${created.branches.map((b) => `\`${b}\``).join(', ')} did not exist, so Renkei made ${created.branches.length === 1 ? 'it' : 'them'} from \`${created.from}\`. ${created.branches.length === 1 ? 'It gets' : 'They get'} this pipeline once it is merged into \`${created.from}\` and promoted.`,
+        ]
+      : []),
   ];
   return {
     title: `${replaces ? 'Update' : 'Add'} the pipeline built from blocks`,
@@ -370,8 +377,68 @@ export function pullRequestText(
 }
 
 export type OpenOutcome =
-  | { ok: true; url: string; branch: string; updated: boolean; text: string }
+  | {
+      ok: true;
+      url: string;
+      branch: string;
+      updated: boolean;
+      text: string;
+      /** Environment branches the host lacked, made from the project's branch. */
+      created?: string[];
+    }
   | { ok: false; status: number; error: string; problems?: string[] };
+
+/**
+ * Make each environment branch the host does not have, from `sha` (the
+ * project's branch head): a pipeline that deploys `dev` from `develop`
+ * should not wait on someone to create `develop`. What is made, and the
+ * first refusal, in the host's words; nothing else is tried after one.
+ */
+export async function createMissingBranches(
+  caller: Caller,
+  project: CodeRepoProject,
+  spec: PipelineSpec,
+  existing: string[],
+  sha: string
+): Promise<{ created: string[]; error: string | null }> {
+  const host = hostOf(project.repo.provider);
+  const missing = [
+    ...new Set(spec.environments.map((e) => e.branch).filter((b) => !existing.includes(b))),
+  ];
+  const created: string[] = [];
+  for (const branch of missing) {
+    if (host === 'github') {
+      const target = ownerRepoOf(project.repo.fullName);
+      if (!target) return { created, error: 'The repository name is not usable.' };
+      const made = await ghJson(
+        githubAuthOf(caller),
+        ['repository:write'],
+        `/repos/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}/git/refs`,
+        { method: 'POST', json: { ref: `refs/heads/${branch}`, sha } }
+      );
+      if (!made.ok) return { created, error: `GitHub refused the branch ${branch}: ${made.error}` };
+    } else if (host === 'bitbucket') {
+      const base = repoBase(project.repo.fullName);
+      if (!base) return { created, error: 'The repository name is not usable.' };
+      const made = await bitbucketAuthOf(caller).fetch(
+        ['repository:write'],
+        `${base}/refs/branches`,
+        {
+          method: 'POST',
+          json: { name: branch, target: { hash: sha } },
+        }
+      );
+      if (!made.ok) {
+        return {
+          created,
+          error: `Bitbucket refused the branch ${branch}: ${await describeBitbucketFailure(made)}`,
+        };
+      }
+    }
+    created.push(branch);
+  }
+  return { created, error: null };
+}
 
 /** A branch name not taken yet: renkei/pipeline, else with the minute it was made. */
 export function freshBranch(taken: string[], now: Date): string {
@@ -570,9 +637,27 @@ export async function openPipelinePullRequest(
       error: `${HOST_LABEL[host]} did not list the branch ${base}, so there is nothing to open the pull request against.`,
     };
   }
+  // The environments' branches the host lacks are made from the project's branch.
+  const made = await createMissingBranches(
+    caller,
+    project,
+    spec,
+    read.branches.map((b) => b.name),
+    baseSha
+  );
+  if (made.error) {
+    return {
+      ok: false,
+      status: 502,
+      error: `${made.error}${made.created.length > 0 ? ` (made ${made.created.join(', ')} first)` : ''}; no pull request was opened.`,
+    };
+  }
   const nameOf = (key: string) =>
     spec.blocks?.find((b) => b.key === key)?.name ?? blocks.find((b) => b.key === key)?.name ?? key;
-  const text = pullRequestText(spec, nameOf, host, read.facts.existingFile !== null);
+  const text = pullRequestText(spec, nameOf, host, read.facts.existingFile !== null, {
+    branches: made.created,
+    from: base,
+  });
   const write: HostWrite = {
     caller,
     project,
@@ -591,6 +676,7 @@ export async function openPipelinePullRequest(
       text: outcome.text,
       pullRequestUrl: outcome.url,
     });
+    return { ...outcome, created: made.created };
   }
   return outcome;
 }
