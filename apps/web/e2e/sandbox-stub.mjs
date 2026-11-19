@@ -10,7 +10,8 @@
  * Started by playwright.config.ts as a second webServer, on the port the
  * app's SANDBOX_WORKER_URL names (see the repo-root .env.development).
  * The same process also stands in for Bitbucket, Jira administration's
- * option endpoints and Mistral OCR (handleMistralOcr below).
+ * option endpoints, Microsoft Fabric (handleFabric) and Mistral OCR
+ * (handleMistralOcr below).
  */
 
 /* global process, Buffer, setTimeout, URL, URLSearchParams, console */
@@ -3390,6 +3391,134 @@ async function handleMistralOcr(request, response) {
   });
 }
 
+/**
+ * Microsoft Fabric, stood in for (the app is pointed at /fabric with
+ * FABRIC_API_BASE_URL; the connect flow is the in-memory app's own fake
+ * OAuth). Stateless and the same for everyone: one workspace holding a
+ * notebook, a data pipeline and a lakehouse with two tables. Asking for a
+ * definition starts a long-running operation, as Fabric does: 202 with an
+ * operation id that carries when it started, Running (with a percentage)
+ * until FABRIC_DEFINITION_MS have passed, then Succeeded with the
+ * definition as its result — so a spec sees the wait, then the arrival.
+ */
+const FABRIC_DEFINITION_MS = Number(process.env.FABRIC_STUB_DEFINITION_MS ?? '4000');
+const FABRIC_WORKSPACE = '0f0f0f0f-0000-4000-8000-00000000f001';
+const FABRIC_NOTEBOOK = '0f0f0f0f-0000-4000-8000-00000000f002';
+const FABRIC_PIPELINE = '0f0f0f0f-0000-4000-8000-00000000f003';
+const FABRIC_LAKEHOUSE = '0f0f0f0f-0000-4000-8000-00000000f004';
+const FABRIC_ITEMS = [
+  { id: FABRIC_NOTEBOOK, displayName: 'Load orders', type: 'Notebook', description: 'Bronze to silver' },
+  { id: FABRIC_PIPELINE, displayName: 'Nightly load', type: 'DataPipeline', description: '' },
+  { id: FABRIC_LAKEHOUSE, displayName: 'Bronze', type: 'Lakehouse', description: '' },
+  { id: '0f0f0f0f-0000-4000-8000-00000000f005', displayName: 'Revenue', type: 'Report', description: '' },
+].map((item) => ({ ...item, workspaceId: FABRIC_WORKSPACE }));
+const FABRIC_NOTEBOOK_IPYNB = JSON.stringify({
+  nbformat: 4,
+  nbformat_minor: 5,
+  metadata: { language_info: { name: 'python' } },
+  cells: [
+    { cell_type: 'markdown', metadata: {}, source: ['# Load orders\n', 'Bronze to silver.'] },
+    {
+      cell_type: 'code',
+      metadata: {},
+      execution_count: null,
+      outputs: [],
+      source: ['df = spark.read.table("bronze.orders")\n', 'df.write.saveAsTable("silver.orders")'],
+    },
+  ],
+});
+const FABRIC_PIPELINE_JSON = JSON.stringify({
+  properties: {
+    activities: [
+      { name: 'Copy orders', type: 'Copy', dependsOn: [] },
+      {
+        name: 'Run Load orders',
+        type: 'TridentNotebook',
+        dependsOn: [{ activity: 'Copy orders', dependencyConditions: ['Succeeded'] }],
+      },
+    ],
+  },
+});
+
+function fabricDefinition(kind) {
+  const [path, text] =
+    kind === 'notebook'
+      ? ['notebook-content.ipynb', FABRIC_NOTEBOOK_IPYNB]
+      : ['pipeline-content.json', FABRIC_PIPELINE_JSON];
+  return {
+    definition: {
+      ...(kind === 'notebook' ? { format: 'ipynb' } : {}),
+      parts: [
+        { path, payload: Buffer.from(text).toString('base64'), payloadType: 'InlineBase64' },
+        {
+          path: '.platform',
+          payload: Buffer.from('{"metadata":{"type":"Notebook"}}').toString('base64'),
+          payloadType: 'InlineBase64',
+        },
+      ],
+    },
+  };
+}
+
+function handleFabric(request, url, response) {
+  const path = url.pathname.replace(/^\/fabric\/v1/, '');
+  if (!request.headers.authorization) return json(response, 401, { errorCode: 'Unauthorized' });
+  if (request.method === 'GET' && path === '/workspaces') {
+    return json(response, 200, {
+      value: [
+        { id: FABRIC_WORKSPACE, displayName: 'Sales Analytics', type: 'Workspace', capacityId: '' },
+      ],
+    });
+  }
+  if (request.method === 'GET' && path === `/workspaces/${FABRIC_WORKSPACE}`) {
+    return json(response, 200, { id: FABRIC_WORKSPACE, displayName: 'Sales Analytics', type: 'Workspace' });
+  }
+  if (request.method === 'GET' && path === `/workspaces/${FABRIC_WORKSPACE}/items`) {
+    const type = url.searchParams.get('type');
+    return json(response, 200, { value: FABRIC_ITEMS.filter((item) => !type || item.type === type) });
+  }
+  if (
+    request.method === 'GET' &&
+    path === `/workspaces/${FABRIC_WORKSPACE}/lakehouses/${FABRIC_LAKEHOUSE}/tables`
+  ) {
+    return json(response, 200, {
+      data: [
+        { name: 'orders', type: 'Managed', format: 'Delta', location: 'abfss://onelake/Tables/orders' },
+        { name: 'customers', type: 'Managed', format: 'Delta', location: 'abfss://onelake/Tables/customers' },
+      ],
+    });
+  }
+  const getDefinition = path.match(
+    new RegExp(`^/workspaces/${FABRIC_WORKSPACE}/(notebooks|dataPipelines)/([^/]+)/getDefinition$`)
+  );
+  if (request.method === 'POST' && getDefinition) {
+    const kind = getDefinition[1] === 'notebooks' ? 'notebook' : 'pipeline';
+    const operationId = `${kind}.${Date.now()}`;
+    response.writeHead(202, {
+      Location: `${url.origin}/fabric/v1/operations/${operationId}`,
+      'x-ms-operation-id': operationId,
+      'Retry-After': '1',
+    });
+    response.end();
+    return;
+  }
+  const operation = path.match(/^\/operations\/(notebook|pipeline)\.(\d+)(\/result)?$/);
+  if (request.method === 'GET' && operation) {
+    const elapsed = Date.now() - Number(operation[2]);
+    const done = elapsed >= FABRIC_DEFINITION_MS;
+    if (operation[3]) {
+      return done
+        ? json(response, 200, fabricDefinition(operation[1]))
+        : json(response, 400, { errorCode: 'OperationNotSucceeded', message: 'Not finished yet.' });
+    }
+    return json(response, 200, {
+      status: done ? 'Succeeded' : 'Running',
+      percentComplete: done ? 100 : Math.min(95, Math.round((elapsed / FABRIC_DEFINITION_MS) * 100)),
+    });
+  }
+  return json(response, 404, { errorCode: 'EntityNotFound', message: 'Not found.' });
+}
+
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? '/', 'http://stub.internal');
   // The worker's /health names what it can do (apps/worker-sandbox
@@ -3465,6 +3594,8 @@ const server = createServer((request, response) => {
   // Jira administration's option endpoints, for applying change requests.
   if (url.pathname.startsWith('/jira/')) return handleJiraAdmin(request, url, response);
   if (url.pathname.startsWith('/automation/')) return handleAutomation(request, url, response);
+  // Microsoft Fabric, stood in for: see handleFabric.
+  if (url.pathname.startsWith('/fabric/v1/')) return handleFabric(request, url, response);
   if (request.headers.authorization !== `Bearer ${API_KEY}`) {
     return error(response, 401, 'unauthorized');
   }

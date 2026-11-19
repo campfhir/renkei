@@ -27,6 +27,15 @@ export const MICROSOFT = 'microsoft';
  * Same token endpoint and refresh mechanics; only the rows differ.
  */
 export const ENTRA_DEVELOPER = 'entra-developer';
+/**
+ * A third Entra app registration ("Renkei Microsoft Fabric"): the Fabric
+ * REST API (api.fabric.microsoft.com) as the person — workspaces,
+ * notebooks, data pipelines, lakehouses. Entra mints one token per
+ * resource, so a Fabric token can never also carry Graph scopes: it is
+ * its own grant by necessity, not just by policy. Same token endpoint
+ * and refresh mechanics as the other two.
+ */
+export const FABRIC = 'fabric';
 
 export class MicrosoftAdapter implements ProviderAdapter {
   // The provider key is a parameter because every Entra app registration

@@ -207,6 +207,12 @@ export const COACH_ANCHORS = [
   'entra-developer-scopes',
   /** Connect Entra Developer. */
   'entra-developer-connect',
+  /** The Microsoft Fabric card. */
+  'card-fabric',
+  /** Its scope picker ("What Renkei may do"). */
+  'fabric-scopes',
+  /** Connect Microsoft Fabric. */
+  'fabric-connect',
   /** The Salesforce card. */
   'card-salesforce',
   /** Its capability picker ("What Renkei may do"). */

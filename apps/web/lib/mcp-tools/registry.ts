@@ -28,6 +28,7 @@ import {
   ATLASSIAN_ADMIN_TOKEN,
   MICROSOFT,
   ENTRA_DEVELOPER,
+  FABRIC,
   ZOOM,
   ONBASE,
   ONBASE_ADMIN,
@@ -67,6 +68,9 @@ import {
   ENTRA_DEVELOPER_MCP_CONNECTOR,
 } from '@/lib/mcp-tools/entra-developer';
 import { oauthEntraAuth } from '@/lib/mcp-tools/entra-developer/entra-auth';
+import { registerFabricTools, FABRIC_MCP_CONNECTOR } from '@/lib/mcp-tools/fabric';
+import { oauthFabricAuth } from '@/lib/mcp-tools/fabric/fabric-auth';
+import { shortFabricScope } from '@/lib/fabric-scopes';
 import { registerBitbucketTools, BITBUCKET_MCP_CONNECTOR } from '@/lib/mcp-tools/bitbucket';
 import { oauthBitbucketAuth } from '@/lib/mcp-tools/bitbucket/bitbucket-auth';
 import { registerGitHubTools, GITHUB_MCP_CONNECTOR } from '@/lib/mcp-tools/github';
@@ -140,6 +144,9 @@ export interface ConnectorAvailability {
   /** A SEPARATE connector/grant from microsoftAvailable — the second Entra app registration. */
   entraDeveloperAvailable: boolean;
   entraDeveloperScopes: string[];
+  /** A SEPARATE connector/grant again — the third Entra app registration, Fabric's API alone. */
+  fabricAvailable: boolean;
+  fabricScopes: string[];
   zoomAvailable: boolean;
   zoomScopes: string[];
   confluenceAvailable: boolean;
@@ -277,6 +284,16 @@ export async function resolveConnectorAvailability(
   const entraDeveloperAvailable = entraDeveloperGrantRow !== undefined;
   const entraDeveloperScopes = entraDeveloperGrantRow
     ? (entraDeveloperGrantRow.granted_scopes ?? entraDeveloperGrantRow.requested_scopes)
+    : [];
+
+  // Microsoft Fabric: the third Entra app registration, its own grant, and
+  // a token for Fabric's API alone. Granted over requested like the other
+  // two; the token names its scopes short (no resource prefix), so the
+  // requested ones are shortened to match when they answer instead.
+  const fabricGrantRow = await grantRow(FABRIC, subject);
+  const fabricAvailable = fabricGrantRow !== undefined;
+  const fabricScopes = fabricGrantRow
+    ? (fabricGrantRow.granted_scopes ?? fabricGrantRow.requested_scopes).map(shortFabricScope)
     : [];
 
   // Zoom inverts the rule: the token ALWAYS carries the Marketplace app's
@@ -438,6 +455,8 @@ export async function resolveConnectorAvailability(
     onenoteAvailable,
     entraDeveloperAvailable,
     entraDeveloperScopes,
+    fabricAvailable,
+    fabricScopes,
     zoomAvailable,
     zoomScopes,
     confluenceAvailable,
@@ -502,6 +521,7 @@ export function provisionedConnectorsFor(availability: ConnectorAvailability): s
     ...(availability.confluenceAvailable ? [CONFLUENCE_MCP_CONNECTOR] : []),
     ...(availability.jiraAdminAvailable ? [JIRA_ADMIN_MCP_CONNECTOR] : []),
     ...(availability.entraDeveloperAvailable ? [ENTRA_DEVELOPER_MCP_CONNECTOR] : []),
+    ...(availability.fabricAvailable ? [FABRIC_MCP_CONNECTOR] : []),
     ...(availability.bitbucketAvailable ? [BITBUCKET_MCP_CONNECTOR] : []),
     ...(availability.githubAvailable ? [GITHUB_MCP_CONNECTOR] : []),
     ...(availability.salesforceAvailable ? [SALESFORCE_MCP_CONNECTOR] : []),
@@ -544,6 +564,7 @@ export const REGISTERED_CONNECTOR_KEYS: readonly string[] = [
   CONFLUENCE_MCP_CONNECTOR,
   JIRA_ADMIN_MCP_CONNECTOR,
   ENTRA_DEVELOPER_MCP_CONNECTOR,
+  FABRIC_MCP_CONNECTOR,
   BITBUCKET_MCP_CONNECTOR,
   GITHUB_MCP_CONNECTOR,
   SALESFORCE_MCP_CONNECTOR,
@@ -601,6 +622,7 @@ export async function registerRenkeiTools(
     confluenceAvailable,
     jiraAdminAvailable,
     entraDeveloperAvailable,
+    fabricAvailable,
     bitbucketAvailable,
     githubAvailable,
     salesforceAvailable,
@@ -830,6 +852,16 @@ export async function registerRenkeiTools(
       withCapabilityGate(server, projection, ENTRA_DEVELOPER_MCP_CONNECTOR),
       context,
       oauthEntraAuth(context)
+    );
+  }
+  if (fabricAvailable) {
+    // A SEPARATE connector again — the third Entra app registration, whose
+    // token is for Fabric's API alone. Its scope gate sits inside
+    // registerFabricTools.
+    await registerFabricTools(
+      withCapabilityGate(server, projection, FABRIC_MCP_CONNECTOR),
+      context,
+      oauthFabricAuth(context)
     );
   }
   if (bitbucketAvailable) {

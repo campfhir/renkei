@@ -276,6 +276,7 @@ const handler = async (request: NextRequest): Promise<Response> => {
       availability.confluenceAvailable ||
       availability.jiraAdminAvailable ||
       availability.entraDeveloperAvailable ||
+      availability.fabricAvailable ||
       availability.filesharesAvailable ||
       availability.mirthAvailable ||
       availability.onbaseAvailable ||
@@ -412,6 +413,8 @@ const handler = async (request: NextRequest): Promise<Response> => {
       jiraAdminScopes,
       entraDeveloperAvailable,
       entraDeveloperScopes,
+      fabricAvailable,
+      fabricScopes,
       bitbucketAvailable,
       bitbucketScopes,
       salesforceAvailable,
@@ -504,6 +507,7 @@ const handler = async (request: NextRequest): Promise<Response> => {
               jiraAdminScopes: jiraAdminAvailable ? jiraAdminScopes : undefined,
               jiraAdminTokenAvailable: availability.jiraAdminTokenAvailable,
               entraDeveloperScopes: entraDeveloperAvailable ? entraDeveloperScopes : undefined,
+              fabricScopes: fabricAvailable ? fabricScopes : undefined,
               bitbucketScopes: bitbucketAvailable ? bitbucketScopes : undefined,
               salesforceScopes: salesforceAvailable ? salesforceScopes : undefined,
               salesforceAdminScopes: salesforceAdminAvailable ? salesforceAdminScopes : undefined,

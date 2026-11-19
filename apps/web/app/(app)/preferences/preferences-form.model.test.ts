@@ -289,6 +289,18 @@ describe('each card saves on its own', () => {
     });
   });
 
+  it('saves the Fabric definition setting with the batch jobs card it sits on', () => {
+    const state = run([
+      { type: 'deliveryChannel', event: 'fabricDefinitionReady', channel: 'email', on: true },
+    ]);
+    expect(groupDirty(state, 'batch')).toBe(true);
+    expect(groupSaveRequest(state, 'batch').notifications.fabricDefinitionReady).toEqual({
+      app: true,
+      email: true,
+      webex: false,
+    });
+  });
+
   it('sends the same patch however often it is pressed', () => {
     const state = run([{ type: 'toastsEnabled', on: false }]);
     const sent = groupSaveRequest(state, 'popups');

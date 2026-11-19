@@ -436,3 +436,37 @@ describe('what the server says', () => {
     expect(currentArtifacts(state)).toEqual(items);
   });
 });
+
+describe('a connector with a page of its own (Microsoft Fabric)', () => {
+  const FABRIC_PAGE: OmniPage = { label: 'Fabric', href: '/fabric', icon: 'i-table' };
+  const connected = new Set(['fabric']);
+
+  it('someone who has not connected it is taken to its card, searched for there', () => {
+    const results = section(search('lakehouse'), 'Connectors');
+    expect(results.map((r) => r.href)).toEqual(['/connectors?find=lakehouse#connector-fabric']);
+  });
+
+  it('someone who connected it is taken to its page by a word only the connector knows', () => {
+    const results = section(
+      search('lakehouse', { places: matchPlaces('lakehouse', false, connected) }),
+      'Connectors'
+    );
+    expect(results).toEqual([
+      {
+        href: '/fabric',
+        label: 'Microsoft Fabric',
+        detail: 'Fabric · workspaces, notebooks and pipelines',
+        icon: expect.any(String),
+      },
+    ]);
+  });
+
+  it('its name finds the page once, under Pages, not again under Connectors', () => {
+    const sections = search('fabric', {
+      pages: [...PAGES, FABRIC_PAGE],
+      places: matchPlaces('fabric', false, connected),
+    });
+    expect(section(sections, 'Pages').map((r) => r.href)).toEqual(['/fabric']);
+    expect(flat(sections).filter((r) => r.href.startsWith('/fabric'))).toHaveLength(1);
+  });
+});

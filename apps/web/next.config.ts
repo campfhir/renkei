@@ -36,6 +36,7 @@ const nextConfig: NextConfig = {
     '@renkei/provider-grants',
     '@renkei/capability-registry',
     '@renkei/connector-config',
+    '@renkei/connector-fabric',
     '@renkei/connector-webex',
     '@renkei/connector-microsoft',
     '@renkei/connector-zoom',

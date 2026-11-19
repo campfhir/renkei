@@ -301,6 +301,39 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     togglable: true,
   },
   {
+    // A third Entra app registration and its own grant, not a panel on the
+    // Microsoft 365 card: Fabric is a separate resource in Entra, so a
+    // Fabric token cannot carry Graph scopes (nor a Graph token Fabric's).
+    capabilityKey: 'fabric',
+    configKey: 'fabric',
+    label: 'Microsoft Fabric',
+    summary:
+      'Work with Microsoft Fabric as yourself: browse workspaces, lakehouses and their tables, ' +
+      'and read notebooks and data pipelines. Changes go through CI: notebooks, pipelines and ' +
+      'workspaces are proposed as pull requests on a code project, and its pipeline deploys ' +
+      'them when merged. Reading a definition can take Fabric a while; the page shows it ' +
+      'arrive, and you are notified if you have moved on.',
+    toolPrefix: 'fabric_*',
+    category: 'microsoft',
+    keywords: [
+      'fabric',
+      'power bi',
+      'lakehouse',
+      'warehouse',
+      'notebook',
+      'ipynb',
+      'spark',
+      'data pipeline',
+      'data factory',
+      'onelake',
+      'analytics',
+      'workspace',
+    ],
+    grantProviders: ['fabric'],
+    userConnectable: true,
+    togglable: true,
+  },
+  {
     // The org's own Salesforce org, on an External Client App it creates
     // there; each person connects with their own Salesforce login, and
     // Salesforce's own permissions decide every call.

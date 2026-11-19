@@ -37,6 +37,7 @@ import { WebexUserForm } from '@/app/(app)/admin/connectors/forms/webex-user-for
 import { WebexBotForm } from '@/app/(app)/admin/connectors/forms/webex-bot-form';
 import { MicrosoftForm } from '@/app/(app)/admin/connectors/forms/microsoft-form';
 import { EntraDeveloperForm } from '@/app/(app)/admin/connectors/forms/entra-developer-form';
+import { FabricForm } from '@/app/(app)/admin/connectors/forms/fabric-form';
 import { ZoomForm } from '@/app/(app)/admin/connectors/forms/zoom-form';
 import { OnBaseForm } from '@/app/(app)/admin/connectors/forms/onbase-form';
 import { OnBaseAdminForm } from '@/app/(app)/admin/connectors/forms/onbase-admin-form';
@@ -77,6 +78,7 @@ const FORMS: Record<string, ComponentType<AdminFormProps>> = {
   'webex-bot': WebexBotForm,
   microsoft: MicrosoftForm,
   'entra-developer': EntraDeveloperForm,
+  fabric: FabricForm,
   zoom: ZoomForm,
   onbase: OnBaseForm,
   'onbase-admin': OnBaseAdminForm,

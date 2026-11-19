@@ -11,12 +11,12 @@ import { createHash } from 'node:crypto';
 /**
  * Providers that are one account at the vendor: a person's Jira, JSM,
  * Confluence and Jira Administration grants are one Atlassian account, as
- * their Microsoft 365 and Entra Developer grants are one directory user.
+ * their Microsoft 365, Entra Developer and Fabric grants are one directory user.
  */
 export function familyOf(provider: string): string {
   if (provider === 'atlassian-bitbucket') return provider;
   if (provider.startsWith('atlassian')) return 'atlassian';
-  if (provider === 'entra-developer') return 'microsoft';
+  if (provider === 'entra-developer' || provider === 'fabric') return 'microsoft';
   if (provider.startsWith('salesforce')) return 'salesforce';
   if (provider.startsWith('onbase')) return 'onbase';
   return provider;

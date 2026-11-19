@@ -51,10 +51,13 @@ export function OmniSearch({
   pages,
   chats,
   isOperator,
+  connected = [],
 }: {
   pages: OmniPage[];
   chats: ChatSidebarData | null;
   isOperator: boolean;
+  /** The connectors this person has connected that have a page of their own (Fabric). */
+  connected?: readonly string[];
 }) {
   const pathname = usePathname();
   const platform = usePlatform();
@@ -132,7 +135,7 @@ export function OmniSearch({
     projects: [...(chats?.projects ?? []), ...(chats?.code.projects ?? [])],
     chats: allChats ?? chats?.chats ?? [],
     hits: currentHits(state),
-    places: matchPlaces(text, isOperator),
+    places: matchPlaces(text, isOperator, new Set(connected)),
     icons: RESULT_ICONS,
   });
   const flat = sections.flatMap((section) => section.results);

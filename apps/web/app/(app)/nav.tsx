@@ -28,6 +28,8 @@ interface NavProps {
   version: string;
   /** Admin changes waiting for an operator, for an operator's Changes row; null otherwise. */
   pendingChanges?: number | null;
+  /** Whether this person has connected Microsoft Fabric: its page gets a row. */
+  fabricConnected?: boolean;
   children: ReactNode;
 }
 
@@ -87,6 +89,7 @@ export default function AppNav({
   chats,
   version,
   pendingChanges = null,
+  fabricConnected = false,
   children,
 }: NavProps) {
   const isNarrow = useMediaQuery(NARROW);
@@ -214,6 +217,9 @@ export default function AppNav({
         // kind of chat; the page keeps its address under /chat.
         { href: `/chat/artifacts`, label: 'Artifacts', icon: ICONS.layers },
         { href: `/files`, label: 'Files', icon: ICONS.folder },
+        // Microsoft Fabric's workspaces, for someone who connected it — the
+        // connector with a page of its own (app/(app)/fabric/).
+        ...(fabricConnected ? [{ href: `/fabric`, label: 'Fabric', icon: ICONS.dataTable }] : []),
         // Every admin connector's change requests, for the people who
         // approve them; the count is what waits on them.
         ...(isOperator
@@ -450,7 +456,12 @@ export default function AppNav({
           Renkei
         </Link>
 
-        <OmniSearch pages={pages} chats={chats} isOperator={isOperator} />
+        <OmniSearch
+          pages={pages}
+          chats={chats}
+          isOperator={isOperator}
+          connected={fabricConnected ? ['fabric'] : []}
+        />
         <GlobalShortcuts chats={chats} isOperator={isOperator} />
 
         <div className="flex items-center gap-2">

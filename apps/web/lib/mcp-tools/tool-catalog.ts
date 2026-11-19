@@ -270,6 +270,7 @@ export async function listAvailableTools(
     entraDeveloperScopes: availability.entraDeveloperAvailable
       ? availability.entraDeveloperScopes
       : undefined,
+    fabricScopes: availability.fabricAvailable ? availability.fabricScopes : undefined,
     bitbucketScopes: availability.bitbucketAvailable ? availability.bitbucketScopes : undefined,
     salesforceScopes: availability.salesforceAvailable ? availability.salesforceScopes : undefined,
     salesforceAdminScopes: availability.salesforceAdminAvailable
