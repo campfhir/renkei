@@ -139,6 +139,40 @@ describe('OneDrive and SharePoint cards', () => {
       })
     ).toContain('Add “Vendor exit” to Risks');
   });
+
+  it('shows a list’s columns before creating it, and warns that a removed column’s values go too', () => {
+    const names = { [nameKey('site', SITE)]: 'Finance', [nameKey('list', PAGE)]: 'Risks' };
+    const created = card(DOCUMENT_PREVIEWS, 'sharepoint_create_list')(
+      {
+        site: SITE,
+        displayName: 'Risks',
+        columns: [{ displayName: 'Severity', type: 'choice', choices: ['Low', 'High'] }],
+      },
+      names
+    );
+    expect(created).toContain('Create the list “Risks”');
+    expect(created).toContain('choice: Low, High');
+    expect(created).toContain('Finance');
+    clean(created);
+
+    const removed = card(DOCUMENT_PREVIEWS, 'sharepoint_remove_list_column')(
+      { site: SITE, list: PAGE, column: 'Severity' },
+      names
+    );
+    expect(removed).toContain('Remove the column “Severity” from Risks');
+    expect(removed).toContain('cannot be restored');
+    clean(removed);
+    clean(
+      card(
+        DOCUMENT_PREVIEWS,
+        'sharepoint_add_list_column'
+      )({
+        site: SITE,
+        list: PAGE,
+        column: { displayName: 'Owner', type: 'person' },
+      })
+    );
+  });
 });
 
 describe('OneNote cards', () => {

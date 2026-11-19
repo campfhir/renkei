@@ -6,7 +6,7 @@
 import type { FileItem } from '@/lib/mcp-widgets/src/act-card';
 import type { PreviewBuilder, PreviewSpec } from './card';
 import type { Names } from './card';
-import { clip, named, people, record, ref, show, strings, text, yes } from './card';
+import { clip, named, people, record, records, ref, show, strings, text, yes } from './card';
 import { siteLabel } from './graph-names';
 
 type Args = Record<string, unknown>;
@@ -407,6 +407,74 @@ function family(service: Service): Record<string, PreviewBuilder> {
           },
         };
       },
+      sharepoint_create_list: (args: Args, names: Names): PreviewSpec => {
+        const columns = records(args.columns);
+        return {
+          verb: 'Create',
+          icon: 'doc',
+          title: `Create the list “${text(args.displayName)}”`,
+          subtitle: sub(args, names),
+          confirmLabel: 'Create list',
+          body: {
+            kind: 'change',
+            subject: ref(text(args.displayName), 'List', siteLabel(names, args.site)),
+            rows: [
+              ...(text(args.description)
+                ? [{ label: 'Description', value: text(args.description) }]
+                : []),
+              { label: 'Title', value: 'text (every list has it)' },
+              ...columns.map((column) => ({
+                label: text(column.displayName),
+                value: columnSummary(column),
+              })),
+            ],
+          },
+        };
+      },
+      sharepoint_add_list_column: (args: Args, names: Names): PreviewSpec => {
+        const column = record(args.column);
+        const list = listName(args, names);
+        return {
+          verb: 'Add',
+          icon: 'tag',
+          title: `Add the column “${text(column.displayName)}” to ${list}`,
+          subtitle: sub(args, names),
+          confirmLabel: 'Add column',
+          body: {
+            kind: 'change',
+            subject: ref(
+              list === 'the list' ? 'The list' : list,
+              'List',
+              siteLabel(names, args.site)
+            ),
+            rows: [{ label: text(column.displayName), value: columnSummary(column) }],
+            notes: ['Existing items get the column empty.'],
+          },
+        };
+      },
+      sharepoint_remove_list_column: (args: Args, names: Names): PreviewSpec => {
+        const list = listName(args, names);
+        return {
+          verb: 'Remove',
+          tone: 'danger',
+          icon: 'trash',
+          title: `Remove the column “${text(args.column)}” from ${list}`,
+          subtitle: sub(args, names),
+          confirmLabel: 'Remove column',
+          body: {
+            kind: 'document',
+            mode: 'delete',
+            type: 'List column',
+            title: text(args.column),
+            location: [siteLabel(names, args.site), list === 'the list' ? '' : list].filter(
+              Boolean
+            ),
+            versionNote:
+              'Every item’s value in this column is deleted too, and cannot be restored: ' +
+              'SharePoint has no recycle bin for columns.',
+          },
+        };
+      },
       sharepoint_watch_library: (args: Args, names: Names) =>
         watch(args, true, sub(args, names), siteLabel(names, args.site)),
       sharepoint_unwatch_library: (args: Args, names: Names) =>
@@ -423,6 +491,18 @@ function listName(args: Args, names: Names): string {
   if (looked) return looked;
   if (!list || list.startsWith('https://') || /^[0-9a-f-]{36}$/i.test(list)) return 'the list';
   return list;
+}
+
+/** "choice: Open, Done · required" — a column spec as a card row reads it. */
+function columnSummary(column: Args): string {
+  const choices = strings(column.choices);
+  return [
+    `${text(column.type) || 'text'}${choices.length ? `: ${choices.join(', ')}` : ''}`,
+    yes(column.required) ? 'required' : '',
+    yes(column.indexed) ? 'indexed' : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
 }
 
 function listWhere(args: Args, names: Names): string {

@@ -215,17 +215,51 @@ function columnType(column: Record<string, unknown>): string {
 }
 
 /**
- * The `$skiptoken` from a Graph nextLink — handed to the model instead of
- * the link itself, so a later call cannot be pointed at any other URL.
+ * The next page, as a token the model hands back unchanged.
+ *
+ * It carries Graph's whole next-page query (filter, sort, columns, page size
+ * and skiptoken together), not the skiptoken alone, so the follow-up call
+ * cannot drift from the first one: a skiptoken replayed with a different
+ * filter or sort lands on the wrong page or is refused. It also names its
+ * list, and is only ever replayed against a path built here — never the
+ * nextLink's own host or path — so a token cannot point a call anywhere else.
  */
-function skipTokenOf(body: Record<string, unknown>): string {
+export function pageTokenOf(listId: string, body: Record<string, unknown>): string {
   const next = str(body['@odata.nextLink']);
   if (!next) return '';
   try {
-    return new URL(next).searchParams.get('$skiptoken') ?? '';
+    const query = new URL(next).searchParams.toString();
+    if (!query) return '';
+    return Buffer.from(JSON.stringify({ l: listId, q: query }), 'utf8').toString('base64url');
   } catch {
     return '';
   }
+}
+
+/** The query a pageToken stands for, or null when it is not one of this list's. */
+export function queryOfPageToken(listId: string, token: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(token, 'base64url').toString('utf8'));
+    const decoded = rec(parsed);
+    if (str(decoded.l) !== listId || !str(decoded.q)) return null;
+    return new URLSearchParams(str(decoded.q)).toString();
+  } catch {
+    return null;
+  }
+}
+
+/** Whether a query filters or sorts — what a large list refuses on unindexed columns. */
+function narrowed(query: string): boolean {
+  const params = new URLSearchParams(query);
+  return params.has('$filter') || params.has('$orderby');
+}
+
+/**
+ * Graph's error, then what did not happen. describeStatus ends some answers
+ * without a full stop ("Microsoft Graph answered 409"), so one is added.
+ */
+export function failed(error: string, outcome: string): string {
+  return `${/[.!?)]$/.test(error.trim()) ? error.trim() : `${error.trim()}.`} ${outcome}`;
 }
 
 const LIBRARY_HINT =
@@ -348,8 +382,10 @@ export function registerListTools(
       description:
         'Items in a SharePoint list, with each item’s itemId and column values. Narrow with an ' +
         "OData `filter` on INTERNAL column names prefixed by fields/, e.g. fields/Status eq 'Open' " +
-        "or fields/DueDate lt '2026-12-01'. When more items remain the answer carries a pageToken " +
-        'to pass back for the next page.',
+        "or fields/DueDate lt '2026-12-01'. When more items remain the answer carries a pageToken: " +
+        'for the next page pass it back with the same list, unchanged — it already holds the ' +
+        'filter, sort, columns and page size, so those are ignored alongside it. On a list past ' +
+        '5,000 items, filter and sort only on indexed columns (sharepoint_get_list marks them).',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         ...listFields,
@@ -366,7 +402,10 @@ export function registerListTools(
           .describe('Internal names of the columns to return; omit for all.')
           .optional(),
         max: z.number().int().min(1).max(200).describe('How many (default 50).').optional(),
-        pageToken: z.string().describe('The pageToken a previous call returned.').optional(),
+        pageToken: z
+          .string()
+          .describe('The pageToken a previous call on this list returned, unchanged.')
+          .optional(),
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -377,40 +416,53 @@ export function registerListTools(
       if (!resolved.ok) return errText(resolved.error);
       const { list } = resolved;
 
-      const columns = Array.isArray(args.columns)
-        ? args.columns.map(str).filter((name) => /^[A-Za-z0-9_]+$/.test(name))
-        : [];
-      if (columns.length > 0 && !columns.includes('Title')) columns.unshift('Title');
-      const expand = columns.length > 0 ? `fields($select=${columns.join(',')})` : 'fields';
-
-      const query = new URLSearchParams({
-        $expand: expand,
-        $top: String(num(args.max) ?? 50),
-      });
-      if (str(args.filter)) query.set('$filter', str(args.filter));
-      if (str(args.orderBy)) query.set('$orderby', str(args.orderBy));
-      if (str(args.pageToken)) query.set('$skiptoken', str(args.pageToken));
+      let query: string;
+      const token = str(args.pageToken);
+      if (token) {
+        const replayed = queryOfPageToken(list.listId, token);
+        if (replayed === null) {
+          return errText(
+            `That pageToken does not belong to ${list.name}. Pass back the token exactly as a ` +
+              'previous sharepoint_list_items call on this list returned it, or omit it to start over.'
+          );
+        }
+        query = replayed;
+      } else {
+        const columns = Array.isArray(args.columns)
+          ? args.columns.map(str).filter((name) => /^[A-Za-z0-9_]+$/.test(name))
+          : [];
+        if (columns.length > 0 && !columns.includes('Title')) columns.unshift('Title');
+        const params = new URLSearchParams({
+          $expand: columns.length > 0 ? `fields($select=${columns.join(',')})` : 'fields',
+          $top: String(num(args.max) ?? 50),
+        });
+        if (str(args.filter)) params.set('$filter', str(args.filter));
+        if (str(args.orderBy)) params.set('$orderby', str(args.orderBy));
+        query = params.toString();
+      }
 
       const found = await graphGet(
         context,
         access.auth,
-        `/sites/${list.siteId}/lists/${list.listId}/items?${query.toString()}`,
+        `/sites/${list.siteId}/lists/${list.listId}/items?${query}`,
         NON_INDEXED
       );
       if (!found.ok) {
         return errText(
-          str(args.filter) || str(args.orderBy)
-            ? `${found.error} If the list is large, filter or sort on an indexed column ` +
-                '(sharepoint_get_list marks them).'
+          narrowed(query)
+            ? failed(
+                found.error,
+                'If the list is large, filter or sort on an indexed column (sharepoint_get_list marks them).'
+              )
             : found.error
         );
       }
 
       const items = values(found.body);
-      const next = skipTokenOf(found.body);
+      const next = pageTokenOf(list.listId, found.body);
       if (items.length === 0) {
         return textResult(
-          str(args.filter)
+          new URLSearchParams(query).has('$filter')
             ? `No items in ${list.name} match that filter.`
             : `${list.name} is empty.`
         );
@@ -500,7 +552,7 @@ export function registerListTools(
         `/sites/${list.siteId}/lists/${list.listId}/items`,
         { fields }
       );
-      if (!created.ok) return errText(`${created.error} Nothing was added to ${list.name}.`);
+      if (!created.ok) return errText(failed(created.error, `Nothing was added to ${list.name}.`));
 
       const title = str(rec(created.body.fields).Title) || str(fields.Title);
       return textResult(
@@ -545,7 +597,7 @@ export function registerListTools(
         `/sites/${list.siteId}/lists/${list.listId}/items/${encodeURIComponent(str(args.itemId))}/fields`,
         fields
       );
-      if (!updated.ok) return errText(`${updated.error} The item was not changed.`);
+      if (!updated.ok) return errText(failed(updated.error, 'The item was not changed.'));
 
       const title = str(updated.body.Title);
       return textResult(
@@ -582,7 +634,7 @@ export function registerListTools(
         access.auth,
         `/sites/${list.siteId}/lists/${list.listId}/items/${encodeURIComponent(str(args.itemId))}`
       );
-      if (!deleted.ok) return errText(`${deleted.error} The item was not deleted.`);
+      if (!deleted.ok) return errText(failed(deleted.error, 'The item was not deleted.'));
       return textResult(`Deleted item ${str(args.itemId)} from ${list.name}.`);
     }
   );

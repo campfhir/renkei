@@ -9,7 +9,8 @@
  * SharePoint at all; a write tool would be under-gated, which is why every
  * write tool below is listed explicitly).
  *
- * Every tool here sits on the Sites.* family. Site membership is
+ * Every tool here sits on the Sites.* family: Read for reads, ReadWrite for
+ * content (documents, pages, list items), Manage for a list's shape. Site membership is
  * deliberately not offered at all: the only delegated route to it is
  * GroupMember.ReadWrite.All, a directory-wide grant that is far too much
  * authority for a general user (see sites.ts).
@@ -34,6 +35,12 @@ export function sharepointScopeFor(toolName: string): string[] {
     case 'sharepoint_update_list_item':
     case 'sharepoint_delete_list_item':
       return ['Sites.ReadWrite.All'];
+
+    // Changing a list's shape is a permission above writing its rows.
+    case 'sharepoint_create_list':
+    case 'sharepoint_add_list_column':
+    case 'sharepoint_remove_list_column':
+      return ['Sites.Manage.All'];
 
     // Watching a library indexes it for OTHER readers to find, so it needs
     // the scope the background sync will actually poll with.

@@ -779,31 +779,71 @@ describe('sharepoint list tools', () => {
     expect(text).not.toContain('ContentType');
     expect(text).not.toContain('_UIVersionString');
     expect(text).not.toContain('@odata');
-    // The token alone, never a URL a later call could be pointed elsewhere with.
-    expect(text).toContain('pageToken: Paged=TRUE&p_ID=7');
+    // A token, never a URL a later call could be pointed elsewhere with.
+    expect(text).toMatch(/pageToken: [A-Za-z0-9_-]+\n/);
     expect(text).not.toContain('graph.microsoft.com');
   });
 
-  it('sends the next page’s token back as $skiptoken', async () => {
+  it('fetches the next page as Graph described it, whatever else the follow-up call says', async () => {
     routes = [
       siteRoute,
-      { match: `/lists/${LIST_ID}/items?`, body: { value: [] } },
-      // An id is read directly, not matched against every list.
       {
-        match: `/lists/${LIST_ID}?`,
-        body: { id: LIST_ID, displayName: 'Project Tracker', list: { template: 'genericList' } },
+        match: `/lists/${LIST_ID}/items?`,
+        body: {
+          value: [{ id: '7', fields: { Title: 'Fix login' } }],
+          '@odata.nextLink':
+            `https://graph.microsoft.com/v1.0/sites/site-1/lists/${LIST_ID}/items` +
+            "?%24expand=fields&%24filter=fields%2FStatus+eq+'Open'&%24top=1&%24skiptoken=Paged%3dTRUE%26p_ID%3d7",
+        },
       },
+      listsRoute,
     ];
     const tools = await toolsOf(registerSharePointTools);
+    const first = textOf(
+      await tools.get('sharepoint_list_items')!({
+        site: SITE,
+        list: 'Project Tracker',
+        filter: "fields/Status eq 'Open'",
+        max: 1,
+      })
+    );
+    const token = /pageToken: (\S+)/.exec(first)![1];
+    requests = [];
 
+    // The follow-up drops the filter and asks for a different page size: the
+    // token alone decides, so the page stays the one Graph pointed at.
     await tools.get('sharepoint_list_items')!({
       site: SITE,
-      list: LIST_ID,
-      pageToken: 'Paged=TRUE&p_ID=7',
+      list: 'Project Tracker',
+      max: 50,
+      pageToken: token,
     });
 
     const call = requests.find((request) => request.url.includes('/items?'))!;
-    expect(new URL(call.url).searchParams.get('$skiptoken')).toBe('Paged=TRUE&p_ID=7');
+    const url = new URL(call.url);
+    expect(url.pathname).toBe(`/v1.0/sites/site-1/lists/${LIST_ID}/items`);
+    expect(url.searchParams.get('$filter')).toBe("fields/Status eq 'Open'");
+    expect(url.searchParams.get('$top')).toBe('1');
+    expect(url.searchParams.get('$skiptoken')).toBe('Paged=TRUE&p_ID=7');
+  });
+
+  it('refuses another list’s pageToken, or a made-up one, and sends nothing for it', async () => {
+    routes = [siteRoute, listsRoute];
+    const tools = await toolsOf(registerSharePointTools);
+    const otherList = Buffer.from(
+      JSON.stringify({ l: 'some-other-list', q: '%24skiptoken=x' })
+    ).toString('base64url');
+
+    for (const pageToken of [otherList, 'Paged=TRUE&p_ID=7']) {
+      const result = (await tools.get('sharepoint_list_items')!({
+        site: SITE,
+        list: 'Project Tracker',
+        pageToken,
+      })) as { content: { text: string }[]; isError?: boolean };
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain('does not belong to Project Tracker');
+    }
+    expect(requests.some((request) => request.url.includes('/items'))).toBe(false);
   });
 
   it('adds an item with its fields under `fields`, as Graph requires', async () => {
@@ -905,6 +945,174 @@ describe('sharepoint list tools', () => {
   });
 });
 
+describe('sharepoint list schema tools', () => {
+  const SITE = 'https://contoso.sharepoint.com/sites/eng';
+  const LIST_ID = '11111111-2222-4333-8444-555555555555';
+  const siteRoute = {
+    match: '/sites/contoso.sharepoint.com:',
+    body: { id: 'site-1', displayName: 'Eng' },
+  };
+  const listsRoute = {
+    match: '/sites/site-1/lists?',
+    body: {
+      value: [
+        {
+          id: LIST_ID,
+          displayName: 'Project Tracker',
+          webUrl: `${SITE}/Lists/Project Tracker`,
+          list: { template: 'genericList' },
+        },
+      ],
+    },
+  };
+  const columnsRoute = {
+    match: `/lists/${LIST_ID}/columns`,
+    body: {
+      value: [
+        { id: 'c-title', name: 'Title', displayName: 'Title', text: {} },
+        { id: 'c-created', name: 'Created', displayName: 'Created', readOnly: true },
+        { id: 'c-status', name: 'Status', displayName: 'Status', choice: { choices: ['Open'] } },
+        { id: 'c-due', name: 'Due_x0020_Date', displayName: 'Due Date', dateTime: {} },
+      ],
+    },
+  };
+
+  it('creates a list with its columns built as Graph’s type facets', async () => {
+    routes = [
+      siteRoute,
+      {
+        match: '/sites/site-1/lists',
+        body: { id: 'new-list', displayName: 'Risks', webUrl: `${SITE}/Lists/Risks` },
+      },
+    ];
+    const tools = await toolsOf(registerSharePointTools);
+
+    const text = textOf(
+      await tools.get('sharepoint_create_list')!({
+        site: SITE,
+        displayName: 'Risks',
+        columns: [
+          { displayName: 'Severity', type: 'choice', choices: ['Low', 'High'], required: true },
+          { displayName: 'Due Date', type: 'dateOnly' },
+        ],
+      })
+    );
+
+    const post = requests.find((request) => request.method === 'POST')!;
+    expect(post.url).toContain('/sites/site-1/lists');
+    expect(JSON.parse(post.body!)).toEqual({
+      displayName: 'Risks',
+      list: { template: 'genericList' },
+      columns: [
+        {
+          name: 'Severity',
+          displayName: 'Severity',
+          required: true,
+          choice: { choices: ['Low', 'High'], displayAs: 'dropDownMenu', allowTextEntry: false },
+        },
+        { name: 'DueDate', displayName: 'Due Date', dateTime: { format: 'dateOnly' } },
+      ],
+    });
+    expect(text).toContain('Created the list "Risks" on Eng.');
+    expect(text).toContain('internal name: DueDate');
+  });
+
+  it('refuses a half-formed column before creating anything', async () => {
+    const tools = await toolsOf(registerSharePointTools);
+
+    const result = (await tools.get('sharepoint_create_list')!({
+      site: SITE,
+      displayName: 'Risks',
+      columns: [{ displayName: 'Severity', type: 'choice' }],
+    })) as { content: { text: string }[]; isError?: boolean };
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('needs choices');
+    expect(requests).toEqual([]);
+  });
+
+  it('says a name clash is the likely cause when Graph answers 409', async () => {
+    routes = [siteRoute, { match: '/sites/site-1/lists', status: 409, body: {} }];
+    const tools = await toolsOf(registerSharePointTools);
+
+    const result = (await tools.get('sharepoint_create_list')!({
+      site: SITE,
+      displayName: 'Risks',
+    })) as { content: { text: string }[]; isError?: boolean };
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('may already have a list with that name');
+  });
+
+  it('adds a column to a list found by title', async () => {
+    routes = [
+      siteRoute,
+      { match: `/lists/${LIST_ID}/columns`, body: { id: 'c-owner', name: 'Owner' } },
+      listsRoute,
+    ];
+    const tools = await toolsOf(registerSharePointTools);
+
+    const text = textOf(
+      await tools.get('sharepoint_add_list_column')!({
+        site: SITE,
+        list: 'Project Tracker',
+        column: { displayName: 'Owner', type: 'person' },
+      })
+    );
+
+    const post = requests.find((request) => request.method === 'POST')!;
+    expect(post.url).toContain(`/sites/site-1/lists/${LIST_ID}/columns`);
+    expect(JSON.parse(post.body!)).toEqual({
+      name: 'Owner',
+      displayName: 'Owner',
+      personOrGroup: { allowMultipleSelection: false, chooseFromType: 'peopleOnly' },
+    });
+    expect(text).toContain('Added a column to Project Tracker: Owner (person)');
+  });
+
+  it('removes a column named by its display name, by its id', async () => {
+    routes = [siteRoute, columnsRoute, listsRoute];
+    const tools = await toolsOf(registerSharePointTools);
+
+    const text = textOf(
+      await tools.get('sharepoint_remove_list_column')!({
+        site: SITE,
+        list: 'Project Tracker',
+        column: 'due date',
+      })
+    );
+
+    const remove = requests.find((request) => request.method === 'DELETE')!;
+    expect(remove.url).toContain(`/lists/${LIST_ID}/columns/c-due`);
+    expect(text).toContain('Removed the column "Due Date" (internal name Due_x0020_Date)');
+  });
+
+  it('refuses to remove a built-in column, and names the ones that can go when none matches', async () => {
+    routes = [siteRoute, columnsRoute, listsRoute];
+    const tools = await toolsOf(registerSharePointTools);
+
+    for (const column of ['Title', 'Created']) {
+      const result = (await tools.get('sharepoint_remove_list_column')!({
+        site: SITE,
+        list: 'Project Tracker',
+        column,
+      })) as { content: { text: string }[]; isError?: boolean };
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain('built-in column');
+    }
+
+    const missing = textOf(
+      await tools.get('sharepoint_remove_list_column')!({
+        site: SITE,
+        list: 'Project Tracker',
+        column: 'Priority',
+      })
+    );
+    expect(missing).toContain('Columns that can be removed: Status, Due Date.');
+    expect(requests.some((request) => request.method === 'DELETE')).toBe(false);
+  });
+});
+
 describe('scope maps', () => {
   /**
    * Every registered tool must appear in its namespace's switch. A missing
@@ -924,7 +1132,7 @@ describe('scope maps', () => {
       // Watch tools legitimately need only read; everything else must be
       // named in the switch and land on a write or membership scope.
       if (name.includes('watch')) continue;
-      expect(scopes.some((scope) => /ReadWrite/.test(scope))).toBe(true);
+      expect(scopes.some((scope) => /ReadWrite|Manage/.test(scope))).toBe(true);
     }
   });
 
@@ -946,6 +1154,14 @@ describe('scope maps', () => {
       'sharepoint_delete_list_item',
     ]) {
       expect(sharepointScopeFor(name)).toEqual(['Sites.ReadWrite.All']);
+    }
+    // A list's shape is a permission above its rows: an org can grant one alone.
+    for (const name of [
+      'sharepoint_create_list',
+      'sharepoint_add_list_column',
+      'sharepoint_remove_list_column',
+    ]) {
+      expect(sharepointScopeFor(name)).toEqual(['Sites.Manage.All']);
     }
     for (const name of ['sharepoint_list_lists', 'sharepoint_get_list', 'sharepoint_list_items']) {
       expect(sharepointScopeFor(name)).toEqual(['Sites.Read.All']);
