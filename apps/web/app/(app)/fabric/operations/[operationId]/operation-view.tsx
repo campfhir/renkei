@@ -13,7 +13,7 @@ import { isRecord } from '@renkei/guards';
 import BackLink from '@/components/back-link';
 import LocalTime from '@/components/local-time';
 import { clientLogger } from '@/lib/client-logger';
-import type { FabricOperationView } from '@/lib/fabric/operation-view';
+import { readOperationView, type FabricOperationView } from '@/lib/fabric/operation-view';
 import {
   POLL_MS,
   downloadName,
@@ -25,14 +25,6 @@ import {
   readPart,
   selectedPart,
 } from './operation-view.model';
-
-/** An operation as the routes send it, trusted to their own shape. */
-function asView(value: unknown): FabricOperationView | null {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-  return isRecord(value) && typeof value.id === 'string'
-    ? (value as unknown as FabricOperationView)
-    : null;
-}
 
 function save(name: string, text: string) {
   const url = URL.createObjectURL(new Blob([text], { type: 'application/octet-stream' }));
@@ -54,7 +46,7 @@ export default function OperationView({ initial }: { initial: FabricOperationVie
     source.onerror = () => dispatch({ type: 'streamFailed' });
     source.addEventListener('operation', (event: MessageEvent<string>) => {
       try {
-        const view = asView(JSON.parse(event.data));
+        const view = readOperationView(JSON.parse(event.data));
         if (view) dispatch({ type: 'update', operation: view });
         if (view && view.status !== 'running') source.close();
       } catch (error) {
@@ -72,7 +64,7 @@ export default function OperationView({ initial }: { initial: FabricOperationVie
       void fetch(`/api/fabric/operations/${operation.id}`, { cache: 'no-store' })
         .then((response) => (response.ok ? response.json() : null))
         .then((body: unknown) => {
-          const view = isRecord(body) ? asView(body.operation) : null;
+          const view = isRecord(body) ? readOperationView(body.operation) : null;
           if (view) dispatch({ type: 'update', operation: view });
         })
         .catch(() => undefined);
