@@ -49,6 +49,18 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-19',
     entries: [
       {
+        kind: 'fixed',
+        title: 'Restoring an evicted sandbox no longer fails at random',
+        detail:
+          "Bringing back a sandbox's files after it was put away for being idle could, now and then, fail on a perfectly good archive; it now always reads the archive to its end.",
+      },
+      {
+        kind: 'added',
+        title: 'List a Salesforce org’s Apex classes and triggers',
+        detail:
+          'Agents connected to Salesforce can now list the org’s Apex classes and triggers by name — version, status, size, who changed each last, and the object and events a trigger fires on — filtered by name or object and paged, then read any of them line by line.',
+      },
+      {
         kind: 'added',
         title: 'Microsoft Fabric connector, deployed through CI',
         detail:

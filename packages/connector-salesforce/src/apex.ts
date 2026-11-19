@@ -175,3 +175,89 @@ export function apexNameSuggestionQuery(kind: ApexKind, fragment: string): strin
     `WHERE Name LIKE ${soqlContains(fragment)} ORDER BY Name LIMIT 10`
   );
 }
+
+/** How many classes or triggers one listing names by default, and at most. */
+export const APEX_LIST_DEFAULT = 200;
+export const APEX_LIST_MAX = 1_000;
+
+/** A trigger's events, in the order Salesforce runs them, by the field that flags each. */
+const TRIGGER_EVENTS: readonly [field: string, event: string][] = [
+  ['UsageBeforeInsert', 'before insert'],
+  ['UsageAfterInsert', 'after insert'],
+  ['UsageBeforeUpdate', 'before update'],
+  ['UsageAfterUpdate', 'after update'],
+  ['UsageBeforeDelete', 'before delete'],
+  ['UsageAfterDelete', 'after delete'],
+  ['UsageAfterUndelete', 'after undelete'],
+];
+
+export interface ApexListFilter {
+  /** Part of the name, case-insensitively. */
+  nameContains?: string;
+  /** Triggers only: the object they fire on (TableEnumOrId). */
+  object?: string;
+  /** Include installed packages' code; by default only the org's own. */
+  includePackages?: boolean;
+  /** Names after this one, for the next page (keyset on Name). */
+  afterName?: string;
+}
+
+/**
+ * The SOQL that lists classes or triggers by name, without their bodies.
+ *
+ * No LIMIT: the first page Salesforce answers (up to 2 000 rows of a few
+ * short fields) carries the exact count of everything that matches in
+ * `totalSize`, at the cost of one call, and the caller shows a page of
+ * it. The next page is a keyset (`Name > afterName`), not an OFFSET, so a
+ * listing has no 2 000-row ceiling.
+ */
+export function apexListQuery(kind: ApexKind, filter: ApexListFilter = {}): string {
+  const fields = [
+    'Id',
+    'Name',
+    'NamespacePrefix',
+    'ApiVersion',
+    'Status',
+    'LengthWithoutComments',
+    'LastModifiedDate',
+    'LastModifiedBy.Name',
+    ...(kind === 'trigger' ? ['TableEnumOrId', ...TRIGGER_EVENTS.map(([field]) => field)] : []),
+  ];
+  const where: string[] = [];
+  if (!filter.includePackages) where.push('NamespacePrefix = null');
+  if (filter.nameContains) where.push(`Name LIKE ${soqlContains(filter.nameContains)}`);
+  if (kind === 'trigger' && filter.object)
+    where.push(`TableEnumOrId = ${soqlString(filter.object)}`);
+  if (filter.afterName) where.push(`Name > ${soqlString(filter.afterName)}`);
+  return (
+    `SELECT ${fields.join(', ')} FROM ${APEX_OBJECT[kind]}` +
+    (where.length > 0 ? ` WHERE ${where.join(' AND ')}` : '') +
+    ' ORDER BY Name, NamespacePrefix NULLS FIRST, Id'
+  );
+}
+
+/** A trigger record's events, e.g. ['before insert', 'after update']. */
+export function triggerEvents(record: Record<string, unknown>): string[] {
+  return TRIGGER_EVENTS.filter(([field]) => record[field] === true).map(([, event]) => event);
+}
+
+/**
+ * The first `limit` of `rows` (sorted by name), widened so a page never
+ * ends part-way through one name — two packages can each have a class
+ * called the same — since the next page starts after that name.
+ * `afterName` is the name the next page starts after, or null when every
+ * row Salesforce sent is shown and it said there are no more.
+ */
+export function apexListPage<T extends { Name?: unknown }>(
+  rows: readonly T[],
+  limit: number,
+  moreOnServer: boolean
+): { shown: T[]; afterName: string | null } {
+  const nameOf = (row: T) => (typeof row.Name === 'string' ? row.Name : '');
+  let end = Math.min(limit, rows.length);
+  const boundary = end > 0 ? nameOf(rows[end - 1]).toLowerCase() : '';
+  while (end < rows.length && nameOf(rows[end]).toLowerCase() === boundary) end += 1;
+  const shown = rows.slice(0, end);
+  const more = end < rows.length || moreOnServer;
+  return { shown, afterName: more && shown.length > 0 ? nameOf(shown[shown.length - 1]) : null };
+}

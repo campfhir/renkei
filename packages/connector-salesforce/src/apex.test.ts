@@ -1,10 +1,13 @@
 import {
   APEX_LINE_CHARS,
+  apexListPage,
+  apexListQuery,
   apexNameSuggestionQuery,
   apexSourceQuery,
   findInSource,
   sourceLines,
   sourceWindow,
+  triggerEvents,
 } from './apex';
 
 /** A class of `n` numbered lines: `// line 1`, `// line 2`, … */
@@ -144,5 +147,54 @@ describe('the queries', () => {
     expect(apexNameSuggestionQuery('class', 'Account_Svc')).toBe(
       "SELECT Name, NamespacePrefix FROM ApexClass WHERE Name LIKE '%Account\\_Svc%' ORDER BY Name LIMIT 10"
     );
+  });
+});
+
+describe('listing Apex classes and triggers', () => {
+  it("lists the org's own classes by name, without their bodies", () => {
+    const q = apexListQuery('class');
+    expect(q).toBe(
+      'SELECT Id, Name, NamespacePrefix, ApiVersion, Status, LengthWithoutComments, ' +
+        'LastModifiedDate, LastModifiedBy.Name FROM ApexClass WHERE NamespacePrefix = null ' +
+        'ORDER BY Name, NamespacePrefix NULLS FIRST, Id'
+    );
+    expect(q).not.toContain('Body');
+    expect(q).not.toContain('LIMIT');
+  });
+
+  it('includes packages, filters by name and object, and starts after a name', () => {
+    const q = apexListQuery('trigger', {
+      includePackages: true,
+      nameContains: "Acc_' x",
+      object: 'Account',
+      afterName: 'AccountA',
+    });
+    expect(q).toContain('TableEnumOrId, UsageBeforeInsert');
+    expect(q).not.toContain('NamespacePrefix = null');
+    expect(q).toContain("Name LIKE '%Acc\\_\\' x%'");
+    expect(q).toContain("TableEnumOrId = 'Account'");
+    expect(q).toContain("Name > 'AccountA'");
+  });
+
+  it('ignores an object for classes, which fire on none', () => {
+    expect(apexListQuery('class', { object: 'Account' })).not.toContain('TableEnumOrId');
+  });
+
+  it("names a trigger's events in the order they run", () => {
+    expect(
+      triggerEvents({ UsageAfterUpdate: true, UsageBeforeInsert: true, UsageAfterDelete: false })
+    ).toEqual(['before insert', 'after update']);
+  });
+
+  it('shows a page and says the name the next one starts after', () => {
+    const rows = ['A', 'B', 'C', 'D'].map((Name) => ({ Name }));
+    expect(apexListPage(rows, 2, false)).toEqual({ shown: rows.slice(0, 2), afterName: 'B' });
+    expect(apexListPage(rows, 10, false)).toEqual({ shown: rows, afterName: null });
+    expect(apexListPage(rows, 10, true)).toEqual({ shown: rows, afterName: 'D' });
+  });
+
+  it('never ends a page part-way through one name, which the next page would skip', () => {
+    const rows = [{ Name: 'A' }, { Name: 'Same' }, { Name: 'same' }, { Name: 'Z' }];
+    expect(apexListPage(rows, 2, false)).toEqual({ shown: rows.slice(0, 3), afterName: 'same' });
   });
 });
