@@ -369,6 +369,74 @@ describe('on Bitbucket', () => {
   });
 });
 
+describe('environment branches the host lacks', () => {
+  const withDev: PipelineSpec = {
+    ...spec,
+    environments: [
+      { ...spec.environments[0], name: 'dev', branch: 'develop' },
+      spec.environments[0],
+    ],
+  };
+
+  it('Bitbucket: makes them from the project’s branch before the pull request, and says so in it', async () => {
+    const repo = '/repositories/acme/sync-worker';
+    const bitbucket = host({
+      [`GET ${repo}/refs/branches`]: {
+        body: { values: [{ name: 'main', target: { hash: 'base-sha' } }] },
+      },
+      [`POST ${repo}/refs/branches`]: { status: 201, body: { name: 'develop' } },
+      [`GET ${repo}/pullrequests`]: { body: { values: [] } },
+      [`POST ${repo}/src`]: { status: 201, body: {} },
+      [`POST ${repo}/pullrequests`]: {
+        status: 201,
+        body: {
+          id: 3,
+          links: { html: { href: 'https://bitbucket.org/acme/sync-worker/pull-requests/3' } },
+        },
+      },
+    });
+    bitbucketBrowse.bitbucketAuthOf.mockReturnValue(bitbucket);
+    const opened = await openPipelinePullRequest(
+      caller,
+      project(ATLASSIAN_BITBUCKET),
+      withDev,
+      new Date()
+    );
+    expect(opened).toMatchObject({ ok: true, created: ['develop'] });
+    const made = bitbucket.calls.filter(
+      (c) => c.method === 'POST' && c.path.endsWith('/refs/branches')
+    );
+    expect(made.map((c) => c.json)).toEqual([{ name: 'develop', target: { hash: 'base-sha' } }]);
+    const pr = bitbucket.calls.find((c) => c.method === 'POST' && c.path.endsWith('/pullrequests'));
+    expect(pr?.json).toMatchObject({
+      description: expect.stringContaining(
+        '`develop` did not exist, so Renkei made it from `main`.'
+      ),
+    });
+  });
+
+  it('GitHub: a refused branch opens no pull request, in GitHub’s words', async () => {
+    const repo = '/repos/acme/sync-worker';
+    const github = host({
+      [`GET ${repo}/branches`]: { body: [{ name: 'main', commit: { sha: 'base-sha' } }] },
+      [`GET ${repo}/contents/`]: { body: [] },
+      [`POST ${repo}/git/refs`]: { status: 403, body: { message: 'Resource not accessible' } },
+    });
+    githubBrowse.githubAuthOf.mockReturnValue(github);
+    const opened = await openPipelinePullRequest(caller, project(GITHUB), withDev, new Date());
+    expect(opened).toMatchObject({ ok: false, status: 502 });
+    expect(opened.ok ? '' : opened.error).toMatch(
+      /^GitHub refused the branch develop: .*; no pull request was opened\.$/
+    );
+    expect(github.calls.some((c) => c.method === 'POST' && c.path.endsWith('/pulls'))).toBe(false);
+    expect(
+      github.calls
+        .filter((c) => c.method === 'POST' && c.path.endsWith('/git/refs'))
+        .map((c) => c.json)
+    ).toEqual([{ ref: 'refs/heads/develop', sha: 'base-sha' }]);
+  });
+});
+
 describe('the pull request’s words', () => {
   it('say what deploys where once it merges', () => {
     const names: Record<string, string> = {

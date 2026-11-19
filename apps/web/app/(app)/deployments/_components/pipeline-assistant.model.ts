@@ -8,7 +8,9 @@
  * The conversation lives on the page only; each question sends it whole
  * with the pipeline as the builder has it now
  * (POST …/pipeline-builder/assistant), so the assistant always works from
- * what is on screen, applied or not.
+ * what is on screen, applied or not. The server answers with a job and
+ * works the answer out in the background; the page follows the job
+ * (GET …/assistant/[jobId]), showing each step, until it ends.
  */
 
 import type { BlockDefinition, BlockKind, PipelineSpec } from '@renkei/ci-blocks';
@@ -41,6 +43,10 @@ export interface AssistantState {
   messages: AssistantMessage[];
   draft: string;
   busy: boolean;
+  /** The question being worked out on the server (…/assistant/[jobId]), while busy. */
+  job: string | null;
+  /** What the assistant is doing now ("Reading package.json"), while busy. */
+  step: string | null;
   error: string | null;
   /** What the refusal named, each in its words. */
   problems: string[];
@@ -58,8 +64,12 @@ export type AssistantAction =
   | { type: 'draft'; text: string }
   /** The person asked; `text` is the draft unless a button asked for them. */
   | { type: 'asked'; id: string; text: string }
-  | { type: 'answered'; id: string; answer: AssistantAnswer }
-  | { type: 'failed'; error: string; problems?: string[] }
+  /** The server took the question as this job; its answer comes later. */
+  | { type: 'started'; job: string }
+  | { type: 'progressed'; job: string; step: string | null }
+  /** `job` names the question answered; an answer to one given up on is dropped. */
+  | { type: 'answered'; id: string; answer: AssistantAnswer; job?: string }
+  | { type: 'failed'; error: string; problems?: string[]; job?: string }
   | { type: 'applied'; id: string }
   | { type: 'savingBlock'; id: string }
   | { type: 'blockSaved'; id: string; blockId: string }
@@ -70,6 +80,8 @@ export const initialAssistant: AssistantState = {
   messages: [],
   draft: '',
   busy: false,
+  job: null,
+  step: null,
   error: null,
   problems: [],
   applied: [],
@@ -92,14 +104,23 @@ export function assistantReducer(state: AssistantState, action: AssistantAction)
         messages: [...state.messages, { id: action.id, role: 'user', text }],
         draft: text === state.draft.trim() ? '' : state.draft,
         busy: true,
+        job: null,
+        step: null,
         error: null,
         problems: [],
       };
     }
+    case 'started':
+      return state.busy ? { ...state, job: action.job, step: null } : state;
+    case 'progressed':
+      return state.busy && state.job === action.job ? { ...state, step: action.step } : state;
     case 'answered':
+      if (!state.busy || (action.job !== undefined && action.job !== state.job)) return state;
       return {
         ...state,
         busy: false,
+        job: null,
+        step: null,
         messages: [
           ...state.messages,
           {
@@ -113,12 +134,15 @@ export function assistantReducer(state: AssistantState, action: AssistantAction)
         ],
       };
     case 'failed': {
+      if (!state.busy || (action.job !== undefined && action.job !== state.job)) return state;
       // The question stays in the box to send again; it leaves the thread.
       const last = state.messages[state.messages.length - 1];
       const unanswered = last?.role === 'user' ? last : null;
       return {
         ...state,
         busy: false,
+        job: null,
+        step: null,
         error: action.error,
         problems: action.problems ?? [],
         messages: unanswered ? state.messages.slice(0, -1) : state.messages,

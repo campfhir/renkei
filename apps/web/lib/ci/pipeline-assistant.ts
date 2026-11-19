@@ -98,6 +98,8 @@ export interface AssistantDeps {
   maxOutputTokens: number;
   listFiles: (path: string) => Promise<Listing>;
   readFile: (path: string) => Promise<FileRead>;
+  /** What it is doing now, as the person reads it ("Reading package.json"). */
+  onStep?: (step: string) => Promise<void> | void;
 }
 
 export interface AssistantInput {
@@ -410,6 +412,7 @@ export async function runPipelineAssistant(
       const path = cleanPath(args.path ?? '');
       if (path === null) return { content: 'That is not a path in the repository.', isError: true };
       read.push(path ? `${path}/` : '/');
+      await deps.onStep?.(`Looking in ${path ? `${path}/` : 'the repository'}`);
       const listed = await deps.listFiles(path);
       if (!listed.ok) return { content: listed.error, isError: true };
       const lines = listed.entries
@@ -430,6 +433,7 @@ export async function runPipelineAssistant(
       }
       reads += 1;
       read.push(path);
+      await deps.onStep?.(`Reading ${path}`);
       const file = await deps.readFile(path);
       if (!file.ok) return { content: file.error, isError: true };
       if (file.binary) return { content: 'That file is not text.' };
@@ -439,6 +443,7 @@ export async function runPipelineAssistant(
       };
     }
     if (name === 'propose_pipeline') {
+      await deps.onStep?.('Checking the pipeline it proposes');
       const outcome = readPipelineProposal(raw, input);
       if ('problems' in outcome) {
         return {
@@ -455,6 +460,7 @@ export async function runPipelineAssistant(
       };
     }
     if (name === 'propose_building_block' && input.operator) {
+      await deps.onStep?.('Checking the building block it proposes');
       const outcome = readBuildingBlockProposal(raw, organizationKeys);
       if ('problems' in outcome) {
         return {
@@ -471,6 +477,7 @@ export async function runPipelineAssistant(
   };
 
   for (let round = 1; round <= MAX_ROUNDS; round += 1) {
+    await deps.onStep?.(round === 1 ? 'Thinking it over' : 'Thinking over what it found');
     const completion = await deps.complete({
       system: systemPrompt(input),
       messages,

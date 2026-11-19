@@ -95,7 +95,13 @@ export type BuilderAction =
   | { type: 'closeEnvironmentForm' }
   | { type: 'addEnvironment' }
   | { type: 'saved' }
-  | { type: 'pullRequestOpened'; url: string; updated: boolean }
+  | {
+      type: 'pullRequestOpened';
+      url: string;
+      updated: boolean;
+      /** Environment branches the host lacked, made for it. */
+      created?: string[];
+    }
   /** The assistant's pipeline, as the person applied it (pipeline-assistant.tsx). */
   | { type: 'applyProposal'; spec: PipelineSpec };
 
@@ -360,14 +366,27 @@ export function builderReducer(state: BuilderState, action: BuilderAction): Buil
         busy: null,
         saved: spec,
         pullRequest: { url: action.url, updated: action.updated },
-        notice: action.updated
-          ? 'The pull request has the new file.'
-          : 'Pull request opened with the pipeline.',
+        notice: pullRequestNotice(state, action.updated, action.created ?? []),
       };
   }
 }
 
 // ——— what the page derives ———
+
+/** What the page says once the pull request is opened or updated, and any branches made for it. */
+export function pullRequestNotice(
+  state: BuilderState,
+  updated: boolean,
+  created: string[]
+): string {
+  const said = updated
+    ? 'The pull request has the new file.'
+    : 'Pull request opened with the pipeline.';
+  if (created.length === 0) return said;
+  const from = state.data?.facts.branch || 'the project’s branch';
+  const names = created.join(', ');
+  return `${said} ${names} did not exist, so ${created.length === 1 ? 'it was' : 'they were'} made from ${from}.`;
+}
 
 function organizationBlock(data: BuilderData) {
   return (key: string, version: number) =>

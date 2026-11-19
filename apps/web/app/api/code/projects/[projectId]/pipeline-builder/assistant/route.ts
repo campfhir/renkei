@@ -1,24 +1,24 @@
 /**
- * POST: one turn of the pipeline builder's assistant
- * (lib/ci/pipeline-assistant.ts) — the conversation so far and the
- * pipeline as the builder has it now; the answer is the assistant's
- * reply and, when it has one, a proposal the page applies on the
- * person's word. It reads the repository with the person's own grant on
- * the host and writes nothing: no pipeline is saved, no block made.
+ * POST: ask the pipeline builder's assistant (lib/ci/pipeline-assistant.ts)
+ * — the conversation so far and the pipeline as the builder has it now.
+ * It answers 202 { jobId } at once and works the answer out in the
+ * background (lib/ci/assistant-jobs.ts); the page asks
+ * GET …/assistant/[jobId] for its steps and, at the end, the reply and any
+ * proposal it applies on the person's word. It reads the repository with
+ * the person's own grant on the host and writes nothing: no pipeline is
+ * saved, no block made.
  *
  * Editors only (a viewer cannot apply what it proposes). An operator is
  * also offered the tool that makes one of the project's blocks into a
  * building block for every project; the page saves that through the
  * catalogue's own route (POST /api/admin/ci-blocks), as a draft.
  *
- *   POST { conversation: [{ role, text }], spec } →
- *     { reply, proposal: { summary, spec, unfinished } | null,
- *       buildingBlock: { key, name, description, kind, definition, from } | null,
- *       read: string[] }
+ *   POST { conversation: [{ role, text }], spec } → 202 { jobId }
  */
 
 import type { NextRequest } from 'next/server';
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
+import { randomUUID } from 'node:crypto';
 import { resolveAgentLlm } from '@renkei/agent-llm';
 import { readPipelineSpec } from '@renkei/ci-blocks';
 import { isRecord } from '@renkei/guards';
@@ -35,11 +35,10 @@ import {
   listSource as listGithubSource,
   readSourceFile as readGithubFile,
 } from '@/lib/code/github-browse';
-import { readConversation, runPipelineAssistant } from '@/lib/ci/pipeline-assistant';
+import { readConversation } from '@/lib/ci/pipeline-assistant';
+import { runAssistantJob, startAssistantJob } from '@/lib/ci/assistant-jobs';
 import { builderBlocks, builderTargets, withBranch } from '@/lib/ci/pipeline-builder';
 import { builderContext } from '@/lib/ci/pipeline-builder-access';
-import { logger } from '@/lib/logger';
-import { whoIs } from '@/lib/log-actor';
 
 export async function POST(
   request: NextRequest,
@@ -70,66 +69,50 @@ export async function POST(
   const llm = resolved.val;
   const operator = (await checkAccess([ROLE_OPERATOR])) !== null;
   const caller = { subject, origin };
-  const project = await withBranch(caller, found.context.project);
-  const { fullName, branch } = project.repo;
-  const [blocks, targets] = await Promise.all([
-    builderBlocks(spec.ok ? spec.value : null),
-    builderTargets(),
-  ]);
+  const following = found.context.project;
+  const jobId = randomUUID();
+  await startAssistantJob(jobId, subject, following.id, new Date());
 
-  const reply = await runPipelineAssistant(
-    {
-      conversation,
-      spec: spec.ok ? spec.value : body.spec,
-      specProblems: spec.ok ? [] : spec.errors,
-      host,
-      repo: fullName,
-      branch,
-      blocks,
-      targets,
-      operator,
-    },
-    {
-      complete: (llmRequest) => llm.provider.complete(llmRequest),
-      maxOutputTokens: llm.maxOutputTokens,
-      listFiles: (path) =>
-        host === 'github'
-          ? listGithubSource(githubAuthOf(caller), fullName, branch, path)
-          : listBitbucketSource(bitbucketAuthOf(caller), fullName, branch, path),
-      readFile: (path) =>
-        host === 'github'
-          ? readGithubFile(githubAuthOf(caller), fullName, branch, path)
-          : readBitbucketFile(bitbucketAuthOf(caller), fullName, branch, path),
-    }
-  );
-  if ('error' in reply) {
-    logger.warn(
-      '{actor} asked the pipeline assistant of the project "{project}" ({repository}), but the model did not answer; nothing was proposed: {error}',
-      {
-        component: 'api/code/projects/pipeline-builder/assistant',
-        ...(await whoIs(subject)),
-        projectId,
-        project: project.name,
-        repository: fullName,
-        error: reply.error,
+  // The answer is worked out after this response: the page asks for the
+  // job (…/assistant/[jobId]) rather than holding this request open.
+  after(() =>
+    runAssistantJob(
+      jobId,
+      { subject, project: following.name, repository: following.repo.fullName },
+      async () => {
+        const project = await withBranch(caller, following);
+        const { fullName, branch } = project.repo;
+        const [blocks, targets] = await Promise.all([
+          builderBlocks(spec.ok ? spec.value : null),
+          builderTargets(),
+        ]);
+        return {
+          input: {
+            conversation,
+            spec: spec.ok ? spec.value : body.spec,
+            specProblems: spec.ok ? [] : spec.errors,
+            host,
+            repo: fullName,
+            branch,
+            blocks,
+            targets,
+            operator,
+          },
+          deps: {
+            complete: (llmRequest) => llm.provider.complete(llmRequest),
+            maxOutputTokens: llm.maxOutputTokens,
+            listFiles: (path) =>
+              host === 'github'
+                ? listGithubSource(githubAuthOf(caller), fullName, branch, path)
+                : listBitbucketSource(bitbucketAuthOf(caller), fullName, branch, path),
+            readFile: (path) =>
+              host === 'github'
+                ? readGithubFile(githubAuthOf(caller), fullName, branch, path)
+                : readBitbucketFile(bitbucketAuthOf(caller), fullName, branch, path),
+          },
+        };
       }
-    );
-    return jsonError(502, 'model', reply.error);
-  }
-  logger.info(
-    '{actor} asked the pipeline assistant of the project "{project}" ({repository}); it read {reads} paths and proposed {proposed}',
-    {
-      component: 'api/code/projects/pipeline-builder/assistant',
-      ...(await whoIs(subject)),
-      projectId,
-      project: project.name,
-      repository: fullName,
-      reads: reply.read.length,
-      proposed:
-        [reply.proposal ? 'a pipeline' : '', reply.buildingBlock ? 'a building block' : '']
-          .filter(Boolean)
-          .join(' and ') || 'nothing',
-    }
+    )
   );
-  return NextResponse.json(reply);
+  return NextResponse.json({ jobId }, { status: 202 });
 }

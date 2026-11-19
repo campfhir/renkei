@@ -92,5 +92,10 @@ export async function POST(
       url: outcome.url,
     }
   );
-  return NextResponse.json({ url: outcome.url, branch: outcome.branch, updated: outcome.updated });
+  return NextResponse.json({
+    url: outcome.url,
+    branch: outcome.branch,
+    updated: outcome.updated,
+    created: outcome.created ?? [],
+  });
 }

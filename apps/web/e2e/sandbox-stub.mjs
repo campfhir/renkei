@@ -1819,6 +1819,18 @@ function handlePipelineDemo(request, url, response) {
   }
   const match = [null, found[1], found[2], rest];
   if (!['refs/branches', 'pullrequests', 'src'].includes(rest)) return null;
+  if (match[3] === 'refs/branches' && request.method === 'POST') {
+    // A branch made from a commit, as Bitbucket's refs/branches POST does.
+    void readBody(request).then((body) => {
+      const name = body.name ?? '';
+      const hash = body.target?.hash ?? '';
+      if (!name || !hash) return error(response, 400, 'bad_request', 'name and target.hash');
+      if (state.branches.has(name)) return error(response, 400, 'bad_request', `${name} exists`);
+      state.branches.set(name, hash);
+      json(response, 201, { name, target: { hash } });
+    });
+    return;
+  }
   if (match[3] === 'refs/branches') {
     return json(response, 200, {
       values: [...state.branches].map(([name, hash]) => ({ name, target: { hash } })),

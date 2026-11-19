@@ -13,6 +13,7 @@ import {
   ownBlocks,
   partCards,
   pullRequestNote,
+  pullRequestNotice,
   saveRequest,
   stepEditor,
   type BuilderAction,
@@ -336,7 +337,7 @@ describe('environments', () => {
     );
     expect(state.spec?.environments.map((e) => [e.name, e.branch])).toEqual([['dev', 'next']]);
     expect(checks(state).map((c) => c.text)).toContain(
-      'next does not exist yet: dev deploys once it does.'
+      'next does not exist yet: the pull request makes it from main, and dev deploys once this pipeline reaches it.'
     );
   });
 });
@@ -381,6 +382,22 @@ describe('saving and the pull request', () => {
     expect(canSave(opened)).toBe(false);
     expect(run([{ type: 'pullRequestOpened', url: 'u', updated: true }], loaded).notice).toBe(
       'The pull request has the new file.'
+    );
+  });
+
+  it('a pull request that made missing environment branches says so', () => {
+    const opened = run(
+      [
+        { type: 'sent', busy: 'pull-request' },
+        { type: 'pullRequestOpened', url: 'https://x/pr/1', updated: false, created: ['develop'] },
+      ],
+      loaded
+    );
+    expect(opened.notice).toBe(
+      'Pull request opened with the pipeline. develop did not exist, so it was made from main.'
+    );
+    expect(pullRequestNotice(loaded, true, ['develop', 'staging'])).toBe(
+      'The pull request has the new file. develop, staging did not exist, so they were made from main.'
     );
   });
 

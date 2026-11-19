@@ -162,7 +162,10 @@ test('pipeline assistant: tailor a block to the source, apply it, make it reusab
     );
     await panel.getByRole('button', { name: 'Ask' }).click();
     const answer = await asked;
-    expect(answer.status()).toBe(200);
+    // Taken as a job and worked out in the background; the page follows it.
+    expect(answer.status()).toBe(202);
+    const { jobId } = await answer.json();
+    expect(typeof jobId).toBe('string');
     // The pipeline on screen went with the question.
     expect(answer.request().postDataJSON().spec).toEqual({ checks: [check], environments: [] });
 
@@ -304,7 +307,7 @@ test('pipeline assistant: a project that follows the default branch gets a pipel
       (r) => r.url().endsWith('/pipeline-builder/assistant') && r.request().method() === 'POST'
     );
     await panel.getByRole('button', { name: 'Ask' }).click();
-    expect((await asked).status()).toBe(200);
+    expect((await asked).status()).toBe(202);
     await expect(panel).toContainText('It already deploys from main.');
     await expect(panel.getByRole('alert')).toHaveCount(0);
   } finally {

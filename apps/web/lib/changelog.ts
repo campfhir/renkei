@@ -49,6 +49,18 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-19',
     entries: [
       {
+        kind: 'changed',
+        title: 'The pipeline assistant works in the background',
+        detail:
+          'Asking the pipeline assistant no longer holds the page waiting on one long request: the server works the answer out and the panel shows what it is doing as it goes ("Reading package.json"), and an answer cut short by a restart says so instead of spinning.',
+      },
+      {
+        kind: 'added',
+        title: 'Pipelines make the branches they deploy from',
+        detail:
+          "An environment whose branch the repository does not have yet no longer waits on someone to create it: opening the pipeline's pull request makes the branch from the project's branch, and the page and the pull request say which were made.",
+      },
+      {
         kind: 'fixed',
         title: 'Pipelines for projects on the default branch',
         detail:

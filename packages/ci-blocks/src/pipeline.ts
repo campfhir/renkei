@@ -703,7 +703,7 @@ export function pipelineChecks(
     if (facts.branches && !facts.branches.includes(environment.branch)) {
       add(
         'warn',
-        `${environment.branch} does not exist yet: ${environment.name} deploys once it does.`
+        `${environment.branch} does not exist yet: the pull request makes it from ${facts.branch}, and ${environment.name} deploys once this pipeline reaches it.`
       );
     }
   }

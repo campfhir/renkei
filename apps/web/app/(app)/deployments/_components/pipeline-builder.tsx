@@ -31,6 +31,7 @@ import {
   ownBlocks,
   partCards,
   pullRequestNote,
+  pullRequestNotice,
   saveRequest,
   stepEditor,
   type BuilderAction,
@@ -50,6 +51,15 @@ import {
   type AssistantAnswer,
   type AssistantMessage,
 } from './pipeline-assistant.model';
+
+/** How often the page asks how the assistant's answer is going. */
+const ASSISTANT_POLL_MS = 1_200;
+
+/** What GET …/pipeline-builder/assistant/[jobId] answers. */
+type AssistantJob =
+  | { status: 'running'; step: string | null }
+  | { status: 'succeeded'; answer: AssistantAnswer }
+  | { status: 'failed'; error: string };
 import {
   cardClass,
   inputClass,
@@ -136,11 +146,12 @@ export default function PipelineBuilder({
     const body = saveRequest(state);
     if (!body) return;
     dispatch({ type: 'sent', busy: 'pull-request' });
-    const result = await sendJsonFull<{ url?: string; updated?: boolean; problems?: string[] }>(
-      `${url}/pull-request`,
-      'POST',
-      body
-    );
+    const result = await sendJsonFull<{
+      url?: string;
+      updated?: boolean;
+      created?: string[];
+      problems?: string[];
+    }>(`${url}/pull-request`, 'POST', body);
     if (result.error || !result.data?.url) {
       dispatch({
         type: 'failed',
@@ -149,17 +160,12 @@ export default function PipelineBuilder({
       });
       return;
     }
-    dispatch({
-      type: 'pullRequestOpened',
-      url: result.data.url,
-      updated: Boolean(result.data.updated),
-    });
-    // What the host has now: the file on the branch is the pull request's, not the branch's yet.
-    await load(
-      result.data.updated
-        ? 'The pull request has the new file.'
-        : 'Pull request opened with the pipeline.'
-    );
+    const updated = Boolean(result.data.updated);
+    const created = result.data.created ?? [];
+    dispatch({ type: 'pullRequestOpened', url: result.data.url, updated, created });
+    // What the host has now: the file on the branch is the pull request's,
+    // not the branch's yet; branches it made are listed now.
+    await load(pullRequestNotice(state, updated, created));
   };
 
   const ask = async (text: string) => {
@@ -168,24 +174,65 @@ export default function PipelineBuilder({
     const asked = assistantReducer(assistant, { type: 'asked', id, text });
     if (asked === assistant) return;
     assistantDispatch({ type: 'asked', id, text });
-    const result = await sendJsonFull<AssistantAnswer & { problems?: string[] }>(
+    const started = await sendJsonFull<{ jobId?: string; problems?: string[] }>(
       `${url}/assistant`,
       'POST',
       askRequest(asked, state.spec)
     );
-    if (result.error || !result.data) {
+    const job = started.data?.jobId;
+    if (started.error || !job) {
       assistantDispatch({
         type: 'failed',
-        error: result.error ?? 'The assistant did not answer.',
-        problems: result.data?.problems ?? [],
+        error: started.error ?? 'The assistant did not take the question.',
+        problems: started.data?.problems ?? [],
       });
       return;
     }
-    assistantDispatch({
-      type: 'answered',
-      id: `m${(nextId.current += 1)}`,
-      answer: result.data,
-    });
+    assistantDispatch({ type: 'started', job });
+    await follow(job);
+  };
+
+  // The answer is worked out on the server; follow its job until it ends,
+  // or until a new conversation or leaving the page gives it up.
+  const following = useRef<string | null>(null);
+  useEffect(
+    () => () => {
+      following.current = null;
+    },
+    []
+  );
+  const follow = async (job: string) => {
+    following.current = job;
+    let misses = 0;
+    while (following.current === job) {
+      await new Promise((resolve) => setTimeout(resolve, ASSISTANT_POLL_MS));
+      if (following.current !== job) return;
+      const read = await getJson<AssistantJob>(`${url}/assistant/${job}`);
+      if (!read.data) {
+        // A blip (a deploy, the network) is waited out; a job that is gone is not.
+        misses += 1;
+        if (misses < 5 && read.error !== 'That question is not here any more; ask again.') continue;
+        assistantDispatch({ type: 'failed', job, error: read.error ?? 'The assistant stopped.' });
+        return;
+      }
+      misses = 0;
+      const view = read.data;
+      if (view.status === 'running') {
+        assistantDispatch({ type: 'progressed', job, step: view.step });
+      } else {
+        following.current = null;
+        if (view.status === 'succeeded') {
+          assistantDispatch({
+            type: 'answered',
+            id: `m${(nextId.current += 1)}`,
+            job,
+            answer: view.answer,
+          });
+        } else {
+          assistantDispatch({ type: 'failed', job, error: view.error });
+        }
+      }
+    }
   };
 
   const apply = (message: AssistantMessage) => {
@@ -293,7 +340,10 @@ export default function PipelineBuilder({
               <AssistantDockPanel id="pipeline-assistant" title="Pipeline assistant">
                 <PipelineAssistant
                   state={assistant}
-                  dispatch={assistantDispatch}
+                  dispatch={(action) => {
+                    if (action.type === 'reset') following.current = null;
+                    assistantDispatch(action);
+                  }}
                   spec={state.spec}
                   blockName={blockName}
                   operator={operator}
