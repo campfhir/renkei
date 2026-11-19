@@ -234,29 +234,36 @@ it('sends a proposal cut off at the output limit back to be sent again, instead 
   });
 });
 
-it('says it did not finish when its steps run out, rather than passing off what it was about to do', async () => {
-  let n = 0;
-  const complete: jest.Mock = jest.fn(async () => ({
-    ok: true,
-    val: {
-      content: [
-        { type: 'text', text: 'Next I’ll check where they are defined.' },
-        { type: 'tool_use', id: `call-${(n += 1)}`, name: 'list_files', input: {} },
+it('keeps going as long as it takes, reading until its budget is spent, then answers', async () => {
+  // 41 rounds of listing — far past any round limit — then the answer.
+  const steps: Step[] = [
+    ...Array.from({ length: 41 }, () => ({
+      text: 'Next I’ll look further.',
+      calls: [{ name: 'list_files', input: {} }],
+    })),
+    {
+      calls: [
+        { name: 'propose_pipeline', input: { summary: 'Done.', checks: [], environments: [] } },
       ],
-      stopReason: 'tool_use',
-      usage: { inputTokens: 1, outputTokens: 1 },
     },
-  }));
+    { text: 'Apply it.' },
+  ];
+  const complete = model(steps);
   const d = deps(complete);
   const reply = await runPipelineAssistant(input(), d);
-  expect(reply).toMatchObject({ reply: UNFINISHED, proposal: null });
-  // The last rounds refuse reading so it proposes with what it has.
-  expect(results(complete).at(-1)).toEqual({
-    content:
-      'No more reading in this turn: call propose_pipeline now with what you have read, or answer in words.',
+  expect(reply).toMatchObject({ reply: 'Apply it.', proposal: { summary: 'Done.' } });
+  // The 41st listing is past the budget: refused, so it proposes.
+  expect(d.listFiles).toHaveBeenCalledTimes(40);
+  expect(results(complete)[40]).toEqual({
+    content: 'That is 40 directories already; propose from what you have seen.',
     isError: true,
   });
-  expect(d.listFiles).toHaveBeenCalledTimes(complete.mock.calls.length - 2);
+});
+
+it('says it did not finish when its reply was cut off with nothing in it', async () => {
+  const complete = model([{ stop: 'max_tokens' }]);
+  const reply = await runPipelineAssistant(input(), deps(complete));
+  expect(reply).toMatchObject({ reply: UNFINISHED, proposal: null });
 });
 
 it('refuses a path out of the repository, and stops reading after its limit', async () => {

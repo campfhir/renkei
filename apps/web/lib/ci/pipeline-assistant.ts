@@ -47,16 +47,14 @@ import { isRecord } from '@renkei/guards';
 import type { Result } from '@campfhir/safe-functions/types';
 
 export const MAX_CONVERSATION_TURNS = 20;
-/** The reply when a turn ends before the model finished (out of rounds, cut off). */
+/** The reply when the model's reply was cut off at the output limit with nothing in it. */
 export const UNFINISHED =
   'I ran out of room before I finished, so nothing is proposed yet; say “continue” and I will pick up from here.';
 export const UNFINISHED_AFTER_PROPOSING =
   'I ran out of room before I finished; say “continue” if there is more to do.';
 export const MAX_MESSAGE_CHARS = 4_000;
-const MAX_ROUNDS = 16;
-/** The last rounds are for proposing: reading is refused so it answers with what it has. */
-const PROPOSE_ROUNDS = 2;
 const MAX_FILE_READS = 25;
+const MAX_LISTINGS = 40;
 const MAX_FILE_CHARS = 40_000;
 const MAX_LISTED = 300;
 const MAX_OUTPUT_TOKENS = 16_000;
@@ -414,19 +412,19 @@ export async function runPipelineAssistant(
   const said: string[] = [];
   const organizationKeys = [...new Set(input.blocks.map((b) => b.key))];
 
-  let round = 0;
+  let listings = 0;
   const run = async (name: string, raw: unknown): Promise<ToolOutcome> => {
     const args = isRecord(raw) ? raw : {};
-    if ((name === 'list_files' || name === 'read_file') && round > MAX_ROUNDS - PROPOSE_ROUNDS) {
-      return {
-        content:
-          'No more reading in this turn: call propose_pipeline now with what you have read, or answer in words.',
-        isError: true,
-      };
-    }
     if (name === 'list_files') {
       const path = cleanPath(args.path ?? '');
       if (path === null) return { content: 'That is not a path in the repository.', isError: true };
+      if (listings >= MAX_LISTINGS) {
+        return {
+          content: `That is ${MAX_LISTINGS} directories already; propose from what you have seen.`,
+          isError: true,
+        };
+      }
+      listings += 1;
       read.push(path ? `${path}/` : '/');
       await deps.onStep?.(`Looking in ${path ? `${path}/` : 'the repository'}`);
       const listed = await deps.listFiles(path);
@@ -492,10 +490,12 @@ export async function runPipelineAssistant(
     return { content: `There is no tool ${name}.`, isError: true };
   };
 
-  // Whether the model ended its turn itself; false when the rounds ran out
-  // or its reply was cut off mid-call, so its last words are not an answer.
-  let finished = false;
-  for (round = 1; round <= MAX_ROUNDS; round += 1) {
+  // The turn has no round limit: it goes on until the model answers in
+  // words. What bounds it is the reading budget (MAX_FILE_READS,
+  // MAX_LISTINGS); past that every read is refused and it must propose.
+  // `finished` is false only when a reply was cut off with nothing in it.
+  let finished: boolean;
+  for (let round = 1; ; round += 1) {
     await deps.onStep?.(round === 1 ? 'Thinking it over' : 'Thinking over what it found');
     const completion = await deps.complete({
       system: systemPrompt(input),
