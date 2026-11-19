@@ -25,12 +25,28 @@ import type { FabricDefinitionPart, FabricOperationResult } from '@renkei/db';
 export const FABRIC_API_BASE = 'https://api.fabric.microsoft.com/v1';
 
 /**
+ * `value` with `char` taken off either end — a loop, not a pattern like
+ * /^\/+|\/+$/, which backtracks on a long run of the character.
+ */
+export function trimChar(value: string, char: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value[start] === char) start += 1;
+  while (end > start && value[end - 1] === char) end -= 1;
+  return value.slice(start, end);
+}
+
+/**
  * The API root a deployment talks to: Fabric's own, or a stand-in
  * (FABRIC_API_BASE_URL) for the browser suite, as ENTRA_DEVELOPER_API_BASE_URL
  * serves the Entra tools. The delegate honours the same variable.
  */
 export function fabricApiBase(env: NodeJS.ProcessEnv = process.env): string {
-  const configured = env.FABRIC_API_BASE_URL?.trim().replace(/\/+$/, '');
+  const raw = env.FABRIC_API_BASE_URL?.trim() ?? '';
+  // Trailing slashes only: the scheme's own // stays.
+  let end = raw.length;
+  while (end > 0 && raw[end - 1] === '/') end -= 1;
+  const configured = raw.slice(0, end);
   return configured ? `${configured}/v1` : FABRIC_API_BASE;
 }
 

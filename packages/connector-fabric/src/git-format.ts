@@ -16,6 +16,7 @@
 import { asRecord } from '@renkei/guards';
 import type { FabricOperationResult } from '@renkei/db';
 import { notebookCells, notebookLanguage, type NotebookCell } from './readable';
+import { trimChar } from './api';
 
 export const REPO_ITEM_TYPES = ['Notebook', 'DataPipeline'] as const;
 export type RepoItemType = (typeof REPO_ITEM_TYPES)[number];
@@ -37,7 +38,7 @@ export function itemFolderName(displayName: string, type: RepoItemType): string 
 
 /** A directory inside the repository: no leading or trailing slash, no `..`. */
 export function itemsDirectory(value: string | undefined): string | null {
-  const trimmed = (value ?? DEFAULT_ITEMS_DIRECTORY).trim().replace(/^\/+|\/+$/g, '');
+  const trimmed = trimChar((value ?? DEFAULT_ITEMS_DIRECTORY).trim(), '/');
   if (!trimmed) return '';
   if (trimmed.split('/').some((segment) => segment === '..' || segment === '.' || !segment)) {
     return null;

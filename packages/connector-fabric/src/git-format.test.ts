@@ -107,3 +107,17 @@ describe('Fabric items as a repository holds them', () => {
     expect(exported.skipped).toEqual(['resources/logo.png']);
   });
 });
+
+describe('trimming without backtracking', () => {
+  it('reads a long run of slashes in linear time', async () => {
+    const { trimChar, fabricApiBase } = await import('./api');
+    const hostile = `${'/'.repeat(200_000)}x${'/'.repeat(200_000)}`;
+    const started = performance.now();
+    expect(trimChar(hostile, '/')).toBe('x');
+    expect(itemsDirectory(`a${'/'.repeat(200_000)}`)).toBe('a');
+    expect(
+      fabricApiBase({ FABRIC_API_BASE_URL: `http://stub:8092/fabric${'/'.repeat(200_000)}` })
+    ).toBe('http://stub:8092/fabric/v1');
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+});

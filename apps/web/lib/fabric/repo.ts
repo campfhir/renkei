@@ -17,7 +17,7 @@ import { getDataStore } from '@renkei/db';
 import { readPipelineSpec, type Host } from '@renkei/ci-blocks';
 import { getOrgSettings } from '@renkei/settings';
 import { isRecord } from '@renkei/guards';
-import type { RepoFile } from '@renkei/connector-fabric';
+import { trimChar, type RepoFile } from '@renkei/connector-fabric';
 import { resolveResourceAccess } from '@/lib/chat/access';
 import { getProjectRow } from '@/lib/chat/projects';
 import { loadChatSidebar } from '@/lib/chat/sidebar';
@@ -94,11 +94,10 @@ export async function proposalBase(project: CodeRepoProject, asked?: string): Pr
 
 /** A branch name for one proposal: renkei/fabric/<what>-<minute>. */
 export function proposalBranch(what: string, now: Date): string {
-  const slug = what
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40);
+  const slug = trimChar(
+    trimChar(what.toLowerCase().replace(/[^a-z0-9]+/g, '-'), '-').slice(0, 40),
+    '-'
+  );
   const stamp = now.toISOString().slice(0, 16).replace(/[-:T]/g, '');
   return `renkei/fabric/${slug || 'change'}-${stamp}`;
 }
