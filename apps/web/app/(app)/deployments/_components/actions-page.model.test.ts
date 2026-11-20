@@ -213,3 +213,35 @@ describe('the words on the page', () => {
     expect(secretsNote(2)).toMatch(/listed by name/);
   });
 });
+
+describe('sent here to set a variable (the pipeline builder’s “Set it”)', () => {
+  it('opens the box with `NAME=` added for a plain variable, the cursor after the `=`', () => {
+    const state = fold([
+      { type: 'loaded', setup: setup() },
+      {
+        type: 'variableAsked',
+        ask: { name: 'API_URL', environment: null, secured: false },
+        canSet: true,
+      },
+    ]);
+    expect(state.draft).toEqual({
+      text: 'REGION=eu\nAPI_URL=',
+      caret: { start: 18, end: 18 },
+    });
+  });
+
+  it('a secret is set on GitHub, so it says where instead of opening a box', () => {
+    const state = fold([
+      { type: 'loaded', setup: setup() },
+      {
+        type: 'variableAsked',
+        ask: { name: 'DEPLOY_TOKEN', environment: 'production', secured: true },
+        canSet: true,
+      },
+    ]);
+    expect(state.draft).toBeNull();
+    expect(state.notice).toBe(
+      'DEPLOY_TOKEN is a secret: GitHub secrets are set on GitHub, under the production environment’s Secrets and variables settings.'
+    );
+  });
+});

@@ -20,7 +20,11 @@ import type {
   PipelineVariable,
   VariablesApplied,
 } from '@/lib/code/bitbucket-pipelines';
-import { renderVariableText } from '@/lib/code/pipeline-variables-text';
+import {
+  renderVariableText,
+  withVariableLine,
+  type Caret,
+} from '@/lib/code/pipeline-variables-text';
 
 export interface Setup extends PipelineSetup {
   access: {
@@ -37,6 +41,66 @@ export type Scope = { environmentUuid?: string };
 /** One set being edited as text. */
 export interface Draft extends Scope {
   text: string;
+  /** Where the cursor goes when the box opens on a variable it was sent to set. */
+  caret?: Caret;
+}
+
+/**
+ * A variable the page was sent to set (the builder's "Set it":
+ * `?set=NAME&in=ENVIRONMENT&secret=1`): which, where — an environment by
+ * name, or null for the repository's own set — and whether it is a secret.
+ */
+export interface VariableAsk {
+  name: string;
+  environment: string | null;
+  secured: boolean;
+}
+
+/** The ask a link carries, read from its query; null when it names no usable variable. */
+export function readVariableAsk(query: { get(key: string): string | null }): VariableAsk | null {
+  const name = query.get('set')?.trim() ?? '';
+  if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(name)) return null;
+  const environment = query.get('in')?.trim() || null;
+  return { name, environment, secured: query.get('secret') === '1' };
+}
+
+type AskedSets = {
+  variables: PipelineVariable[];
+  environments: { uuid: string; name: string; variables: PipelineVariable[] }[];
+};
+
+/**
+ * The box an ask opens, on the variable's line with the cursor placed —
+ * or why it cannot open: an environment the host does not have, or no
+ * right to set variables here.
+ */
+export function askedDraft(
+  sets: AskedSets,
+  ask: VariableAsk,
+  host: { canSet: boolean; label: string }
+): { draft: Draft } | { notice: string } {
+  if (!host.canSet) {
+    return {
+      notice: `${ask.name} is not set; you cannot set variables here, so ask an editor of the project.`,
+    };
+  }
+  const environment = ask.environment
+    ? sets.environments.find((e) => e.name.toLowerCase() === ask.environment!.toLowerCase())
+    : null;
+  if (ask.environment && !environment) {
+    return {
+      notice: `${host.label} has no deployment environment named ${ask.environment}, so ${ask.name} cannot be set for it yet: add the environment on ${host.label}, then set it there.`,
+    };
+  }
+  const variables = environment ? environment.variables : sets.variables;
+  const ready = withVariableLine(renderVariableText(variables), ask.name, ask.secured);
+  return {
+    draft: {
+      ...(environment ? { environmentUuid: environment.uuid } : {}),
+      text: ready.text,
+      caret: ready.caret,
+    },
+  };
 }
 
 /** What the last save of a set did, shown under it until the next edit. */
@@ -68,6 +132,8 @@ export interface PipelinesState {
   loadError: string | null;
   /** The last change Bitbucket refused. */
   error: string | null;
+  /** Why the variable the page was sent to set could not be opened. */
+  notice: string | null;
   busy: boolean;
   draft: Draft | null;
   outcome: Outcome | null;
@@ -83,6 +149,7 @@ export const initialPipelines: PipelinesState = {
   setup: null,
   loadError: null,
   error: null,
+  notice: null,
   busy: false,
   draft: null,
   outcome: null,
@@ -102,6 +169,8 @@ export type PipelinesAction =
   | { type: 'flipped' }
   // The variable sets
   | { type: 'variablesOpened'; scope: Scope; variables: PipelineVariable[] }
+  /** The page was sent to set a variable; `canSet` is whether this person may. */
+  | { type: 'variableAsked'; ask: VariableAsk; canSet: boolean }
   | { type: 'variablesChanged'; text: string }
   | { type: 'variablesCancelled' }
   | { type: 'variablesSaved'; outcome: Outcome | null }
@@ -143,12 +212,24 @@ export function pipelinesReducer(state: PipelinesState, action: PipelinesAction)
         ...state,
         draft: { ...action.scope, text: renderVariableText(action.variables) },
       };
+    case 'variableAsked': {
+      if (!state.setup) return state;
+      const opened = askedDraft(state.setup, action.ask, {
+        canSet: action.canSet,
+        label: 'Bitbucket',
+      });
+      return 'draft' in opened
+        ? { ...state, draft: opened.draft, notice: null }
+        : { ...state, notice: opened.notice };
+    }
     case 'variablesChanged':
-      return state.draft ? { ...state, draft: { ...state.draft, text: action.text } } : state;
+      return state.draft
+        ? { ...state, draft: { ...state.draft, text: action.text, caret: undefined } }
+        : state;
     case 'variablesCancelled':
       return { ...state, draft: null };
     case 'variablesSaved':
-      return { ...state, busy: false, draft: null, outcome: action.outcome };
+      return { ...state, busy: false, draft: null, notice: null, outcome: action.outcome };
 
     case 'fileOpening':
       return { ...state, busy: true, error: null, committed: null };

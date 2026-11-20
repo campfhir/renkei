@@ -23,7 +23,7 @@
  * change — is actions-page.model.ts.
  */
 
-import { useCallback, useEffect, useReducer } from 'react';
+import { useCallback, useEffect, useReducer, useRef } from 'react';
 import Link from 'next/link';
 import ExternalLink from '@/components/external-link';
 import LocalTime from '@/components/local-time';
@@ -56,6 +56,7 @@ import {
   type ActionsAction,
   type ActionsPageSetup,
 } from './actions-page.model';
+import type { VariableAsk } from './pipelines-page.model';
 import {
   draftFor,
   outcomeFor,
@@ -99,12 +100,15 @@ export default function ActionsPage({
   repoFullName,
   branch,
   canEdit,
+  ask = null,
 }: {
   projectId: string;
   repoFullName: string;
   /** The project's branch; empty for the repository's default. */
   branch: string;
   canEdit: boolean;
+  /** A variable the page was sent to set (the builder's "Set it"); null when none. */
+  ask?: VariableAsk | null;
 }) {
   const url = `/api/code/projects/${projectId}/actions`;
   const [state, dispatch] = useReducer(actionsReducer, initialActions);
@@ -210,6 +214,14 @@ export default function ActionsPage({
   const branchLabel = labelOfBranch(branch);
   const canSet = canConfigure(state, canEdit);
 
+  // Sent here to set a variable: once the sets are read, open its box on its line.
+  const asked = useRef(false);
+  useEffect(() => {
+    if (!ask || !setup || asked.current) return;
+    asked.current = true;
+    dispatch({ type: 'variableAsked', ask, canSet });
+  }, [ask, setup, canSet]);
+
   const refreshButton = (
     <button
       type="button"
@@ -273,6 +285,11 @@ export default function ActionsPage({
         {error ? (
           <p role="alert" className="text-sm text-red-600 dark:text-red-400">
             {error}
+          </p>
+        ) : null}
+        {state.notice ? (
+          <p role="status" className="text-sm text-amber-700 dark:text-amber-400">
+            {state.notice}
           </p>
         ) : null}
         {setup === null && !loadError ? (

@@ -16,7 +16,14 @@ import type { PipelineVariable } from '@/lib/code/bitbucket-pipelines';
 import type { ActionsSetup, WorkflowFile } from '@/lib/code/github-actions';
 import { renderVariableText } from '@/lib/code/pipeline-variables-text';
 import { workflowFileName } from '@/lib/code/workflow-file-name';
-import type { Committed, Draft, Outcome, Scope } from './pipelines-page.model';
+import {
+  askedDraft,
+  type Committed,
+  type Draft,
+  type Outcome,
+  type Scope,
+  type VariableAsk,
+} from './pipelines-page.model';
 
 export interface ActionsPageSetup extends ActionsSetup {
   access: {
@@ -38,6 +45,8 @@ export interface ActionsState {
   setup: ActionsPageSetup | null;
   loadError: string | null;
   error: string | null;
+  /** Why the variable the page was sent to set could not be opened, or where to set a secret. */
+  notice: string | null;
   busy: boolean;
   draft: Draft | null;
   outcome: Outcome | null;
@@ -49,6 +58,7 @@ export const initialActions: ActionsState = {
   setup: null,
   loadError: null,
   error: null,
+  notice: null,
   busy: false,
   draft: null,
   outcome: null,
@@ -63,6 +73,8 @@ export type ActionsAction =
   | { type: 'failed'; error: string }
   | { type: 'flipped' }
   | { type: 'variablesOpened'; scope: Scope; variables: PipelineVariable[] }
+  /** The page was sent to set a variable; `canSet` is whether this person may. */
+  | { type: 'variableAsked'; ask: VariableAsk; canSet: boolean }
   | { type: 'variablesChanged'; text: string }
   | { type: 'variablesCancelled' }
   | { type: 'variablesSaved'; outcome: Outcome | null }
@@ -101,12 +113,31 @@ export function actionsReducer(state: ActionsState, action: ActionsAction): Acti
         ...state,
         draft: { ...action.scope, text: renderVariableText(action.variables) },
       };
+    case 'variableAsked': {
+      if (!state.setup) return state;
+      if (action.ask.secured) {
+        // GitHub secrets are listed here but set only on GitHub.
+        return {
+          ...state,
+          notice: `${action.ask.name} is a secret: GitHub secrets are set on GitHub, under the ${action.ask.environment ? `${action.ask.environment} environment’s` : 'repository’s'} Secrets and variables settings.`,
+        };
+      }
+      const opened = askedDraft(state.setup, action.ask, {
+        canSet: action.canSet,
+        label: 'GitHub',
+      });
+      return 'draft' in opened
+        ? { ...state, draft: opened.draft, notice: null }
+        : { ...state, notice: opened.notice };
+    }
     case 'variablesChanged':
-      return state.draft ? { ...state, draft: { ...state.draft, text: action.text } } : state;
+      return state.draft
+        ? { ...state, draft: { ...state.draft, text: action.text, caret: undefined } }
+        : state;
     case 'variablesCancelled':
       return { ...state, draft: null };
     case 'variablesSaved':
-      return { ...state, busy: false, draft: null, outcome: action.outcome };
+      return { ...state, busy: false, draft: null, notice: null, outcome: action.outcome };
 
     case 'fileOpening':
       return { ...state, busy: true, error: null, committed: null };

@@ -420,6 +420,31 @@ export function checks(state: BuilderState): PipelineCheck[] {
   );
 }
 
+/**
+ * Where a missing variable's "Set it" goes: the Runs & variables page,
+ * told which variable, where (an environment, or the repository for pull
+ * requests) and whether it is a secret, so the box opens on its line.
+ * One link for each place it is missing, named by that place when there
+ * is more than one.
+ */
+export function variableLinks(
+  check: PipelineCheck,
+  projectId: string
+): { label: string; href: string }[] {
+  const variable = check.variable;
+  if (check.fix !== 'variables' || !variable) return [];
+  return variable.missingIn.map((environment) => {
+    const query = new URLSearchParams({ set: variable.name });
+    if (environment) query.set('in', environment);
+    if (variable.secured) query.set('secret', '1');
+    return {
+      label:
+        variable.missingIn.length === 1 ? 'Set it' : `Set for ${environment ?? 'pull requests'}`,
+      href: `/deployments/${projectId}/runs?${query.toString()}`,
+    };
+  });
+}
+
 export function isDirty(state: BuilderState): boolean {
   return JSON.stringify(state.spec) !== JSON.stringify(state.saved);
 }
