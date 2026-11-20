@@ -13,7 +13,7 @@
  * the page decides is pipeline-builder.model.ts.
  */
 
-import { useCallback, useEffect, useReducer, useRef, type Dispatch } from 'react';
+import { Fragment, useCallback, useEffect, useReducer, useRef, type Dispatch } from 'react';
 import Link from 'next/link';
 import ExternalLink from '@/components/external-link';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
@@ -23,6 +23,7 @@ import {
   canOpenPullRequest,
   canSave,
   checks,
+  variableLinks,
   environmentFormProblems,
   fileLines,
   fileStatus,
@@ -966,12 +967,17 @@ function ChecksPanel({
                     </Link>
                   </>
                 ) : check.fix === 'variables' ? (
-                  <>
-                    {' '}
-                    <Link href={variablesHref} className={linkButtonClass}>
-                      Set it
-                    </Link>
-                  </>
+                  (variableLinks(check, projectId).length > 0
+                    ? variableLinks(check, projectId)
+                    : [{ label: 'Set it', href: variablesHref }]
+                  ).map((link) => (
+                    <Fragment key={link.href}>
+                      {' '}
+                      <Link href={link.href} className={linkButtonClass}>
+                        {link.label}
+                      </Link>
+                    </Fragment>
+                  ))
                 ) : check.fix === 'update' && check.at && state.data?.canEdit ? (
                   <>
                     {' '}

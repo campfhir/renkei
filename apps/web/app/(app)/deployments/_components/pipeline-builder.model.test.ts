@@ -13,6 +13,7 @@ import {
   ownBlocks,
   partCards,
   pullRequestNote,
+  variableLinks,
   pullRequestNotice,
   saveRequest,
   stepEditor,
@@ -424,7 +425,16 @@ describe('saving and the pull request', () => {
       state: 'fail',
       text: 'HEALTH_TOKEN is not set for dev, production.',
       fix: 'variables',
+      variable: { name: 'HEALTH_TOKEN', secured: true, missingIn: ['dev', 'production'] },
     });
+    // Each place it is missing has its own "Set", opening that set on its line.
+    expect(variableLinks(checks(state)[0], 'p1')).toEqual([
+      { label: 'Set for dev', href: '/deployments/p1/runs?set=HEALTH_TOKEN&in=dev&secret=1' },
+      {
+        label: 'Set for production',
+        href: '/deployments/p1/runs?set=HEALTH_TOKEN&in=production&secret=1',
+      },
+    ]);
     expect(canOpenPullRequest(state)).toBe(true);
     expect(pullRequestNote(state)).toBe(
       'One check needs fixing before it runs; the pull request can open now and merge once it is.'

@@ -29,7 +29,7 @@
  * pipelines-page.model.ts.
  */
 
-import { useCallback, useEffect, useReducer, type Dispatch } from 'react';
+import { useCallback, useEffect, useReducer, useRef, type Dispatch } from 'react';
 import Link from 'next/link';
 import ExternalLink from '@/components/external-link';
 import LocalTime from '@/components/local-time';
@@ -73,6 +73,7 @@ import {
   type PipelinesAction,
   type RunDraft,
   type Setup,
+  type VariableAsk,
 } from './pipelines-page.model';
 
 const BITBUCKET_WORDS: VariableWords = {
@@ -93,12 +94,15 @@ export default function PipelinesPage({
   repoFullName,
   branch,
   canEdit,
+  ask = null,
 }: {
   projectId: string;
   repoFullName: string;
   /** The project's branch; empty for the repository's default. */
   branch: string;
   canEdit: boolean;
+  /** A variable the page was sent to set (the builder's "Set it"); null when none. */
+  ask?: VariableAsk | null;
 }) {
   const url = `/api/code/projects/${projectId}/pipelines`;
   const [state, dispatch] = useReducer(pipelinesReducer, initialPipelines);
@@ -216,6 +220,14 @@ export default function PipelinesPage({
   const branchLabel = labelOfBranch(branch);
   const canSetVariables = mayVariables(state, canEdit);
 
+  // Sent here to set a variable: once the sets are read, open its box on its line.
+  const asked = useRef(false);
+  useEffect(() => {
+    if (!ask || !setup || asked.current) return;
+    asked.current = true;
+    dispatch({ type: 'variableAsked', ask, canSet: canSetVariables });
+  }, [ask, setup, canSetVariables]);
+
   const refreshButton = (
     <button
       type="button"
@@ -265,6 +277,11 @@ export default function PipelinesPage({
         {error ? (
           <p role="alert" className="text-sm text-red-600 dark:text-red-400">
             {error}
+          </p>
+        ) : null}
+        {state.notice ? (
+          <p role="status" className="text-sm text-amber-700 dark:text-amber-400">
+            {state.notice}
           </p>
         ) : null}
         {setup === null && !loadError ? (

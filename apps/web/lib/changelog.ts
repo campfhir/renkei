@@ -46,6 +46,17 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-20',
+    entries: [
+      {
+        kind: 'changed',
+        title: '“Set it” opens the variable ready for its value',
+        detail:
+          'A variable the pipeline is missing now has a link for each environment it is missing from. It opens that environment’s variables with the line already written — NAME=, or secret NAME= for a secret — and the cursor after the =, so you just type the value; a variable that is already there is opened with its value selected. On GitHub, a missing secret says where on GitHub to set it.',
+      },
+    ],
+  },
+  {
     date: '2026-11-19',
     entries: [
       {

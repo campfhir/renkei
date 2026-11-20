@@ -12,7 +12,8 @@
  * does (pipelines-page.model.ts, actions-page.model.ts).
  */
 
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
+import { scrollMotion } from '@/lib/hash-scroll';
 import ExternalLink from '@/components/external-link';
 import type { PipelineVariable } from '@/lib/code/bitbucket-pipelines';
 import Pill from '@/app/(app)/code/_components/pill';
@@ -100,6 +101,17 @@ export default function VariableGroup({
   onSave: () => void;
 }) {
   const groupId = `pipeline-variables-${scopeId}`;
+  const box = useRef<HTMLTextAreaElement>(null);
+  const caret = open?.caret;
+  // Sent here to set one variable: the box opens on its line, the cursor
+  // after its `=`, so the person just types the value.
+  useEffect(() => {
+    const textarea = box.current;
+    if (!caret || !textarea) return;
+    textarea.scrollIntoView({ block: 'center', behavior: scrollMotion() });
+    textarea.focus({ preventScroll: true });
+    textarea.setSelectionRange(caret.start, caret.end);
+  }, [caret]);
   const lines = last ? outcomeLines(last) : null;
   const listed = [...variables, ...(secrets ?? [])];
   return (
@@ -160,6 +172,7 @@ export default function VariableGroup({
           className="mt-2 space-y-2"
         >
           <textarea
+            ref={box}
             value={open.text}
             onChange={(event) => onChange(event.target.value)}
             rows={textRows(open.text, 4, 16)}

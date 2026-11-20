@@ -552,6 +552,12 @@ export interface PipelineCheck {
   fix: CheckFix;
   /** For a fix that names a step: where it is. */
   at?: { environment: string | null; index: number };
+  /**
+   * For a missing variable: its name, whether a block reads it as a secret,
+   * and where it is missing — environment names, null for pull requests
+   * (the repository's own variables).
+   */
+  variable?: { name: string; secured: boolean; missingIn: (string | null)[] };
 }
 
 const lower = (value: string) => value.toLowerCase();
@@ -566,8 +572,13 @@ export function pipelineChecks(
   const host = facts.host;
   const hostName = HOST_LABEL[host];
   const checks: PipelineCheck[] = [];
-  const add = (state: CheckState, text: string, fix: CheckFix = null, at?: PipelineCheck['at']) =>
-    checks.push({ state, text, fix, ...(at ? { at } : {}) });
+  const add = (
+    state: CheckState,
+    text: string,
+    fix: CheckFix = null,
+    at?: PipelineCheck['at'],
+    variable?: PipelineCheck['variable']
+  ) => checks.push({ state, text, fix, ...(at ? { at } : {}), ...(variable ? { variable } : {}) });
   const targetByName = new Map(targets.map((t) => [t.name, t]));
   const blockAt = blockOfStep(spec, blocks.at);
 
@@ -585,7 +596,7 @@ export function pipelineChecks(
 
   const parts = partsOf(spec);
   const seenTargets = new Set<string>();
-  const missingVariables = new Map<string, Set<string>>();
+  const missingVariables = new Map<string, { secured: boolean; where: Set<string | null> }>();
   for (const part of parts) {
     const environmentName = part.environment?.name ?? null;
     const where = partName(environmentName);
@@ -664,9 +675,13 @@ export function pipelineChecks(
         ]);
         for (const variable of block.definition.variables) {
           if (!has.has(variable.name)) {
-            const key = variable.name;
-            if (!missingVariables.has(key)) missingVariables.set(key, new Set());
-            missingVariables.get(key)!.add(environmentName ?? 'pull requests');
+            const missing = missingVariables.get(variable.name) ?? {
+              secured: false,
+              where: new Set<string | null>(),
+            };
+            missing.secured ||= variable.secured;
+            missing.where.add(environmentName);
+            missingVariables.set(variable.name, missing);
           }
         }
       }
@@ -676,8 +691,15 @@ export function pipelineChecks(
   if (!facts.repoVariables) {
     add('warn', `${hostName} did not list the repository’s variables, so they were not checked.`);
   }
-  for (const [name, where] of missingVariables) {
-    add('fail', `${name} is not set for ${[...where].join(', ')}.`, 'variables');
+  for (const [name, { secured, where }] of missingVariables) {
+    const missingIn = [...where];
+    add(
+      'fail',
+      `${name} is not set for ${missingIn.map((w) => w ?? 'pull requests').join(', ')}.`,
+      'variables',
+      undefined,
+      { name, secured, missingIn }
+    );
   }
 
   // Environments and their branches.

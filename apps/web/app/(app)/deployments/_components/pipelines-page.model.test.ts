@@ -24,6 +24,7 @@ import {
   outcomeOf,
   pipelinesReducer,
   pipelinesUrl,
+  readVariableAsk,
   removalQuestion,
   runRequest,
   runStatePill,
@@ -427,5 +428,92 @@ describe('variables as text', () => {
     expect(textRows('', 4, 16)).toBe(4);
     expect(textRows('a\nb\nc\nd\ne', 4, 16)).toBe(6);
     expect(textRows('x\n'.repeat(40), 4, 16)).toBe(16);
+  });
+});
+
+describe('sent here to set a variable (the pipeline builder’s “Set it”)', () => {
+  const production = {
+    uuid: '{prod}',
+    name: 'Production',
+    type: 'Production',
+    variables: [variable('API_URL', 'https://api.test')],
+    error: null,
+  };
+  const ask = (set: string, more: Record<string, string> = {}) =>
+    readVariableAsk(new URLSearchParams({ set, ...more }))!;
+
+  it('reads the link: the variable, its environment and whether it is a secret', () => {
+    expect(ask('DEPLOY_TOKEN', { in: 'production', secret: '1' })).toEqual({
+      name: 'DEPLOY_TOKEN',
+      environment: 'production',
+      secured: true,
+    });
+    expect(readVariableAsk(new URLSearchParams({ set: 'not a name' }))).toBeNull();
+    expect(readVariableAsk(new URLSearchParams())).toBeNull();
+  });
+
+  it('opens the environment’s box with `secret NAME=` added and the cursor after the `=`', () => {
+    const state = run(
+      [
+        {
+          type: 'variableAsked',
+          ask: ask('DEPLOY_TOKEN', { in: 'production', secret: '1' }),
+          canSet: true,
+        },
+      ],
+      opened({ environments: [production] })
+    );
+    const text = 'API_URL=https://api.test\nsecret DEPLOY_TOKEN=';
+    expect(state.draft).toEqual({
+      environmentUuid: '{prod}',
+      text,
+      caret: { start: text.length, end: text.length },
+    });
+    // Saving sends the box to that environment's set.
+    expect(variablesRequest(state.draft!)).toEqual({ text, environmentUuid: '{prod}' });
+  });
+
+  it('opens the repository’s box for pull requests with `NAME=` added', () => {
+    const state = run(
+      [{ type: 'variableAsked', ask: ask('REGION'), canSet: true }],
+      opened({ variables: [variable('API_URL', 'x')] })
+    );
+    expect(state.draft).toEqual({ text: 'API_URL=x\nREGION=', caret: { start: 17, end: 17 } });
+  });
+
+  it('goes to a variable that is already there, its value selected, and adds nothing', () => {
+    const state = run(
+      [{ type: 'variableAsked', ask: ask('API_URL', { in: 'Production' }), canSet: true }],
+      opened({ environments: [production] })
+    );
+    expect(state.draft?.text).toBe('API_URL=https://api.test');
+    expect(state.draft?.caret).toEqual({ start: 8, end: 24 });
+  });
+
+  it('the cursor is placed once: typing leaves it to the person', () => {
+    const state = run(
+      [
+        { type: 'variableAsked', ask: ask('REGION'), canSet: true },
+        { type: 'variablesChanged', text: 'REGION=eu' },
+      ],
+      opened()
+    );
+    expect(state.draft?.caret).toBeUndefined();
+  });
+
+  it('says why when the environment does not exist, or the person cannot set variables', () => {
+    const missing = run(
+      [{ type: 'variableAsked', ask: ask('REGION', { in: 'staging' }), canSet: true }],
+      opened({ environments: [production] })
+    );
+    expect(missing.draft).toBeNull();
+    expect(missing.notice).toBe(
+      'Bitbucket has no deployment environment named staging, so REGION cannot be set for it yet: add the environment on Bitbucket, then set it there.'
+    );
+    const viewer = run([{ type: 'variableAsked', ask: ask('REGION'), canSet: false }], opened());
+    expect(viewer.draft).toBeNull();
+    expect(viewer.notice).toBe(
+      'REGION is not set; you cannot set variables here, so ask an editor of the project.'
+    );
   });
 });
