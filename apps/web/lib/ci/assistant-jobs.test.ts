@@ -9,11 +9,14 @@ jest.mock('@/lib/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 
+jest.mock('@renkei/agents/runs', () => ({ recordLlmCall: jest.fn(async () => ({ ok: true })) }));
+
 import { randomUUID } from 'node:crypto';
 import { createMemoryDataStore, getDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import {
   INTERRUPTED,
   STALE_MS,
+  meteredComplete,
   readAssistantJob,
   runAssistantJob,
   startAssistantJob,
@@ -137,4 +140,35 @@ it('a job silent for minutes reads as interrupted, and yesterday’s are dropped
 
   await startAssistantJob(randomUUID(), 'ada', project, new Date('2026-11-21T10:00:00Z'));
   expect(await getDataStore().ciAssistantJobs.find('ada', id)).toBeNull();
+});
+
+it('puts each model call of the assistant on the usage ledger as the asking person’s spend', async () => {
+  const { recordLlmCall } = jest.requireMock<{ recordLlmCall: jest.Mock }>('@renkei/agents/runs');
+  const answered = {
+    ok: true as const,
+    val: {
+      content: [],
+      stopReason: 'end_turn' as const,
+      usage: { inputTokens: 1200, outputTokens: 300, cacheReadInputTokens: 1000 },
+    },
+  };
+  const provider = { complete: jest.fn().mockResolvedValueOnce(answered) };
+  const complete = meteredComplete(
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    { provider, providerName: 'anthropic', model: 'a-model', modelConfigId: 'cfg-1' } as never,
+    'ada'
+  );
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  expect(await complete({} as never)).toBe(answered);
+  expect(recordLlmCall).toHaveBeenCalledWith(
+    expect.objectContaining({
+      subject: 'ada',
+      agentId: null,
+      purpose: 'pipeline_assistant',
+      inputTokens: 1200,
+      outputTokens: 300,
+      cacheReadInputTokens: 1000,
+      model: { provider: 'anthropic', model: 'a-model', llmModelId: 'cfg-1' },
+    })
+  );
 });

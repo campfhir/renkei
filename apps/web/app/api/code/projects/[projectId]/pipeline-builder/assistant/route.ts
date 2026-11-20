@@ -36,7 +36,7 @@ import {
   readSourceFile as readGithubFile,
 } from '@/lib/code/github-browse';
 import { readConversation } from '@/lib/ci/pipeline-assistant';
-import { runAssistantJob, startAssistantJob } from '@/lib/ci/assistant-jobs';
+import { meteredComplete, runAssistantJob, startAssistantJob } from '@/lib/ci/assistant-jobs';
 import { builderBlocks, builderTargets, withBranch } from '@/lib/ci/pipeline-builder';
 import { builderContext } from '@/lib/ci/pipeline-builder-access';
 
@@ -99,7 +99,7 @@ export async function POST(
             operator,
           },
           deps: {
-            complete: (llmRequest) => llm.provider.complete(llmRequest),
+            complete: meteredComplete(llm, subject),
             maxOutputTokens: llm.maxOutputTokens,
             listFiles: (path) =>
               host === 'github'

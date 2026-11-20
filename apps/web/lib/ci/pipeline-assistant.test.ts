@@ -9,7 +9,10 @@
 
 import type { BlockDefinition, PipelineBlock } from '@renkei/ci-blocks';
 import {
+  MAX_ROUNDS,
+  UNFINISHED,
   cleanPath,
+  gaveUp,
   readConversation,
   runPipelineAssistant,
   type AssistantDeps,
@@ -58,7 +61,11 @@ const input = (overrides: Partial<AssistantInput> = {}): AssistantInput => ({
   ...overrides,
 });
 
-type Step = { text?: string; calls?: { name: string; input: unknown }[] };
+type Step = {
+  text?: string;
+  calls?: { name: string; input: unknown }[];
+  stop?: 'end_turn' | 'tool_use' | 'max_tokens';
+};
 function model(steps: Step[]) {
   const complete = jest.fn();
   steps.forEach((step, n) => {
@@ -74,7 +81,7 @@ function model(steps: Step[]) {
             input: call.input,
           })),
         ],
-        stopReason: step.calls ? 'tool_use' : 'end_turn',
+        stopReason: step.stop ?? (step.calls ? 'tool_use' : 'end_turn'),
         usage: { inputTokens: 1, outputTokens: 1 },
       },
     });
@@ -200,6 +207,117 @@ it('sends a proposal that does not read back with what is wrong, and takes the c
     isError: true,
   });
   expect(reply).toMatchObject({ proposal: { summary: 'Fixed.' } });
+});
+
+it('sends a proposal cut off at the output limit back to be sent again, instead of answering with its preamble', async () => {
+  const whole = {
+    summary: 'Passes the variables to the runners.',
+    checks: [{ block: 'node-test', version: 1, inputs: {} }],
+    environments: [],
+  };
+  const complete = model([
+    {
+      text: 'Next I’ll propose the pipeline change.',
+      calls: [{ name: 'propose_pipeline', input: { summary: 'Passes' } }],
+      stop: 'max_tokens',
+    },
+    { calls: [{ name: 'propose_pipeline', input: whole }] },
+    { text: 'Apply it, then set the variables.' },
+  ]);
+  const reply = await runPipelineAssistant(input(), deps(complete));
+  expect(results(complete)[0]).toEqual({
+    content:
+      'Your reply reached the output limit before this call was complete, so it was not used. Send it again, whole and more compact: short descriptions, no repeated text.',
+    isError: true,
+  });
+  expect(reply).toMatchObject({
+    reply: 'Apply it, then set the variables.',
+    proposal: { summary: 'Passes the variables to the runners.' },
+  });
+});
+
+it('keeps going as long as it takes, reading until its budget is spent, then answers', async () => {
+  // 41 rounds of listing — far past any round limit — then the answer.
+  const steps: Step[] = [
+    ...Array.from({ length: 41 }, () => ({
+      text: 'Next I’ll look further.',
+      calls: [{ name: 'list_files', input: {} }],
+    })),
+    {
+      calls: [
+        { name: 'propose_pipeline', input: { summary: 'Done.', checks: [], environments: [] } },
+      ],
+    },
+    { text: 'Apply it.' },
+  ];
+  const complete = model(steps);
+  const d = deps(complete);
+  const reply = await runPipelineAssistant(input(), d);
+  expect(reply).toMatchObject({ reply: 'Apply it.', proposal: { summary: 'Done.' } });
+  // The 41st listing is past the budget: refused, so it proposes.
+  expect(d.listFiles).toHaveBeenCalledTimes(40);
+  expect(results(complete)[40]).toEqual({
+    content: 'That is 40 directories already; propose from what you have seen.',
+    isError: true,
+  });
+});
+
+it('gives up after three proposals that do not read, saying what was wrong with the last', async () => {
+  const bad = (n: number) => ({
+    calls: [
+      {
+        name: 'propose_pipeline',
+        input: { summary: 'x', checks: [{ block: `nope-${n}`, version: 1 }], environments: [] },
+      },
+    ],
+  });
+  const complete = model([bad(1), bad(2), bad(3), { text: 'never asked' }]);
+  const reply = await runPipelineAssistant(input(), deps(complete));
+  expect(complete).toHaveBeenCalledTimes(3);
+  expect(reply).toMatchObject({
+    proposal: null,
+    reply: gaveUp(
+      [
+        'Pull requests, step 1: there is no block nope-3; use an organization block or add one to "blocks".',
+      ],
+      false
+    ),
+  });
+});
+
+it('counts a proposal cut off at the reply limit as a failed one, and keeps one that read', async () => {
+  const good = {
+    name: 'propose_pipeline',
+    input: { summary: 'Good.', checks: [], environments: [] },
+  };
+  const cut = { calls: [{ name: 'propose_pipeline', input: {} }], stop: 'max_tokens' as const };
+  const complete = model([{ calls: [good] }, cut, cut, cut, { text: 'never asked' }]);
+  const reply = await runPipelineAssistant(input(), deps(complete));
+  expect(complete).toHaveBeenCalledTimes(4);
+  expect(reply).toMatchObject({
+    proposal: { summary: 'Good.' },
+    reply: gaveUp(['It was cut off at the model’s reply limit before it was complete.'], true),
+  });
+});
+
+it('stops at the backstop of rounds and says it did not finish', async () => {
+  const complete: jest.Mock = jest.fn(async () => ({
+    ok: true,
+    val: {
+      content: [{ type: 'tool_use', id: 'c', name: 'no_such_tool', input: {} }],
+      stopReason: 'tool_use',
+      usage: { inputTokens: 1, outputTokens: 1 },
+    },
+  }));
+  const reply = await runPipelineAssistant(input(), deps(complete));
+  expect(complete).toHaveBeenCalledTimes(MAX_ROUNDS);
+  expect(reply).toMatchObject({ reply: UNFINISHED, proposal: null });
+});
+
+it('says it did not finish when its reply was cut off with nothing in it', async () => {
+  const complete = model([{ stop: 'max_tokens' }]);
+  const reply = await runPipelineAssistant(input(), deps(complete));
+  expect(reply).toMatchObject({ reply: UNFINISHED, proposal: null });
 });
 
 it('refuses a path out of the repository, and stops reading after its limit', async () => {

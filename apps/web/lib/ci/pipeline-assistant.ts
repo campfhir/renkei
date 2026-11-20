@@ -47,12 +47,21 @@ import { isRecord } from '@renkei/guards';
 import type { Result } from '@campfhir/safe-functions/types';
 
 export const MAX_CONVERSATION_TURNS = 20;
+/** The reply when a turn ends before the model answered (out of rounds, or cut off with nothing in it). */
+export const UNFINISHED =
+  'I ran out of room before I finished, so nothing is proposed yet; say “continue” and I will pick up from here.';
+export const UNFINISHED_AFTER_PROPOSING =
+  'I ran out of room before I finished; say “continue” if there is more to do.';
 export const MAX_MESSAGE_CHARS = 4_000;
-const MAX_ROUNDS = 12;
 const MAX_FILE_READS = 25;
+const MAX_LISTINGS = 40;
+/** Model round trips in one turn: a backstop, far past what a real request takes. */
+export const MAX_ROUNDS = 100;
+/** Proposals that did not read (or were cut off) before the turn gives up. */
+export const MAX_FAILED_PROPOSALS = 3;
 const MAX_FILE_CHARS = 40_000;
 const MAX_LISTED = 300;
-const MAX_OUTPUT_TOKENS = 8_000;
+const MAX_OUTPUT_TOKENS = 16_000;
 const TIMEOUT_MS = 120_000;
 const BLOCK_KEY = /^[a-z][a-z0-9-]{1,79}$/;
 
@@ -200,6 +209,8 @@ function systemPrompt(input: AssistantInput): string {
       ? 'The person is an operator. When they ask to reuse a block in other projects, call propose_building_block with a general version of it: values only this project has (service names, paths, ports, URLs, image tags) become inputs, with this project’s value as the default only when it is a sensible default for others. Choose a key no organization block has.'
       : 'Only operators add blocks to the organization’s catalogue; if asked, say so.',
     '',
+    'Your goal is to fulfil the person’s request in this turn: read what you need, then propose the change that does what they asked. Do not stop to announce a next step or to ask whether to go on; when you would say you will do something next (read a file, propose the pipeline), do it now with a tool call. End your turn only when the request is met, or when you need something only the person can tell you.',
+    `A proposal that does not read comes back with what is wrong; after ${MAX_FAILED_PROPOSALS} that do not, the turn ends with nothing proposed, so check each one against the rules before you send it. Keep descriptions in a proposal to a few words so it fits in one reply.`,
     'Keep replies short: say what you read, what you changed and why, and anything the person must still do (a variable to set, a target to pick). The person reviews and applies a proposal; nothing is saved until they do.',
   ].join('\n');
 }
@@ -381,6 +392,17 @@ export function assistantError(kind: LlmErrorKind): string {
   return `The model failed (${kind}); try again.`;
 }
 
+/** The reply when its proposals kept failing to read: what was wrong with the last. */
+export function gaveUp(problems: string[], kept: boolean): string {
+  return [
+    kept
+      ? `${MAX_FAILED_PROPOSALS} of my proposals did not read, so I stopped; below is the last one that did. The last that failed was refused because:`
+      : `I could not make a proposal that reads in ${MAX_FAILED_PROPOSALS} tries, so nothing is proposed. The last one was refused because:`,
+    ...problems.map((p) => `- ${p}`),
+    'Ask again, perhaps for a smaller change, and I will start from there.',
+  ].join('\n');
+}
+
 const textOf = (content: LlmContentBlock[]) =>
   content
     .flatMap((block) => (block.type === 'text' ? [block.text] : []))
@@ -406,11 +428,21 @@ export async function runPipelineAssistant(
   const said: string[] = [];
   const organizationKeys = [...new Set(input.blocks.map((b) => b.key))];
 
+  let listings = 0;
+  /** What was wrong with each proposal that did not read, in order. */
+  const failures: string[][] = [];
   const run = async (name: string, raw: unknown): Promise<ToolOutcome> => {
     const args = isRecord(raw) ? raw : {};
     if (name === 'list_files') {
       const path = cleanPath(args.path ?? '');
       if (path === null) return { content: 'That is not a path in the repository.', isError: true };
+      if (listings >= MAX_LISTINGS) {
+        return {
+          content: `That is ${MAX_LISTINGS} directories already; propose from what you have seen.`,
+          isError: true,
+        };
+      }
+      listings += 1;
       read.push(path ? `${path}/` : '/');
       await deps.onStep?.(`Looking in ${path ? `${path}/` : 'the repository'}`);
       const listed = await deps.listFiles(path);
@@ -446,6 +478,7 @@ export async function runPipelineAssistant(
       await deps.onStep?.('Checking the pipeline it proposes');
       const outcome = readPipelineProposal(raw, input);
       if ('problems' in outcome) {
+        failures.push(outcome.problems);
         return {
           content: `The pipeline cannot be used yet:\n${outcome.problems.map((p) => `- ${p}`).join('\n')}\nCall propose_pipeline again with the whole corrected pipeline.`,
           isError: true,
@@ -463,6 +496,7 @@ export async function runPipelineAssistant(
       await deps.onStep?.('Checking the building block it proposes');
       const outcome = readBuildingBlockProposal(raw, organizationKeys);
       if ('problems' in outcome) {
+        failures.push(outcome.problems);
         return {
           content: `The block cannot be used yet:\n${outcome.problems.map((p) => `- ${p}`).join('\n')}\nCall propose_building_block again with the whole corrected block.`,
           isError: true,
@@ -476,6 +510,12 @@ export async function runPipelineAssistant(
     return { content: `There is no tool ${name}.`, isError: true };
   };
 
+  // The turn goes on until the model answers in words. The reading budget
+  // (MAX_FILE_READS, MAX_LISTINGS) makes it propose; MAX_FAILED_PROPOSALS
+  // stops a model that cannot make one read; MAX_ROUNDS is the backstop.
+  // `finished` is false when it ran out of rounds or was cut off with
+  // nothing said, so its last words are not taken as the answer.
+  let finished = false;
   for (let round = 1; round <= MAX_ROUNDS; round += 1) {
     await deps.onStep?.(round === 1 ? 'Thinking it over' : 'Thinking over what it found');
     const completion = await deps.complete({
@@ -493,11 +533,30 @@ export async function runPipelineAssistant(
     const calls = content.filter(
       (block): block is Extract<LlmContentBlock, { type: 'tool_use' }> => block.type === 'tool_use'
     );
-    if (calls.length === 0 || completion.val.stopReason !== 'tool_use') break;
+    const cutOff = completion.val.stopReason === 'max_tokens';
+    if (calls.length === 0) {
+      finished = !cutOff || text.length > 0;
+      break;
+    }
+    if (!cutOff && completion.val.stopReason !== 'tool_use') {
+      finished = true;
+      break;
+    }
     messages.push({ role: 'assistant', content });
     const results: LlmContentBlock[] = [];
     for (const call of calls) {
-      const outcome = await run(call.name, call.input);
+      // A call cut off at the output limit carries a partial input: never
+      // run it, tell the model to send it again, smaller.
+      if (cutOff && call.name.startsWith('propose_')) {
+        failures.push(['It was cut off at the model’s reply limit before it was complete.']);
+      }
+      const outcome: ToolOutcome = cutOff
+        ? {
+            content:
+              'Your reply reached the output limit before this call was complete, so it was not used. Send it again, whole and more compact: short descriptions, no repeated text.',
+            isError: true,
+          }
+        : await run(call.name, call.input);
       results.push({
         type: 'tool_result',
         toolUseId: call.id,
@@ -505,13 +564,19 @@ export async function runPipelineAssistant(
         ...(outcome.isError ? { isError: true } : {}),
       });
     }
+    if (failures.length >= MAX_FAILED_PROPOSALS) {
+      const kept = proposal !== null || buildingBlock !== null;
+      return { reply: gaveUp(failures[failures.length - 1], kept), proposal, buildingBlock, read };
+    }
     messages.push({ role: 'user', content: results });
   }
 
-  const reply =
-    said[said.length - 1] ??
-    (proposal || buildingBlock
-      ? 'Here is what I propose.'
-      : 'I could not finish in the steps I have; ask again, or narrow it down.');
+  const proposed = proposal !== null || buildingBlock !== null;
+  const last = said[said.length - 1];
+  const reply = finished
+    ? (last ?? (proposed ? 'Here is what I propose.' : UNFINISHED))
+    : proposed
+      ? `${last ?? 'Here is what I propose.'}\n\n${UNFINISHED_AFTER_PROPOSING}`
+      : UNFINISHED;
   return { reply, proposal, buildingBlock, read };
 }
