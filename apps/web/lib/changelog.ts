@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-19',
     entries: [
       {
+        kind: 'fixed',
+        title: 'Agents name the right person in SharePoint person columns',
+        detail:
+          'SharePoint list items now show the person behind each person column instead of a bare number, and agents look up the right person (yourself included) before setting one, rather than copying a number from another row. Agents also find the tool for editing a list item instead of offering to delete and re-add it.',
+      },
+      {
         kind: 'added',
         title: 'Agents can work with SharePoint lists',
         detail:

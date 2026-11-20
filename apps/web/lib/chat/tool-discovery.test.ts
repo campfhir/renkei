@@ -121,6 +121,40 @@ describe('findToolsTool', () => {
     expect(result.meta.discoveredTools).toHaveLength(2);
   });
 
+  it('names the tools past the cap instead of dropping them, and finds one searched by name', async () => {
+    const many: DiscoverableTool[] = Array.from({ length: 15 }, (_, index) => ({
+      connector: 'sharepoint',
+      def: {
+        name: `sharepoint_tool_${String(index).padStart(2, '0')}`,
+        description: 'A SharePoint list tool.',
+        inputSchema: { type: 'object', properties: {} },
+      },
+    }));
+    const tools = createLocalToolSet([findToolsTool(many)!]);
+
+    const broad = await tools.run(FIND_TOOLS_NAME, { query: 'sharepoint list' }, context);
+    expect(broad.meta.discoveredTools).toHaveLength(12);
+    const text = broad.content[0]?.text ?? '';
+    expect(text).toContain('3 more tool(s) matched but are not callable yet');
+    expect(text).toContain('sharepoint_tool_12, sharepoint_tool_13, sharepoint_tool_14.');
+
+    // The overflow names are not listed as callable, so a later turn does
+    // not recall them as if they had been offered.
+    const history: LlmMessage[] = [
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 't1', name: FIND_TOOLS_NAME, input: {} }],
+      },
+      { role: 'user', content: [{ type: 'tool_result', toolUseId: 't1', content: text }] },
+    ];
+    expect(recallDiscoveredTools(history, many).map((def) => def.name)).not.toContain(
+      'sharepoint_tool_14'
+    );
+
+    const named = await tools.run(FIND_TOOLS_NAME, { query: 'sharepoint_tool_14' }, context);
+    expect(named.meta.discoveredTools).toEqual([many[14].def]);
+  });
+
   it('reports no match rather than returning the whole catalog', async () => {
     const tools = createLocalToolSet([findToolsTool([jiraSearch])!]);
     const result = await tools.run(FIND_TOOLS_NAME, { query: 'zzz nothing like this' }, context);

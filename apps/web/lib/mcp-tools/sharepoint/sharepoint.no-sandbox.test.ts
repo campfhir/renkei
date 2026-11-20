@@ -94,6 +94,8 @@ const TOOLS = [
   'sharepoint_create_list_item',
   'sharepoint_update_list_item',
   'sharepoint_delete_list_item',
+  // site-users.ts
+  'sharepoint_find_site_user',
   // list-schema.ts
   'sharepoint_create_list',
   'sharepoint_add_list_column',
