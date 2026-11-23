@@ -11,10 +11,10 @@
   },
   "dependencies": {
     "@renkei/guards": "workspace:*",
-    "docx": "^9.13.0",
+    "docx": "^9.16.0",
     "exceljs": "^4.4.0",
-    "marked": "18.1.1",
-    "pdfkit": "^0.20.2",
+    "marked": "18.2.1",
+    "pdfkit": "^0.21.0",
     "pptxgenjs": "^4.0.1"
   },
   "devDependencies": {
