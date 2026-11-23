@@ -7,6 +7,7 @@
  * reads.
  */
 
+import { PIPELINE_FILE, githubDispatchInput } from '@renkei/ci-blocks';
 import { githubAuthOf } from './github-browse';
 import { arr, ghJson, num, prUrl, rec, runUrl, str } from '../mcp-tools/github/client';
 import type { GitHubAuth } from '../mcp-tools/github/github-auth';
@@ -188,6 +189,24 @@ export function githubHostAdapter(
         startedAt: str(run.run_started_at),
       }));
       return { ok: true, runs };
+    },
+
+    async startPipelineRun(fullName, branch, run) {
+      const target = ownerRepo(fullName);
+      if (!target) return { ok: false, error: 'The repository name is not usable.' };
+      const workflow = PIPELINE_FILE.github.split('/').pop() ?? 'pipeline.yml';
+      const result = await ghJson(
+        auth,
+        ['actions:write'],
+        `${repoPath(target.owner, target.repo)}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`,
+        { method: 'POST', json: { ref: branch, inputs: { run: githubDispatchInput(run) } } }
+      );
+      if (!result.ok) return result;
+      // A dispatch answers 204 without the run; its runs on that branch are where it shows.
+      return {
+        ok: true,
+        url: `https://github.com/${target.owner}/${target.repo}/actions/workflows/${encodeURIComponent(workflow)}?query=${encodeURIComponent(`branch:${branch}`)}`,
+      };
     },
   };
 }

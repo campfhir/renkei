@@ -4,8 +4,10 @@
  * One app's deployments: a card per environment, each promotion — the
  * commits merging brings, the pull request and its checks, and opening or
  * merging it with the person's own grant (a merge is asked twice: the
- * pipeline on the next branch deploys) — and the history. What the page
- * decides is deployment-app.model.ts.
+ * pipeline on the next branch deploys) — the repository's branches, feature
+ * branches too, where an editor starts the checks or redeploys an
+ * environment from its own branch, and the history. What the page decides
+ * is deployment-app.model.ts.
  */
 
 import { useCallback, useEffect, useReducer, useState } from 'react';
@@ -17,6 +19,8 @@ import { HOST_LABEL } from '../deployments-page.model';
 import { DOT, NOTE, PILL, card } from '../tones';
 import {
   appReducer,
+  branchRows,
+  branchesNote,
   environmentCards,
   historyRows,
   initialApp,
@@ -24,6 +28,8 @@ import {
   mergeRequest,
   promoteRequest,
   promotions,
+  redeployQuestion,
+  runRequest,
   type AppData,
 } from './deployment-app.model';
 
@@ -80,8 +86,21 @@ export default function DeploymentApp({ projectId }: { projectId: string }) {
     );
   };
 
+  /** Start the pipeline by hand on a branch: the checks, or an environment's redeploy. */
+  const start = async (branch: string, run: string) => {
+    dispatch({ type: 'sent', busy: 'run' });
+    const request = runRequest(branch, run);
+    const result = await sendJsonFull<{ url: string }>(`${url}/run`, 'POST', request);
+    if (result.error || !result.data) {
+      dispatch({ type: 'failed', error: result.error ?? 'The run did not start.' });
+      return;
+    }
+    dispatch({ type: 'runStarted', request, url: result.data.url });
+  };
+
   const app = state.data;
   const question = mergeQuestion(state);
+  const runQuestion = redeployQuestion(state);
 
   return (
     <div className="space-y-4">
@@ -99,6 +118,17 @@ export default function DeploymentApp({ projectId }: { projectId: string }) {
               className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-800 dark:bg-green-950 dark:text-green-300"
             >
               {state.notice}
+            </p>
+          ) : null}
+          {state.started ? (
+            <p
+              role="status"
+              className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-800 dark:bg-green-950 dark:text-green-300"
+            >
+              {state.started.text}{' '}
+              <ExternalLink href={state.started.url} className="underline">
+                See the run on {HOST_LABEL[app.host]}
+              </ExternalLink>
             </p>
           ) : null}
           {state.error ? (
@@ -270,6 +300,113 @@ export default function DeploymentApp({ projectId }: { projectId: string }) {
               ) : null}
             </section>
           ))}
+
+          {app.hasPipeline ? (
+            <section aria-labelledby="app-branches" className={`${card} space-y-2`}>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 id="app-branches" className="text-sm font-semibold">
+                  Branches
+                </h2>
+                {app.branches && app.branches.length > 6 ? (
+                  <input
+                    type="search"
+                    value={state.branchQuery}
+                    onChange={(event) =>
+                      dispatch({ type: 'branchQuery', query: event.target.value })
+                    }
+                    aria-label="Find a branch"
+                    placeholder="Find a branch"
+                    className="w-full rounded-md border border-gray-300 bg-white px-2 py-1 text-sm sm:ml-auto sm:w-56 dark:border-gray-700 dark:bg-gray-950"
+                  />
+                ) : null}
+              </div>
+              {branchesNote(state) ? (
+                <p className="text-xs text-gray-500">{branchesNote(state)}</p>
+              ) : null}
+              {runQuestion && state.confirmingRun ? (
+                <div
+                  role="alertdialog"
+                  aria-label="Redeploy"
+                  className="space-y-2 rounded-md bg-amber-50 p-3 dark:bg-amber-950"
+                >
+                  <p className="text-sm">{runQuestion}</p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={state.busy !== null}
+                      onClick={() => {
+                        const c = state.confirmingRun;
+                        if (c) void start(c.branch, c.environment);
+                      }}
+                      className={primary}
+                    >
+                      {state.busy === 'run' ? 'Starting…' : 'Redeploy'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => dispatch({ type: 'cancelRedeploy' })}
+                      className={secondary}
+                    >
+                      Not now
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              <ul className="divide-y divide-gray-100 text-sm dark:divide-gray-800">
+                {branchRows(state, now).map((b) => (
+                  <li
+                    key={b.name}
+                    aria-label={`Branch ${b.name}`}
+                    className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2"
+                  >
+                    <span className="min-w-0 font-mono text-sm break-all">{b.name}</span>
+                    {b.deploys ? (
+                      <span className="rounded bg-blue-50 px-1.5 text-xs text-blue-800 dark:bg-blue-950 dark:text-blue-300">
+                        {b.deploys}
+                      </span>
+                    ) : null}
+                    <span className="font-mono text-xs text-gray-500">{b.commit}</span>
+                    {b.message ? (
+                      <span className="min-w-0 flex-1 truncate text-xs text-gray-500">
+                        {b.message}
+                      </span>
+                    ) : (
+                      <span className="flex-1" />
+                    )}
+                    {b.run ? (
+                      <ExternalLink
+                        href={b.run.url}
+                        className={`rounded px-1.5 text-xs hover:underline ${PILL[b.run.tone]}`}
+                      >
+                        {b.run.label} {b.run.when}
+                      </ExternalLink>
+                    ) : (
+                      <span className="text-xs text-gray-500">No runs</span>
+                    )}
+                    {b.actions.map((action) => (
+                      <button
+                        key={action.kind}
+                        type="button"
+                        disabled={state.busy !== null}
+                        onClick={() => {
+                          if (action.kind === 'checks') void start(b.name, 'checks');
+                          else
+                            dispatch({
+                              type: 'askRedeploy',
+                              branch: b.name,
+                              environment: action.environment,
+                            });
+                        }}
+                        className="rounded-md border border-gray-300 px-2 py-0.5 text-xs font-medium hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
+                      >
+                        {action.label}
+                      </button>
+                    ))}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
 
           <section aria-labelledby="deploy-history" className={`${card} space-y-2`}>
             <h2 id="deploy-history" className="text-sm font-semibold">

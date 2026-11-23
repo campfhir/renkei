@@ -4,7 +4,10 @@
  * report whatever came of it; only the projects a person can open; one
  * project's history and its promotion — the commits merging brings, the
  * open pull request — and promoting: opening that pull request, and
- * merging only the open one between the two environments' branches.
+ * merging only the open one between the two environments' branches; the
+ * branches, feature branches included, with their newest run; and starting
+ * the pipeline by hand — the checks on any branch, an environment's deploy
+ * only from its own.
  */
 
 jest.mock('@/lib/code/github-browse', () => ({
@@ -22,6 +25,7 @@ import {
   deploymentsOverview,
   mergePromotion,
   openPromotion,
+  startManualRun,
 } from './deployments';
 
 const githubBrowse = jest.requireMock<{ githubAuthOf: jest.Mock }>('@/lib/code/github-browse');
@@ -44,7 +48,8 @@ function host(answers: Record<string, { status?: number; body: unknown }>) {
       calls.push({ method, path, ...(init?.json !== undefined ? { json: init.json } : {}) });
       const answer = answers[`${method} ${path.split('?')[0]}`];
       if (!answer) return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
-      return new Response(JSON.stringify(answer.body), { status: answer.status ?? 200 });
+      const status = answer.status ?? 200;
+      return new Response(status === 204 ? null : JSON.stringify(answer.body), { status });
     }
   );
   return { fetch, calls, kind: 'oauth' as const };
@@ -289,6 +294,121 @@ describe('promoting', () => {
     const theirs = await project('auth0|bob', 'private-thing');
     expect(await deploymentDetail(caller, theirs)).toBeNull();
     expect(await openPromotion(caller, theirs, 'dev', 'production')).toMatchObject({
+      ok: false,
+      status: 404,
+    });
+  });
+});
+
+describe('branches and starting the pipeline by hand', () => {
+  const repo = '/repos/acme/sync-worker';
+  const build = { block: 'go-test-build', version: 1, inputs: {} };
+
+  async function runnable(owner: string): Promise<string> {
+    const id = await project(owner, 'sync-worker');
+    await getDataStore().ciPipelines.save(id, {
+      host: 'github',
+      spec: {
+        checks: [build],
+        environments: [
+          { name: 'dev', branch: 'develop', steps: [build] },
+          { name: 'production', branch: 'main', steps: [build] },
+        ],
+      },
+      updatedBy: owner,
+    });
+    return id;
+  }
+
+  it('lists every branch, feature branches too: environments first, then the most recently run', async () => {
+    const id = await runnable(ADA);
+    const run = (
+      n: number,
+      branch: string,
+      status: string,
+      conclusion: string | null,
+      at: string
+    ) => ({
+      id: n,
+      status,
+      conclusion,
+      head_branch: branch,
+      run_started_at: at,
+    });
+    githubBrowse.githubAuthOf.mockReturnValue(
+      host({
+        [`GET ${repo}/branches`]: {
+          body: ['feature/a', 'main', 'feature/b', 'develop', 'chore/c'].map((name) => ({
+            name,
+            commit: { sha: `${name}-sha` },
+          })),
+        },
+        [`GET ${repo}/actions/runs`]: {
+          body: {
+            workflow_runs: [
+              run(9, 'feature/b', 'in_progress', null, '2026-11-20T10:00:00Z'),
+              run(8, 'feature/a', 'completed', 'failure', '2026-11-20T09:00:00Z'),
+              run(7, 'feature/b', 'completed', 'success', '2026-11-19T09:00:00Z'),
+              run(6, 'main', 'completed', 'success', '2026-11-18T09:00:00Z'),
+            ],
+          },
+        },
+      })
+    );
+    const detail = await deploymentDetail(caller, id);
+    expect(detail?.hasChecks).toBe(true);
+    expect(detail?.branchesError).toBeNull();
+    expect(detail?.branches?.map((b) => [b.name, b.environment, b.run?.state ?? null])).toEqual([
+      ['develop', 'dev', null],
+      ['main', 'production', 'success'],
+      ['feature/b', null, 'running'],
+      ['feature/a', null, 'failure'],
+      ['chore/c', null, null],
+    ]);
+    expect(detail?.branches?.[2].run?.url).toBe(
+      'https://github.com/acme/sync-worker/actions/runs/9'
+    );
+  });
+
+  it('starts the checks on a feature branch, and an environment’s deploy only from its own branch', async () => {
+    const id = await runnable(ADA);
+    const github = host({
+      [`POST ${repo}/actions/workflows/pipeline.yml/dispatches`]: { status: 204, body: {} },
+    });
+    githubBrowse.githubAuthOf.mockReturnValue(github);
+    expect(await startManualRun(caller, id, 'feature/a', 'checks')).toMatchObject({ ok: true });
+    expect(github.calls.at(-1)?.json).toEqual({ ref: 'feature/a', inputs: { run: 'checks' } });
+
+    expect(await startManualRun(caller, id, 'feature/a', 'production')).toEqual({
+      ok: false,
+      status: 409,
+      error: 'production deploys only from main, not feature/a.',
+    });
+    expect(await startManualRun(caller, id, 'main', 'production')).toMatchObject({ ok: true });
+    expect(github.calls.at(-1)?.json).toEqual({ ref: 'main', inputs: { run: 'production' } });
+    expect(github.calls.filter((c) => c.method === 'POST')).toHaveLength(2);
+  });
+
+  it('says to update the file when the branch’s pipeline cannot be started by hand', async () => {
+    const id = await runnable(ADA);
+    githubBrowse.githubAuthOf.mockReturnValue(
+      host({
+        [`POST ${repo}/actions/workflows/pipeline.yml/dispatches`]: {
+          status: 422,
+          body: { message: "Workflow does not have 'workflow_dispatch' trigger" },
+        },
+      })
+    );
+    const refused = await startManualRun(caller, id, 'develop', 'dev');
+    expect(refused).toMatchObject({ ok: false, status: 502 });
+    expect(refused.ok ? '' : refused.error).toContain(
+      'If .github/workflows/pipeline.yml on develop was written before runs could be started from Renkei, update it from the Pipeline tab.'
+    );
+  });
+
+  it('is only an editor’s', async () => {
+    const theirs = await runnable('auth0|bob');
+    expect(await startManualRun(caller, theirs, 'main', 'checks')).toMatchObject({
       ok: false,
       status: 404,
     });

@@ -1,6 +1,8 @@
 import type { DeploymentView } from '../deployments-page.model';
 import {
   appReducer,
+  branchRows,
+  branchesNote,
   environmentCards,
   historyRows,
   initialApp,
@@ -8,6 +10,8 @@ import {
   mergeRequest,
   promoteRequest,
   promotions,
+  redeployQuestion,
+  runRequest,
   type AppAction,
   type AppData,
   type AppState,
@@ -81,6 +85,36 @@ const data: AppData = {
     },
   ],
   history: [dev, failed, prod],
+  branches: [
+    {
+      name: 'develop',
+      commit: { sha: '8e41c2a0000', message: 'Show the intake status', date: hoursAgo(3) },
+      run: {
+        state: 'success',
+        url: 'https://bitbucket.org/acme/portal-web/pipelines/results/387',
+        startedAt: hoursAgo(2),
+      },
+      environment: 'dev',
+    },
+    {
+      name: 'main',
+      commit: { sha: '3b07d9f0000', message: null, date: null },
+      run: null,
+      environment: 'production',
+    },
+    {
+      name: 'feature/intake-form',
+      commit: { sha: 'f00dbab0000', message: 'Draft the intake form', date: hoursAgo(1) },
+      run: {
+        state: 'running',
+        url: 'https://bitbucket.org/acme/portal-web/pipelines/results/390',
+        startedAt: hoursAgo(1),
+      },
+      environment: null,
+    },
+  ],
+  branchesError: null,
+  hasChecks: true,
 };
 
 const run = (actions: AppAction[], start: AppState = initialApp) =>
@@ -215,5 +249,123 @@ describe('the history', () => {
       ['Dev', '71c0b3e', 'Failed — exit code 1', 'Pipelines #381', 'a merge to develop'],
       ['Production', '3b07d9f', 'Succeeded', 'Pipelines #362', 'a merge to main'],
     ]);
+  });
+});
+
+describe('the branches, feature branches too', () => {
+  it('list each branch with its head, its newest run and the environment it deploys', () => {
+    expect(
+      branchRows(loaded, NOW).map((b) => [
+        b.name,
+        b.deploys,
+        b.commit,
+        b.message,
+        b.run ? `${b.run.label} ${b.run.when}` : null,
+        b.actions.map((a) => a.label),
+      ])
+    ).toEqual([
+      [
+        'develop',
+        'deploys Dev',
+        '8e41c2a',
+        'Show the intake status',
+        'Passed 2h ago',
+        ['Run checks', 'Redeploy Dev'],
+      ],
+      ['main', 'deploys Production', '3b07d9f', null, null, ['Run checks', 'Redeploy Production']],
+      [
+        'feature/intake-form',
+        null,
+        'f00dbab',
+        'Draft the intake form',
+        'Running 1h ago',
+        ['Run checks'],
+      ],
+    ]);
+    expect(branchesNote(loaded)).toBe(
+      'Run the checks on any branch; an environment redeploys only from its own branch.'
+    );
+  });
+
+  it('narrow to what the person types', () => {
+    const narrowed = run([{ type: 'branchQuery', query: 'FEATURE' }], loaded);
+    expect(branchRows(narrowed, NOW).map((b) => b.name)).toEqual(['feature/intake-form']);
+  });
+
+  it('offer a viewer nothing to start, and say why', () => {
+    const viewer = run([{ type: 'loaded', data: { ...data, canEdit: false } }]);
+    expect(branchRows(viewer, NOW).every((b) => b.actions.length === 0)).toBe(true);
+    expect(branchesNote(viewer)).toBe('Only the project’s editors start its pipeline.');
+  });
+
+  it('say so when the host could not list them', () => {
+    const unread = run([
+      {
+        type: 'loaded',
+        data: { ...data, branches: null, branchesError: 'Bitbucket answered 403' },
+      },
+    ]);
+    expect(branchRows(unread, NOW)).toEqual([]);
+    expect(branchesNote(unread)).toBe(
+      'Bitbucket did not list the branches: Bitbucket answered 403'
+    );
+  });
+
+  it('start the checks on a feature branch straight away, and link the run', () => {
+    expect(runRequest('feature/intake-form', 'checks')).toEqual({
+      branch: 'feature/intake-form',
+      run: 'checks',
+    });
+    const started = run(
+      [
+        { type: 'sent', busy: 'run' },
+        {
+          type: 'runStarted',
+          request: { branch: 'feature/intake-form', run: 'checks' },
+          url: 'https://bitbucket.org/acme/portal-web/pipelines/results/391',
+        },
+      ],
+      loaded
+    );
+    expect(started.busy).toBeNull();
+    expect(started.started).toEqual({
+      text: 'Started the checks on feature/intake-form.',
+      url: 'https://bitbucket.org/acme/portal-web/pipelines/results/391',
+    });
+  });
+
+  it('ask before a redeploy, which deploys, and forget the question on No', () => {
+    const asked = run([{ type: 'askRedeploy', branch: 'main', environment: 'production' }], loaded);
+    expect(redeployQuestion(asked)).toBe(
+      'Redeploy Production from main? The pipeline deploys what main has now.'
+    );
+    expect(redeployQuestion(run([{ type: 'cancelRedeploy' }], asked))).toBeNull();
+    const started = run(
+      [
+        { type: 'sent', busy: 'run' },
+        {
+          type: 'runStarted',
+          request: runRequest('main', 'production'),
+          url: 'https://x.test/r/1',
+        },
+      ],
+      asked
+    );
+    expect(started.confirmingRun).toBeNull();
+    expect(started.started?.text).toBe('Started redeploying Production from main.');
+  });
+
+  it('keep the question open when the host refuses, saying why', () => {
+    const refused = run(
+      [
+        { type: 'askRedeploy', branch: 'main', environment: 'production' },
+        { type: 'sent', busy: 'run' },
+        { type: 'failed', error: 'production deploys only from main, not feature/x.' },
+      ],
+      loaded
+    );
+    expect(refused.busy).toBeNull();
+    expect(refused.error).toBe('production deploys only from main, not feature/x.');
+    expect(refused.started).toBeNull();
   });
 });

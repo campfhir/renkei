@@ -122,6 +122,14 @@ describe('the file each host runs', () => {
       script: ['sudo systemctl restart sync-worker # dev'],
     });
     expect(file.pipelines.branches.main[1].step.deployment).toBe('production');
+    // Started by hand from Renkei: the checks, and each environment's deploy.
+    expect(Object.keys(file.pipelines.custom)).toEqual([
+      'checks',
+      'deploy-dev',
+      'deploy-production',
+    ]);
+    expect(file.pipelines.custom.checks).toEqual(file.pipelines['pull-requests']['**']);
+    expect(file.pipelines.custom['deploy-production']).toEqual(file.pipelines.branches.main);
     // Says where it came from, and which block each step is.
     expect(rendered.value).toMatch(/^# Built in Renkei/);
     expect(rendered.value).toContain('# block: deploy-systemd@v1, target onprem-workers');
@@ -131,7 +139,21 @@ describe('the file each host runs', () => {
     const rendered = renderPipeline(spec, context('github'));
     if (!rendered.ok) throw new Error(rendered.errors.join('\n'));
     const file = parse(rendered.value);
-    expect(file.on).toEqual({ pull_request: null, push: { branches: ['develop', 'main'] } });
+    expect(file.on).toEqual({
+      pull_request: null,
+      push: { branches: ['develop', 'main'] },
+      // Started by hand from Renkei: the checks, or an environment's deploy.
+      workflow_dispatch: {
+        inputs: {
+          run: {
+            description: 'The checks, or the environment to deploy (from its own branch)',
+            required: true,
+            type: 'choice',
+            options: ['checks', 'dev', 'production'],
+          },
+        },
+      },
+    });
     expect(Object.keys(file.jobs)).toEqual([
       'pull-request-go-test-build',
       'dev-go-test-build',
@@ -139,9 +161,12 @@ describe('the file each host runs', () => {
       'production-go-test-build',
       'production-deploy-systemd',
     ]);
-    expect(file.jobs['pull-request-go-test-build'].if).toBe("github.event_name == 'pull_request'");
+    expect(file.jobs['pull-request-go-test-build'].if).toBe(
+      "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.run == 'checks')"
+    );
+    // A manual deploy still runs only on the environment's own branch.
     expect(file.jobs['production-deploy-systemd']).toMatchObject({
-      if: "github.event_name == 'push' && github.ref == 'refs/heads/main'",
+      if: "(github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.run == 'production')) && github.ref == 'refs/heads/main'",
       needs: ['production-go-test-build'],
       'runs-on': ['self-hosted', 'onprem-workers'],
       environment: 'production',
@@ -276,7 +301,11 @@ describe('before it runs', () => {
         'Bitbucket has no deployment environment named dev: add it in the repository’s Deployments settings, or use one it has (Production).',
         null,
       ],
-      ['warn', 'develop does not exist yet: the pull request makes it from main, and dev deploys once this pipeline reaches it.', null],
+      [
+        'warn',
+        'develop does not exist yet: the pull request makes it from main, and dev deploys once this pipeline reaches it.',
+        null,
+      ],
     ]);
   });
 

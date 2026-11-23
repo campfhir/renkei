@@ -12,6 +12,7 @@
  * `{ok: true, ...}` or `{ok: false, error}`, never a thrown exception.
  */
 
+import type { ManualRun } from '@renkei/ci-blocks';
 import { GITHUB, ATLASSIAN_BITBUCKET } from '@renkei/provider-grants';
 import { githubHostAdapter } from './repo-host-github';
 import { bitbucketHostAdapter } from './repo-host-bitbucket';
@@ -24,6 +25,9 @@ export interface RepoHostContext {
 export interface HostBranch {
   name: string;
   headSha: string;
+  /** The head commit's date and first line, when the host lists them with the branch (Bitbucket). */
+  headDate?: string | null;
+  headMessage?: string | null;
 }
 
 export type HostPullRequestState = 'open' | 'merged' | 'declined' | 'closed';
@@ -72,7 +76,9 @@ export interface RepoHostAdapter {
   listPullRequests(
     fullName: string,
     options?: { state?: 'open' | 'closed' | 'all'; max?: number }
-  ): Promise<{ ok: true; pullRequests: HostPullRequest[]; hasMore: boolean } | { ok: false; error: string }>;
+  ): Promise<
+    { ok: true; pullRequests: HostPullRequest[]; hasMore: boolean } | { ok: false; error: string }
+  >;
   getPullRequest(
     fullName: string,
     number: number
@@ -89,6 +95,16 @@ export interface RepoHostAdapter {
     fullName: string,
     options?: { branch?: string; max?: number }
   ): Promise<{ ok: true; runs: HostPipelineRun[] } | { ok: false; error: string }>;
+  /**
+   * Start the pipeline Renkei wrote by hand on a branch: the checks, or an
+   * environment's deploy (Bitbucket's custom pipeline, GitHub's
+   * workflow_dispatch). `url` is the run, or where its runs are listed.
+   */
+  startPipelineRun(
+    fullName: string,
+    branch: string,
+    run: ManualRun
+  ): Promise<{ ok: true; url: string } | { ok: false; error: string }>;
 }
 
 /**
@@ -102,10 +118,7 @@ export interface RepoHostAdapter {
  * supported": PipelinesSummary/pipelines-access.ts already checked
  * ATLASSIAN_BITBUCKET directly and worked, which is what hid this.
  */
-export function hostAdapterFor(
-  provider: string,
-  context: RepoHostContext
-): RepoHostAdapter | null {
+export function hostAdapterFor(provider: string, context: RepoHostContext): RepoHostAdapter | null {
   if (provider === GITHUB) return githubHostAdapter(context);
   if (provider === ATLASSIAN_BITBUCKET) return bitbucketHostAdapter(context);
   return null;

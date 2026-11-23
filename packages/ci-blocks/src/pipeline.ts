@@ -89,6 +89,28 @@ export interface PipelineContext {
   report?: ReportTo | null;
 }
 
+/**
+ * What can be started by hand from Renkei: the checks on any branch, or an
+ * environment's deploy — from that environment's own branch only.
+ */
+export type ManualRun = { kind: 'checks' } | { kind: 'deploy'; environment: string };
+
+/** The `run` choice the GitHub workflow takes on a manual start. */
+export const MANUAL_CHECKS = 'checks';
+
+/**
+ * The custom pipeline a manual run starts on Bitbucket (`pipelines.custom`
+ * in bitbucket-pipelines.yml): `checks`, or `deploy-<environment>`.
+ */
+export function bitbucketCustomPipeline(run: ManualRun): string {
+  return run.kind === 'checks' ? MANUAL_CHECKS : `deploy-${run.environment}`;
+}
+
+/** The value of the GitHub workflow's `run` input a manual run sends. */
+export function githubDispatchInput(run: ManualRun): string {
+  return run.kind === 'checks' ? MANUAL_CHECKS : run.environment;
+}
+
 export const PIPELINE_FILE: Record<Host, string> = {
   bitbucket: 'bitbucket-pipelines.yml',
   github: '.github/workflows/pipeline.yml',
@@ -379,6 +401,8 @@ function bitbucketFile(
   const markers: { path: (string | number)[]; text: string }[] = [];
   const pipelines: Record<string, unknown> = {};
   const branches: Record<string, unknown[]> = {};
+  // Manual starts from Renkei: the checks, and each environment's deploy.
+  const custom: Record<string, unknown[]> = {};
   for (const { part, steps } of parts) {
     const where = partName(part.environment?.name ?? null);
     const items: unknown[] = [];
@@ -407,8 +431,16 @@ function bitbucketFile(
     if (items.length === 0) continue;
     if (part.environment) branches[part.environment.branch] = items;
     else pipelines['pull-requests'] = { '**': items };
+    custom[
+      bitbucketCustomPipeline(
+        part.environment
+          ? { kind: 'deploy', environment: part.environment.name }
+          : { kind: 'checks' }
+      )
+    ] = items;
   }
   if (Object.keys(branches).length > 0) pipelines.branches = branches;
+  if (Object.keys(custom).length > 0) pipelines.custom = custom;
   const doc = new Document(
     { ...(Object.keys(caches).length > 0 ? { definitions: { caches } } : {}), pipelines },
     NO_ALIASES
@@ -464,9 +496,11 @@ function githubFile(
   const branches = parts.flatMap(({ part }) => (part.environment ? [part.environment.branch] : []));
   for (const { part, steps } of parts) {
     const where = partName(part.environment?.name ?? null);
+    // A manual start (workflow_dispatch) names what to run; an environment's
+    // deploy still runs only on its own branch.
     const condition = part.environment
-      ? `github.event_name == 'push' && github.ref == 'refs/heads/${part.environment.branch}'`
-      : "github.event_name == 'pull_request'";
+      ? `(github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.run == '${githubDispatchInput({ kind: 'deploy', environment: part.environment.name })}')) && github.ref == 'refs/heads/${part.environment.branch}'`
+      : `github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.run == '${MANUAL_CHECKS}')`;
     steps.forEach((rendered, index) => {
       const out = renderGithubJob(rendered.block.definition, rendered.use);
       if (!out.ok) {
@@ -493,6 +527,27 @@ function githubFile(
     on.pull_request = null;
   }
   if (branches.length > 0) on.push = { branches };
+  const choices = parts
+    .filter(({ steps }) => steps.length > 0)
+    .map(({ part }) =>
+      githubDispatchInput(
+        part.environment
+          ? { kind: 'deploy', environment: part.environment.name }
+          : { kind: 'checks' }
+      )
+    );
+  if (choices.length > 0) {
+    on.workflow_dispatch = {
+      inputs: {
+        run: {
+          description: 'The checks, or the environment to deploy (from its own branch)',
+          required: true,
+          type: 'choice',
+          options: choices,
+        },
+      },
+    };
+  }
   const doc = new Document({ name: 'Pipeline', on, jobs }, NO_ALIASES);
   doc.commentBefore = FILE_HEADER;
   for (const { id, text } of markers) {

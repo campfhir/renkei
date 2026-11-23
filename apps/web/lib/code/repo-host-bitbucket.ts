@@ -14,7 +14,8 @@
 import { bitbucketAuthOf } from './bitbucket-browse';
 import { bbJson, num, pipelineUrl, prUrl, rec, str, values } from '../mcp-tools/bitbucket/client';
 import type { BitbucketAuth } from '../mcp-tools/bitbucket/bitbucket-auth';
-import { repoBase } from './bitbucket-pipelines';
+import { bitbucketCustomPipeline } from '@renkei/ci-blocks';
+import { repoBase, triggerPipeline } from './bitbucket-pipelines';
 import type {
   HostBranch,
   HostCommit,
@@ -40,7 +41,11 @@ function prState(pr: Record<string, unknown>): HostPullRequestState {
   return 'open';
 }
 
-function pullRequestOf(workspace: string, repoSlug: string, pr: Record<string, unknown>): HostPullRequest {
+function pullRequestOf(
+  workspace: string,
+  repoSlug: string,
+  pr: Record<string, unknown>
+): HostPullRequest {
   const id = Number(num(pr.id)) || 0;
   return {
     number: id,
@@ -81,10 +86,15 @@ export function bitbucketHostAdapter(context: RepoHostContext): RepoHostAdapter 
         `/repositories/${encodeURIComponent(target.workspace)}/${encodeURIComponent(target.repoSlug)}/refs/branches?pagelen=100&sort=-target.date`
       );
       if (!result.ok) return result;
-      const branches: HostBranch[] = values(result.body).map((branch) => ({
-        name: str(branch.name),
-        headSha: str(rec(branch.target).hash),
-      }));
+      const branches: HostBranch[] = values(result.body).map((branch) => {
+        const head = rec(branch.target);
+        return {
+          name: str(branch.name),
+          headSha: str(head.hash),
+          headDate: str(head.date) || null,
+          headMessage: str(head.message).split('\n')[0]?.trim() || null,
+        };
+      });
       return { ok: true, branches };
     },
 
@@ -92,7 +102,8 @@ export function bitbucketHostAdapter(context: RepoHostContext): RepoHostAdapter 
       const target = workspaceRepo(fullName);
       if (!target) return { ok: false, error: 'The repository name is not usable.' };
       const max = options?.max ?? 20;
-      const state = options?.state === 'closed' ? 'MERGED' : options?.state === 'all' ? undefined : 'OPEN';
+      const state =
+        options?.state === 'closed' ? 'MERGED' : options?.state === 'all' ? undefined : 'OPEN';
       const parts = [`pagelen=${max}`, 'sort=-updated_on', ...(state ? [`state=${state}`] : [])];
       const result = await bbJson(
         auth,
@@ -186,6 +197,15 @@ export function bitbucketHostAdapter(context: RepoHostContext): RepoHostAdapter 
         })
         .filter((run): run is HostPipelineRun => run !== null);
       return { ok: true, runs };
+    },
+
+    async startPipelineRun(fullName, branch, run) {
+      const started = await triggerPipeline(auth, fullName, {
+        ref: branch,
+        refType: 'branch',
+        pattern: bitbucketCustomPipeline(run),
+      });
+      return started.ok ? { ok: true, url: started.run.url } : started;
     },
   };
 }

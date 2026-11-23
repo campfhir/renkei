@@ -12,14 +12,20 @@
  */
 
 import { getDataStore, type CiDeploymentRecord, type CiPipelineRecord } from '@renkei/db';
-import { readPipelineSpec, type Host, type PipelineSpec } from '@renkei/ci-blocks';
+import {
+  PIPELINE_FILE,
+  readPipelineSpec,
+  type Host,
+  type ManualRun,
+  type PipelineSpec,
+} from '@renkei/ci-blocks';
 import { ATLASSIAN_BITBUCKET, GITHUB } from '@renkei/provider-grants';
 import { resolveResourceAccess } from '@/lib/chat/access';
 import { getProjectRow, type ProjectRow } from '@/lib/chat/projects';
 import { loadChatSidebar } from '@/lib/chat/sidebar';
 import { bitbucketHostAdapter } from '@/lib/code/repo-host-bitbucket';
 import { githubHostAdapter } from '@/lib/code/repo-host-github';
-import type { RepoHostAdapter } from '@/lib/code/repo-host';
+import type { HostPipelineState, RepoHostAdapter } from '@/lib/code/repo-host';
 import { commitsAhead, openPullRequest, type AheadCommit, type Caller } from './host-pulls';
 import { builderTargets } from './pipeline-builder';
 
@@ -82,14 +88,34 @@ export interface Promotion {
   error: string | null;
 }
 
+/** One of the repository's branches, as the app's Branches list shows it. */
+export interface BranchView {
+  name: string;
+  /** The head commit, as the host lists it. */
+  commit: { sha: string; message: string | null; date: string | null };
+  /** The newest pipeline run on it; null when none is listed. */
+  run: { state: HostPipelineState; url: string; startedAt: string } | null;
+  /** The environment this branch deploys, if one does. */
+  environment: string | null;
+}
+
 export interface AppDetail extends AppView {
   /** False until the project's pipeline is built (or saved) in Renkei. */
   hasPipeline: boolean;
   history: DeploymentView[];
   promotions: Promotion[];
+  /** Every branch: environments' first, then by latest activity; null when the host could not list them. */
+  branches: BranchView[] | null;
+  branchesError: string | null;
+  /** Whether the pipeline has checks to start by hand on a branch. */
+  hasChecks: boolean;
 }
 
 const HISTORY = 50;
+/** Branches listed in an app: the environments' and the most recently active. */
+const BRANCHES = 50;
+/** Runs read to find each branch's newest. */
+const RUNS_READ = 100;
 const ACROSS = 300;
 
 function view(record: CiDeploymentRecord): DeploymentView {
@@ -268,6 +294,69 @@ async function promotionOf(
   };
 }
 
+/**
+ * The repository's branches with their newest run and the environment each
+ * deploys: environments' branches first (in pipeline order), then the rest
+ * by their latest run or commit, newest first, then by name.
+ */
+export function branchList(
+  spec: PipelineSpec,
+  branches: {
+    name: string;
+    headSha: string;
+    headDate?: string | null;
+    headMessage?: string | null;
+  }[],
+  runs: { ref: string; state: HostPipelineState; url: string; startedAt: string }[]
+): BranchView[] {
+  const newest = new Map<string, (typeof runs)[number]>();
+  for (const run of runs) {
+    const seen = newest.get(run.ref);
+    if (!seen || run.startedAt > seen.startedAt) newest.set(run.ref, run);
+  }
+  const order = spec.environments.map((e) => e.branch);
+  const views = branches.map((branch): BranchView => {
+    const run = newest.get(branch.name);
+    return {
+      name: branch.name,
+      commit: {
+        sha: branch.headSha,
+        message: branch.headMessage ?? null,
+        date: branch.headDate ?? null,
+      },
+      run: run ? { state: run.state, url: run.url, startedAt: run.startedAt } : null,
+      environment: spec.environments.find((e) => e.branch === branch.name)?.name ?? null,
+    };
+  });
+  const active = (b: BranchView) => b.run?.startedAt ?? b.commit.date ?? '';
+  return views
+    .sort((a, b) => {
+      const ai = order.indexOf(a.name);
+      const bi = order.indexOf(b.name);
+      if (ai !== -1 || bi !== -1) return (ai === -1 ? Infinity : ai) - (bi === -1 ? Infinity : bi);
+      const byActivity = active(b).localeCompare(active(a));
+      return byActivity !== 0 ? byActivity : a.name.localeCompare(b.name);
+    })
+    .slice(0, BRANCHES);
+}
+
+async function branchesOf(
+  item: Visible,
+  caller: Caller
+): Promise<{ branches: BranchView[] | null; error: string | null }> {
+  const adapter = adapterFor(item.host, caller);
+  const { fullName } = item.project.repo;
+  const [branches, runs] = await Promise.all([
+    adapter.listBranches(fullName),
+    adapter.listPipelineRuns(fullName, { max: RUNS_READ }),
+  ]);
+  if (!branches.ok) return { branches: null, error: branches.error };
+  return {
+    branches: branchList(item.spec, branches.branches, runs.ok ? runs.runs : []),
+    error: runs.ok ? null : `Its runs could not be read: ${runs.error}`,
+  };
+}
+
 export async function deploymentDetail(
   caller: Caller,
   projectId: string
@@ -278,14 +367,18 @@ export async function deploymentDetail(
     getDataStore().ciDeployments.recent([item.project.id], HISTORY),
     stackNames(),
   ]);
-  const promotions = await Promise.all(
-    pairs(item.spec).map((pair) => promotionOf(item, caller, pair))
-  );
+  const [promotions, branches] = await Promise.all([
+    Promise.all(pairs(item.spec).map((pair) => promotionOf(item, caller, pair))),
+    branchesOf(item, caller),
+  ]);
   return {
     ...appOf(item, history, stacks),
     hasPipeline: true,
     history: history.map(view),
     promotions,
+    branches: branches.branches,
+    branchesError: branches.error,
+    hasChecks: item.spec.checks.length > 0,
   };
 }
 
@@ -306,6 +399,9 @@ async function unbuiltDetail(subject: string, projectId: string): Promise<AppDet
     hasPipeline: false,
     history: [],
     promotions: [],
+    branches: null,
+    branchesError: null,
+    hasChecks: false,
   };
 }
 
@@ -414,6 +510,76 @@ export async function mergePromotion(
     ok: true,
     number,
     url: merged.url,
+    project: item.project.name,
+    repository: item.project.repo.fullName,
+  };
+}
+
+export type ManualRunOutcome =
+  | { ok: true; url: string; project: string; repository: string }
+  | { ok: false; status: number; error: string };
+
+/** A manual run as sent: `run` is "checks" or an environment's name. */
+export function readManualRun(
+  spec: PipelineSpec,
+  branch: string,
+  run: string
+): { ok: true; run: ManualRun } | { ok: false; status: number; error: string } {
+  if (!branch.trim()) return { ok: false, status: 400, error: 'Name the branch to run on.' };
+  if (run === 'checks') {
+    return spec.checks.length > 0
+      ? { ok: true, run: { kind: 'checks' } }
+      : { ok: false, status: 400, error: 'The pipeline has no checks to run.' };
+  }
+  const environment = spec.environments.find((e) => e.name === run);
+  if (!environment) {
+    return { ok: false, status: 400, error: `The pipeline has no environment named ${run}.` };
+  }
+  if (environment.steps.length === 0) {
+    return { ok: false, status: 400, error: `${environment.name} has no steps to run.` };
+  }
+  if (environment.branch !== branch) {
+    return {
+      ok: false,
+      status: 409,
+      error: `${environment.name} deploys only from ${environment.branch}, not ${branch}.`,
+    };
+  }
+  return { ok: true, run: { kind: 'deploy', environment: environment.name } };
+}
+
+/**
+ * Start the pipeline by hand on a branch, with the person's own grant:
+ * the checks on any branch, or an environment's deploy from its own branch.
+ */
+export async function startManualRun(
+  caller: Caller,
+  projectId: string,
+  branch: string,
+  run: string
+): Promise<ManualRunOutcome> {
+  const [item] = await visiblePipelines(caller.subject, projectId, { withoutEnvironments: true });
+  if (!item) return { ok: false, status: 404, error: 'No such project with a pipeline.' };
+  if (!item.canEdit) {
+    return { ok: false, status: 403, error: 'Only the project’s editors start its pipeline.' };
+  }
+  const read = readManualRun(item.spec, branch, run);
+  if (!read.ok) return read;
+  const started = await adapterFor(item.host, caller).startPipelineRun(
+    item.project.repo.fullName,
+    branch,
+    read.run
+  );
+  if (!started.ok) {
+    return {
+      ok: false,
+      status: 502,
+      error: `${started.error} If ${PIPELINE_FILE[item.host]} on ${branch} was written before runs could be started from Renkei, update it from the Pipeline tab.`,
+    };
+  }
+  return {
+    ok: true,
+    url: started.url,
     project: item.project.name,
     repository: item.project.repo.fullName,
   };

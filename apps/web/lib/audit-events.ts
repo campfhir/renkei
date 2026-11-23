@@ -184,6 +184,8 @@ export type AuditAction =
   | 'ci.pipeline_pull_request'
   | 'ci.promotion_opened'
   | 'ci.promotion_merged'
+  /** A pipeline started by hand from Deployments: the checks on a branch, or an environment's deploy. */
+  | 'ci.pipeline_started'
   | 'ci.target_saved'
   | 'ci.target_deleted'
   /** A host's CI service account saved or forgotten; its secret is never in the event. */

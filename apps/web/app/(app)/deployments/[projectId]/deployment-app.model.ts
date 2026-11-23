@@ -3,7 +3,10 @@
  * what runs there, how the pipeline deploys it, whether it is behind —
  * each promotion — the commits merging brings, the pull request, and
  * opening it or merging it (a merge is asked twice: it deploys) — and the
- * history. Tested in deployment-app.model.test.ts. The clock is passed in.
+ * history — and the repository's branches, feature branches too, with their
+ * newest run, where an editor starts the checks on any branch or redeploys
+ * an environment from its own (asked twice: it deploys). Tested in
+ * deployment-app.model.test.ts. The clock is passed in.
  */
 
 import {
@@ -34,29 +37,59 @@ export interface Promotion {
   error: string | null;
 }
 
+export type RunState = 'success' | 'failure' | 'running' | 'pending' | 'other';
+
+/** One of the repository's branches, as GET /api/deployments/[projectId] lists it. */
+export interface Branch {
+  name: string;
+  commit: { sha: string; message: string | null; date: string | null };
+  run: { state: RunState; url: string; startedAt: string } | null;
+  /** The environment it deploys, if one does. */
+  environment: string | null;
+}
+
 /** What GET /api/deployments/[projectId] answers. */
 export interface AppData extends AppView {
   /** False until the project's pipeline is built in Renkei. */
   hasPipeline: boolean;
   history: DeploymentView[];
   promotions: Promotion[];
+  /** Null when the host could not list them (branchesError says why). */
+  branches: Branch[] | null;
+  branchesError: string | null;
+  /** Whether the pipeline has checks to start by hand. */
+  hasChecks: boolean;
 }
+
+/** What a manual start runs on a branch: the checks, or an environment's deploy. */
+export type ManualRun = { branch: string; run: 'checks' } | { branch: string; run: string };
 
 export interface AppState {
   data: AppData | null;
-  busy: 'load' | 'promote' | 'merge' | null;
+  busy: 'load' | 'promote' | 'merge' | 'run' | null;
   error: string | null;
   notice: string | null;
   /** The merge asked about, waiting for a yes. */
   confirming: { from: string; to: string; number: number } | null;
+  /** The redeploy asked about, waiting for a yes. */
+  confirmingRun: { branch: string; environment: string } | null;
+  /** The run just started from here, linked until the next change. */
+  started: { text: string; url: string } | null;
+  /** What the Branches list is narrowed to. */
+  branchQuery: string;
 }
 
 export type AppAction =
   | { type: 'loaded'; data: AppData; notice?: string }
   | { type: 'failed'; error: string }
-  | { type: 'sent'; busy: 'promote' | 'merge' }
+  | { type: 'sent'; busy: 'promote' | 'merge' | 'run' }
   | { type: 'askMerge'; from: string; to: string; number: number }
-  | { type: 'cancelMerge' };
+  | { type: 'cancelMerge' }
+  | { type: 'askRedeploy'; branch: string; environment: string }
+  | { type: 'cancelRedeploy' }
+  /** A manual run started on the host; `url` is the run or where its runs are listed. */
+  | { type: 'runStarted'; request: ManualRun; url: string }
+  | { type: 'branchQuery'; query: string };
 
 export const initialApp: AppState = {
   data: null,
@@ -64,6 +97,9 @@ export const initialApp: AppState = {
   error: null,
   notice: null,
   confirming: null,
+  confirmingRun: null,
+  started: null,
+  branchQuery: '',
 };
 
 export function appReducer(state: AppState, action: AppAction): AppState {
@@ -79,7 +115,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'failed':
       return { ...state, busy: null, error: action.error };
     case 'sent':
-      return { ...state, busy: action.busy, error: null, notice: null };
+      return { ...state, busy: action.busy, error: null, notice: null, started: null };
     case 'askMerge':
       return {
         ...state,
@@ -88,7 +124,30 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     case 'cancelMerge':
       return { ...state, confirming: null };
+    case 'askRedeploy':
+      return {
+        ...state,
+        confirmingRun: { branch: action.branch, environment: action.environment },
+        error: null,
+      };
+    case 'cancelRedeploy':
+      return { ...state, confirmingRun: null };
+    case 'runStarted':
+      return {
+        ...state,
+        busy: null,
+        confirmingRun: null,
+        started: { text: startedText(action.request), url: action.url },
+      };
+    case 'branchQuery':
+      return { ...state, branchQuery: action.query.slice(0, 200) };
   }
+}
+
+function startedText(request: ManualRun): string {
+  return request.run === 'checks'
+    ? `Started the checks on ${request.branch}.`
+    : `Started redeploying ${environmentLabel(request.run)} from ${request.branch}.`;
 }
 
 // ——— what the page derives ———
@@ -256,4 +315,85 @@ export function historyRows(state: AppState): HistoryRow[] {
     runUrl: d.runUrl,
     by: d.actor ? `${d.actor}, from ${d.branch ?? '?'}` : d.branch ? `a merge to ${d.branch}` : '',
   }));
+}
+
+// ——— branches ———
+
+export interface BranchRow {
+  name: string;
+  /** “deploys Production”, when an environment's branch. */
+  deploys: string | null;
+  commit: string;
+  message: string | null;
+  when: string | null;
+  run: { label: string; tone: Tone; url: string; when: string } | null;
+  /** What an editor can start on it; empty for a viewer. */
+  actions: (
+    { kind: 'checks'; label: string } | { kind: 'redeploy'; label: string; environment: string }
+  )[];
+}
+
+const RUN: Record<RunState, { label: string; tone: Tone }> = {
+  success: { label: 'Passed', tone: 'good' },
+  failure: { label: 'Failed', tone: 'bad' },
+  running: { label: 'Running', tone: 'running' },
+  pending: { label: 'Waiting', tone: 'running' },
+  other: { label: 'Stopped', tone: 'none' },
+};
+
+/** The Branches list: every branch the host listed, narrowed by the query. */
+export function branchRows(state: AppState, now: number): BranchRow[] {
+  const app = state.data;
+  if (!app?.branches) return [];
+  const query = state.branchQuery.trim().toLowerCase();
+  return app.branches
+    .filter((b) => !query || b.name.toLowerCase().includes(query))
+    .map((b) => {
+      const actions: BranchRow['actions'] = [];
+      if (app.canEdit && app.hasChecks) actions.push({ kind: 'checks', label: 'Run checks' });
+      if (app.canEdit && b.environment) {
+        actions.push({
+          kind: 'redeploy',
+          label: `Redeploy ${environmentLabel(b.environment)}`,
+          environment: b.environment,
+        });
+      }
+      return {
+        name: b.name,
+        deploys: b.environment ? `deploys ${environmentLabel(b.environment)}` : null,
+        commit: shortSha(b.commit.sha),
+        message: b.commit.message,
+        when: b.commit.date ? ago(b.commit.date, now) : null,
+        run: b.run
+          ? { ...RUN[b.run.state], url: b.run.url, when: ago(b.run.startedAt, now) }
+          : null,
+        actions,
+      };
+    });
+}
+
+/** Under the Branches heading: how many, and what the host could not say. */
+export function branchesNote(state: AppState): string | null {
+  const app = state.data;
+  if (!app) return null;
+  if (!app.branches) {
+    return `${HOST_LABEL[app.host]} did not list the branches${app.branchesError ? `: ${app.branchesError}` : '.'}`;
+  }
+  if (app.branchesError) return app.branchesError;
+  if (!app.canEdit) return 'Only the project’s editors start its pipeline.';
+  return app.hasChecks
+    ? 'Run the checks on any branch; an environment redeploys only from its own branch.'
+    : 'An environment redeploys only from its own branch; the pipeline has no checks to run.';
+}
+
+/** What a start sends (POST /api/deployments/[projectId]/run). */
+export function runRequest(branch: string, run: 'checks' | string): ManualRun {
+  return { branch, run };
+}
+
+/** The question before a redeploy, which deploys. */
+export function redeployQuestion(state: AppState): string | null {
+  const c = state.confirmingRun;
+  if (!c) return null;
+  return `Redeploy ${environmentLabel(c.environment)} from ${c.branch}? The pipeline deploys what ${c.branch} has now.`;
 }
