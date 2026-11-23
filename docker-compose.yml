@@ -81,7 +81,7 @@ services:
   # Production points AZURE_BLOB_* at a real storage account instead; the
   # container is created on first use, so no init step is needed here.
   azurite:
-    image: mcr.microsoft.com/azure-storage/azurite:3.9.0@sha256:a5479e27ec4224a9d03a228397f03f86dcc7282f84ac63007d6dd7c115208892
+    image: mcr.microsoft.com/azure-storage/azurite:3.38.0@sha256:c26024d62bf4a5b88a40968afd217234c00e1fc9a4790dc6105d1ca7979f6eec
     container_name: renkei-azurite
     command:
       ['azurite-blob', '--blobHost', '0.0.0.0', '--skipApiVersionCheck', '--location', '/data']
