@@ -24,6 +24,9 @@ import {
   outcomeOf,
   pipelinesReducer,
   pipelinesUrl,
+  environmentsToAdd,
+  fillLabel,
+  missingIn,
   readVariableAsk,
   removalQuestion,
   runRequest,
@@ -514,6 +517,86 @@ describe('sent here to set a variable (the pipeline builder’s “Set it”)', 
     expect(viewer.draft).toBeNull();
     expect(viewer.notice).toBe(
       'REGION is not set; you cannot set variables here, so ask an editor of the project.'
+    );
+  });
+});
+
+describe('filling each set with what the pipeline reads', () => {
+  const production = {
+    uuid: '{prod}',
+    name: 'Production',
+    type: 'Production',
+    variables: [variable('API_URL', 'https://api.test')],
+    error: null,
+  };
+  const pipeline = {
+    needs: [
+      { name: 'NPM_TOKEN', secured: true, environment: null },
+      { name: 'REGION', secured: false, environment: null },
+      { name: 'REGION', secured: false, environment: 'production' },
+      { name: 'API_URL', secured: false, environment: 'production' },
+      { name: 'DEPLOY_TOKEN', secured: true, environment: 'production' },
+      { name: 'DEPLOY_TOKEN', secured: true, environment: 'staging' },
+    ],
+    environments: ['staging', 'production'],
+  };
+
+  it('a set lacks what the pipeline reads there that neither it nor the repository has', () => {
+    const sets = setup({
+      variables: [variable('REGION', 'eu')],
+      environments: [production],
+      pipeline,
+    });
+    expect(missingIn(sets, pipeline, {})).toEqual([{ name: 'NPM_TOKEN', secured: true }]);
+    // REGION is the repository's, API_URL is production's own: only the secret is missing.
+    expect(missingIn(sets, pipeline, { environmentUuid: '{prod}' })).toEqual([
+      { name: 'DEPLOY_TOKEN', secured: true },
+    ]);
+    expect(fillLabel([{ name: 'A' }])).toBe('Add the 1 it needs');
+    expect(fillLabel([{ name: 'A' }, { name: 'B' }])).toBe('Add the 2 it needs');
+    expect(missingIn(sets, null, {})).toEqual([]);
+  });
+
+  it('opens the box with a line for each, the cursor after the first new `=`', () => {
+    const state = run(
+      [{ type: 'missingFilled', scope: { environmentUuid: '{prod}' } }],
+      opened({ environments: [production], pipeline })
+    );
+    const text = 'API_URL=https://api.test\nREGION=\nsecret DEPLOY_TOKEN=';
+    expect(state.draft).toEqual({
+      environmentUuid: '{prod}',
+      text,
+      caret: {
+        start: 'API_URL=https://api.test\nREGION='.length,
+        end: 'API_URL=https://api.test\nREGION='.length,
+      },
+    });
+    // What it saves is that set's.
+    expect(variablesRequest(state.draft!)).toEqual({ text, environmentUuid: '{prod}' });
+  });
+
+  it('offers nothing to fill once a set has everything', () => {
+    const full = opened({
+      variables: [variable('NPM_TOKEN', null, true), variable('REGION', 'eu')],
+      environments: [{ ...production, variables: [variable('DEPLOY_TOKEN', null, true)] }],
+      pipeline,
+    });
+    expect(missingIn(full.setup!, pipeline, {})).toEqual([]);
+    expect(run([{ type: 'missingFilled', scope: {} }], full).draft).toBeNull();
+  });
+
+  it('names the environments Bitbucket lacks, and says when one was added', () => {
+    expect(environmentsToAdd(setup({ environments: [production] }), pipeline)).toEqual(['staging']);
+    const added = run(
+      [
+        { type: 'sent', what: 'environment' },
+        { type: 'environmentAdded', name: 'staging' },
+      ],
+      opened({ environments: [production], pipeline })
+    );
+    expect(added.busy).toBe(false);
+    expect(added.notice).toBe(
+      'Added the deployment environment staging on Bitbucket. Fill in its variables below.'
     );
   });
 });

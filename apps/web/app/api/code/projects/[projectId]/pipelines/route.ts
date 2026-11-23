@@ -29,6 +29,7 @@ import {
   summarize,
 } from '@/lib/code/bitbucket-pipelines';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { pipelineVariableNeeds } from '@/lib/ci/pipeline-builder';
 import { logger } from '@/lib/logger';
 import { whoIs } from '@/lib/log-actor';
 
@@ -65,7 +66,12 @@ export async function GET(
   if (request.nextUrl.searchParams.get('view') === 'summary') {
     return NextResponse.json({ ...summarize(setup), access });
   }
-  return NextResponse.json({ ...setup, access });
+  // What the saved pipeline reads, so each set can be filled with what it lacks.
+  return NextResponse.json({
+    ...setup,
+    access,
+    pipeline: await pipelineVariableNeeds(projectId),
+  });
 }
 
 export async function PUT(

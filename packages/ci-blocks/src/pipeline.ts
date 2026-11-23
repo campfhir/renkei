@@ -285,6 +285,41 @@ export function blockOfStep(
   };
 }
 
+/** A variable a pipeline's steps read, and where: an environment, or null for pull requests. */
+export interface VariableNeed {
+  name: string;
+  /** True when any block reads it as a secret. */
+  secured: boolean;
+  environment: string | null;
+}
+
+/**
+ * Every variable the pipeline's steps read, once per place it is read —
+ * pull requests (the repository's own set) or an environment — in
+ * pipeline order, a secret where any block declares it one.
+ */
+export function variableNeeds(
+  spec: PipelineSpec,
+  organization: (key: string, version: number) => PipelineBlock | null
+): VariableNeed[] {
+  const blockAt = blockOfStep(spec, organization);
+  const out: VariableNeed[] = [];
+  const parts = [
+    { environment: null, steps: spec.checks },
+    ...spec.environments.map((e) => ({ environment: e.name, steps: e.steps })),
+  ];
+  for (const { environment, steps } of parts) {
+    for (const step of steps) {
+      for (const variable of blockAt(step.block, step.version)?.definition.variables ?? []) {
+        const seen = out.find((n) => n.name === variable.name && n.environment === environment);
+        if (seen) seen.secured ||= variable.secured;
+        else out.push({ name: variable.name, secured: variable.secured, environment });
+      }
+    }
+  }
+  return out;
+}
+
 // ——— rendering ———
 
 /** Letters, digits and -: for a GitHub job's id. */

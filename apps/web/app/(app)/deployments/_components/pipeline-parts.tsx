@@ -71,6 +71,8 @@ export default function VariableGroup({
   open,
   last,
   words,
+  fill = null,
+  needsNote = null,
   onOpen,
   onChange,
   onCancel,
@@ -95,6 +97,10 @@ export default function VariableGroup({
   /** The last save's outcome, when it was this set's. */
   last: Outcome | null;
   words: VariableWords;
+  /** "Add the N it needs": opens the box with a line for each variable the pipeline reads that the set lacks. */
+  fill?: { label: string; onFill: () => void } | null;
+  /** What else the pipeline reads that the box cannot add (a GitHub secret). */
+  needsNote?: string | null;
   onOpen: () => void;
   onChange: (text: string) => void;
   onCancel: () => void;
@@ -121,17 +127,25 @@ export default function VariableGroup({
           {title}
         </h2>
         {canEdit && !open ? (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={onOpen}
-            className={`ml-auto ${linkButtonClass}`}
-          >
-            {variablesButtonLabel(variables)}
-          </button>
+          <span className="ml-auto flex flex-wrap items-center justify-end gap-3">
+            {fill ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={fill.onFill}
+                className={linkButtonClass}
+              >
+                {fill.label}
+              </button>
+            ) : null}
+            <button type="button" disabled={busy} onClick={onOpen} className={linkButtonClass}>
+              {variablesButtonLabel(variables)}
+            </button>
+          </span>
         ) : null}
       </div>
       <p className="text-xs text-gray-500">{hint}</p>
+      {needsNote ? <p className="text-xs text-amber-700 dark:text-amber-400">{needsNote}</p> : null}
       {error ? (
         <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">{error}</p>
       ) : open ? null : listed.length === 0 ? (

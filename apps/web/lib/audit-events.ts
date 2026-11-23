@@ -140,6 +140,8 @@ export type AuditAction =
   | 'code.pipelines.disabled'
   /** A variable set replaced from its text box: which keys were added, changed, removed. */
   | 'code.pipelines.variables.replaced'
+  /** A Bitbucket deployment environment the pipeline names, added from Runs & variables. */
+  | 'code.pipelines.environment.created'
   /** A pipeline run started from a code project's Runs & variables tab under Deployments. */
   | 'code.pipelines.run'
   /** A bitbucket-pipelines.yml committed from the page, from a template or edited. */

@@ -6,6 +6,8 @@ import {
   commitMessageFor,
   committedReminder,
   initialActions,
+  plainMissing,
+  secretsMissingNote,
   secretsNote,
   workflowNameProblem,
   workflowRequest,
@@ -243,5 +245,31 @@ describe('sent here to set a variable (the pipeline builder’s “Set it”)', 
     expect(state.notice).toBe(
       'DEPLOY_TOKEN is a secret: GitHub secrets are set on GitHub, under the production environment’s Secrets and variables settings.'
     );
+  });
+});
+
+describe('filling each set with what the pipeline reads', () => {
+  const pipeline = {
+    needs: [
+      { name: 'REGION', secured: false, environment: null },
+      { name: 'API_URL', secured: false, environment: null },
+      { name: 'DEPLOY_TOKEN', secured: true, environment: null },
+      { name: 'CHAT_TOKEN', secured: true, environment: null },
+    ],
+    environments: [],
+  };
+
+  it('adds the plain variables to the box, and names the secrets to set on GitHub', () => {
+    const s = setup({ pipeline });
+    // REGION is set; DEPLOY_TOKEN is a listed secret.
+    expect(plainMissing(s, {})).toEqual([{ name: 'API_URL', secured: false }]);
+    expect(secretsMissingNote(s, {})).toBe(
+      'The pipeline also reads the secret CHAT_TOKEN: set it on GitHub.'
+    );
+    const state = fold([
+      { type: 'loaded', setup: s },
+      { type: 'missingFilled', scope: {} },
+    ]);
+    expect(state.draft).toEqual({ text: 'REGION=eu\nAPI_URL=', caret: { start: 18, end: 18 } });
   });
 });

@@ -5,7 +5,10 @@
  * variables page with Production's box open on `secret DEPLOY_TOKEN=`,
  * focused, the cursor after the `=`; typing the value and saving sets it
  * through the real route and the stand-in host; back on the builder it is
- * missing only for pull requests.
+ * missing only for pull requests. And on Runs & variables, each set's "Add
+ * the N it needs" fills its box with what the pipeline reads that it
+ * lacks, and an environment the pipeline names that Bitbucket lacks is
+ * added from the page, then filled the same way.
  *
  * Where the rules went: which links a check has —
  * pipeline-builder.model.test.ts; which box opens, the line added or
@@ -18,6 +21,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { isRecord } from '@renkei/guards';
 import { test, expect } from './fixtures';
 import { connectBitbucket, createCodeProject, prepareCodeHost } from './support/code-host';
 
@@ -123,5 +127,116 @@ test('pipeline builder: "Set it" opens the variable’s line ready for its value
     );
   } finally {
     if (blockId) await page.request.delete(`/api/admin/ci-blocks/${blockId}`);
+  }
+});
+
+test('Runs & variables: fill each set with what the pipeline needs, add an environment Bitbucket lacks', async ({
+  page,
+  person: _person,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const blockIds: string[] = [];
+
+  await prepareCodeHost(page.request);
+  await connectBitbucket(page);
+  try {
+    for (const block of [
+      {
+        key: `test-${tag}`,
+        name: `Test ${tag}`,
+        kind: 'test',
+        variables: [
+          { name: 'NPM_TOKEN', secured: true },
+          { name: 'REGION', secured: false },
+        ],
+      },
+      {
+        key: `ship-${tag}`,
+        name: `Ship ${tag}`,
+        kind: 'build',
+        variables: [{ name: 'DEPLOY_TOKEN', secured: true }],
+      },
+    ]) {
+      const made = await page.request.post('/api/admin/ci-blocks', {
+        data: {
+          key: block.key,
+          name: block.name,
+          kind: block.kind,
+          description: null,
+          definition: {
+            kind: block.kind,
+            runsOn: { type: 'hosted', image: 'node:22' },
+            inputs: [],
+            variables: block.variables,
+            consumes: [],
+            produces: [],
+            caches: [],
+            commands: 'npm ci',
+          },
+        },
+      });
+      expect(made.status(), await made.text()).toBe(201);
+      const body: unknown = await made.json();
+      const id = isRecord(body) && typeof body.id === 'string' ? body.id : '';
+      blockIds.push(id);
+      expect((await page.request.post(`/api/admin/ci-blocks/${id}/publish`)).ok()).toBe(true);
+    }
+
+    const projectId = await createCodeProject(page.request, {
+      name: `Fill variables (${tag})`,
+      repository: `acme/fill-variables-${tag}`,
+      branch: 'main',
+    });
+    const ship = { block: `ship-${tag}`, version: 1, inputs: {} };
+    const saved = await page.request.put(`/api/code/projects/${projectId}/pipeline-builder`, {
+      data: {
+        spec: {
+          checks: [{ block: `test-${tag}`, version: 1, inputs: {} }],
+          environments: [
+            { name: 'staging', branch: 'develop', steps: [ship] },
+            { name: 'production', branch: 'main', steps: [ship] },
+          ],
+        },
+      },
+    });
+    expect(saved.ok(), await saved.text()).toBe(true);
+
+    await page.goto(`/deployments/${projectId}/runs`);
+    const main = page.getByRole('main');
+
+    // The repository's set: both lines added, the cursor after the first `=`.
+    const repository = main.getByRole('region', { name: 'Repository variables' });
+    await repository.getByRole('button', { name: 'Add the 2 it needs' }).click({ timeout: 30_000 });
+    const repoBox = repository.getByLabel('Repository variables as text');
+    await expect(repoBox).toHaveValue('secret NPM_TOKEN=\nREGION=');
+    await expect(repoBox).toBeFocused();
+    await page.keyboard.type('npm-secret');
+    await repoBox.press('End');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('End');
+    await page.keyboard.type('eu-west-1');
+    await expect(repoBox).toHaveValue('secret NPM_TOKEN=npm-secret\nREGION=eu-west-1');
+    await repository.getByRole('button', { name: 'Save' }).click();
+    await expect(repository.getByRole('status')).toContainText('added NPM_TOKEN, REGION');
+    await expect(repository.getByRole('button', { name: /^Add the/ })).toHaveCount(0);
+
+    // Staging: Bitbucket has no such environment, so it is added from the page, then filled.
+    const toAdd = main.getByRole('region', { name: 'Environment staging to add' });
+    await toAdd.getByRole('button', { name: 'Add staging on Bitbucket' }).click();
+    await expect(main.getByRole('status').filter({ hasText: 'Added the deployment' })).toHaveText(
+      'Added the deployment environment staging on Bitbucket. Fill in its variables below.'
+    );
+    await expect(toAdd).toHaveCount(0);
+    const staging = main.getByRole('region', { name: 'staging', exact: true });
+    await staging.getByRole('button', { name: 'Add the 1 it needs' }).click();
+    const stagingBox = staging.getByLabel('staging as text');
+    await expect(stagingBox).toHaveValue('secret DEPLOY_TOKEN=');
+    await expect(stagingBox).toBeFocused();
+    expect(
+      await stagingBox.evaluate((el: HTMLTextAreaElement) => [el.selectionStart, el.selectionEnd])
+    ).toEqual([20, 20]);
+  } finally {
+    for (const id of blockIds) await page.request.delete(`/api/admin/ci-blocks/${id}`);
   }
 });

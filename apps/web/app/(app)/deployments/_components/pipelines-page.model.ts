@@ -26,7 +26,17 @@ import {
   type Caret,
 } from '@/lib/code/pipeline-variables-text';
 
+/** What the project's saved pipeline reads (lib/ci/pipeline-builder.ts pipelineVariableNeeds). */
+export interface PipelineNeeds {
+  /** Each variable its steps read, by place: an environment, or null for pull requests. */
+  needs: { name: string; secured: boolean; environment: string | null }[];
+  /** Its environments, in pipeline order. */
+  environments: string[];
+}
+
 export interface Setup extends PipelineSetup {
+  /** Null when the project has no saved pipeline that reads. */
+  pipeline?: PipelineNeeds | null;
   access: {
     /** Why the switch cannot be flipped from here; null when it can. */
     configureNeeds: string | null;
@@ -64,9 +74,85 @@ export function readVariableAsk(query: { get(key: string): string | null }): Var
   return { name, environment, secured: query.get('secret') === '1' };
 }
 
+/**
+ * What one set lacks that the pipeline reads there: for the repository's
+ * set, what the checks read; for an environment's, what its steps read
+ * that neither it nor the repository has. `secrets` are names a host lists
+ * apart from variables (GitHub's), which count as had.
+ */
+export function missingIn(
+  sets: AskedSets & { secrets?: { key: string }[] },
+  pipeline: PipelineNeeds | null | undefined,
+  scope: Scope
+): { name: string; secured: boolean }[] {
+  if (!pipeline) return [];
+  const environment = scope.environmentUuid
+    ? sets.environments.find((e) => e.uuid === scope.environmentUuid)
+    : null;
+  if (scope.environmentUuid && !environment) return [];
+  const had = new Set([
+    ...sets.variables.map((v) => v.key),
+    ...(sets.secrets ?? []).map((v) => v.key),
+    ...(environment ? environment.variables.map((v) => v.key) : []),
+    ...(environment?.secrets ?? []).map((v) => v.key),
+  ]);
+  return pipeline.needs
+    .filter((need) =>
+      environment
+        ? need.environment?.toLowerCase() === environment.name.toLowerCase()
+        : need.environment === null
+    )
+    .filter((need) => !had.has(need.name))
+    .map(({ name, secured }) => ({ name, secured }));
+}
+
+/** The set's fill button: how many lines it adds. */
+export function fillLabel(missing: { name: string }[]): string {
+  return missing.length === 1 ? 'Add the 1 it needs' : `Add the ${missing.length} it needs`;
+}
+
+/**
+ * The set's box opened with a line for each variable it lacks — `NAME=`,
+ * or `secret NAME=` — the cursor after the first new line's `=`.
+ */
+export function filledDraft(
+  scope: Scope,
+  variables: PipelineVariable[],
+  missing: { name: string; secured: boolean }[]
+): Draft {
+  let text = renderVariableText(variables);
+  let caret: Caret | undefined;
+  for (const need of missing) {
+    const ready = withVariableLine(text, need.name, need.secured);
+    text = ready.text;
+    caret ??= ready.caret;
+  }
+  return {
+    ...(scope.environmentUuid ? { environmentUuid: scope.environmentUuid } : {}),
+    text,
+    ...(caret ? { caret } : {}),
+  };
+}
+
+/** The pipeline's environments the host has no deployment environment for, in pipeline order. */
+export function environmentsToAdd(
+  sets: Pick<AskedSets, 'environments'>,
+  pipeline: PipelineNeeds | null | undefined
+): string[] {
+  if (!pipeline) return [];
+  const have = new Set(sets.environments.map((e) => e.name.toLowerCase()));
+  return pipeline.environments.filter((name) => !have.has(name.toLowerCase()));
+}
+
 type AskedSets = {
   variables: PipelineVariable[];
-  environments: { uuid: string; name: string; variables: PipelineVariable[] }[];
+  /** `secrets`: names a host lists apart from variables (GitHub's), counted as had. */
+  environments: {
+    uuid: string;
+    name: string;
+    variables: PipelineVariable[];
+    secrets?: PipelineVariable[];
+  }[];
 };
 
 /**
@@ -163,7 +249,7 @@ export type PipelinesAction =
   | { type: 'loaded'; setup: Setup }
   | { type: 'loadFailed'; error: string }
   /** A change went out: the switch, a variable set, a run, or the file. */
-  | { type: 'sent'; what: 'flip' | 'variables' | 'run' | 'file' }
+  | { type: 'sent'; what: 'flip' | 'variables' | 'run' | 'file' | 'environment' }
   /** A change was refused; every editor stays as it was. */
   | { type: 'failed'; error: string }
   | { type: 'flipped' }
@@ -171,6 +257,10 @@ export type PipelinesAction =
   | { type: 'variablesOpened'; scope: Scope; variables: PipelineVariable[] }
   /** The page was sent to set a variable; `canSet` is whether this person may. */
   | { type: 'variableAsked'; ask: VariableAsk; canSet: boolean }
+  /** "Add the N it needs": the set's box opened with a line for each it lacks. */
+  | { type: 'missingFilled'; scope: Scope }
+  /** A deployment environment the pipeline names was added on Bitbucket. */
+  | { type: 'environmentAdded'; name: string }
   | { type: 'variablesChanged'; text: string }
   | { type: 'variablesCancelled' }
   | { type: 'variablesSaved'; outcome: Outcome | null }
@@ -222,6 +312,21 @@ export function pipelinesReducer(state: PipelinesState, action: PipelinesAction)
         ? { ...state, draft: opened.draft, notice: null }
         : { ...state, notice: opened.notice };
     }
+    case 'missingFilled': {
+      if (!state.setup) return state;
+      const variables = action.scope.environmentUuid
+        ? state.setup.environments.find((e) => e.uuid === action.scope.environmentUuid)?.variables
+        : state.setup.variables;
+      const missing = missingIn(state.setup, state.setup.pipeline, action.scope);
+      if (!variables || missing.length === 0) return state;
+      return { ...state, draft: filledDraft(action.scope, variables, missing), notice: null };
+    }
+    case 'environmentAdded':
+      return {
+        ...state,
+        busy: false,
+        notice: `Added the deployment environment ${action.name} on Bitbucket. Fill in its variables below.`,
+      };
     case 'variablesChanged':
       return state.draft
         ? { ...state, draft: { ...state.draft, text: action.text, caret: undefined } }

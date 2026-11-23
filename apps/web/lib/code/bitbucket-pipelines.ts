@@ -275,6 +275,33 @@ export async function readEnvironments(
   return { environments, error: null };
 }
 
+/** Bitbucket's category for a new environment, from its name: production, staging, or test. */
+export function environmentTypeFor(name: string): 'Production' | 'Staging' | 'Test' {
+  const lower = name.toLowerCase();
+  if (/^(prod|production|live)$/.test(lower)) return 'Production';
+  if (/^(stag|stage|staging|preprod|uat)$/.test(lower)) return 'Staging';
+  return 'Test';
+}
+
+/** Add a deployment environment the pipeline names, so its deploys and variables have a home. */
+export async function createDeploymentEnvironment(
+  auth: BitbucketAuth,
+  fullName: string,
+  name: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const base = repoBase(fullName);
+  if (!base) return { ok: false, error: 'The repository name is not usable.' };
+  const created = await bbJson(auth, [PIPELINES_VARIABLE_SCOPE], `${base}/environments`, {
+    method: 'POST',
+    json: {
+      type: 'deployment_environment',
+      name,
+      environment_type: { type: 'deployment_environment_type', name: environmentTypeFor(name) },
+    },
+  });
+  return created.ok ? { ok: true } : created;
+}
+
 /**
  * The whole setup, in one read. The switch is read only when asked:
  * its endpoint stands on repository:admin, and a connection narrowed

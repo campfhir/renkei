@@ -4,6 +4,7 @@ import {
   readPipelineSpec,
   renderPipeline,
   suggestPipeline,
+  variableNeeds,
   type BlockDefinition,
   type CheckTarget,
   type HostFacts,
@@ -326,6 +327,38 @@ describe('before it runs', () => {
       'warn',
       '.github/workflows/pipeline.yml on main was not written here; the pull request replaces it, and its diff shows what changes.',
       null,
+    ]);
+  });
+});
+
+describe('the variables a pipeline reads', () => {
+  it('names each once per place it is read, a secret where any block reads it as one', () => {
+    const reading: PipelineSpec = {
+      ...spec,
+      blocks: [
+        {
+          key: 'notify',
+          name: 'Notify',
+          version: 1,
+          definition: {
+            ...systemd,
+            kind: 'test',
+            runsOn: { type: 'hosted', image: 'alpine' },
+            variables: [
+              { name: 'DEPLOY_NOTIFY_URL', secured: true },
+              { name: 'CHAT_TOKEN', secured: true },
+            ],
+            commands: 'curl $DEPLOY_NOTIFY_URL',
+          },
+        },
+      ],
+      checks: [build, { block: 'notify', version: 1, inputs: {} }],
+    };
+    expect(variableNeeds(reading, at)).toEqual([
+      { name: 'DEPLOY_NOTIFY_URL', secured: true, environment: null },
+      { name: 'CHAT_TOKEN', secured: true, environment: null },
+      { name: 'DEPLOY_NOTIFY_URL', secured: false, environment: 'dev' },
+      { name: 'DEPLOY_NOTIFY_URL', secured: false, environment: 'production' },
     ]);
   });
 });

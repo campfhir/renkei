@@ -43,6 +43,8 @@ import VariableGroup, {
 } from './pipeline-parts';
 import {
   actionsReducer,
+  plainMissing,
+  secretsMissingNote,
   branchLabel as labelOfBranch,
   canCommitWorkflow,
   canConfigure,
@@ -56,7 +58,7 @@ import {
   type ActionsAction,
   type ActionsPageSetup,
 } from './actions-page.model';
-import type { VariableAsk } from './pipelines-page.model';
+import { fillLabel, type VariableAsk } from './pipelines-page.model';
 import {
   draftFor,
   outcomeFor,
@@ -213,6 +215,14 @@ export default function ActionsPage({
   const secretsUrl = actionsSecretsUrl(repoFullName);
   const branchLabel = labelOfBranch(branch);
   const canSet = canConfigure(state, canEdit);
+
+  /** A set's "Add the N it needs", when the pipeline reads plain variables it lacks. */
+  const fillFor = (scope: { environmentUuid?: string }) => {
+    const missing = setup ? plainMissing(setup, scope) : [];
+    return missing.length > 0
+      ? { label: fillLabel(missing), onFill: () => dispatch({ type: 'missingFilled', scope }) }
+      : null;
+  };
 
   // Sent here to set a variable: once the sets are read, open its box on its line.
   const asked = useRef(false);
@@ -497,6 +507,8 @@ export default function ActionsPage({
                 open={draftFor(state, {})}
                 last={outcomeFor(state, {})}
                 words={GITHUB_WORDS}
+                fill={fillFor({})}
+                needsNote={canSet ? secretsMissingNote(setup, {}) : null}
                 onOpen={() =>
                   dispatch({ type: 'variablesOpened', scope: {}, variables: setup.variables })
                 }
@@ -519,6 +531,10 @@ export default function ActionsPage({
                   open={draftFor(state, { environmentUuid: environment.uuid })}
                   last={outcomeFor(state, { environmentUuid: environment.uuid })}
                   words={GITHUB_WORDS}
+                  fill={fillFor({ environmentUuid: environment.uuid })}
+                  needsNote={
+                    canSet ? secretsMissingNote(setup, { environmentUuid: environment.uuid }) : null
+                  }
                   onOpen={() =>
                     dispatch({
                       type: 'variablesOpened',

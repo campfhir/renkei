@@ -1931,6 +1931,28 @@ function handleBitbucket(request, url, response) {
   const environments = /^\/repositories\/([^/]+)\/([^/]+)\/environments$/.exec(path);
   if (environments) {
     const state = pipelinesOf(`${environments[1]}/${environments[2]}`);
+    if (request.method === 'POST') {
+      // An environment added from the page, as Bitbucket's environments POST does.
+      void readBody(request).then((body) => {
+        const name = typeof body.name === 'string' ? body.name : '';
+        if (!name) return error(response, 400, 'bad_request', 'name');
+        if (state.environments.some((e) => e.name.toLowerCase() === name.toLowerCase())) {
+          return error(response, 409, 'conflict', `${name} exists`);
+        }
+        const environment = {
+          uuid: `{e1e1e1e1-0000-4000-8000-${String(state.environments.length + 1).padStart(12, '0')}}`,
+          name,
+          environment_type: { name: body.environment_type?.name ?? 'Test' },
+          rank: state.environments.length,
+          variables: [],
+        };
+        state.environments.push(environment);
+        const rest = { ...environment };
+        delete rest.variables;
+        json(response, 201, rest);
+      });
+      return;
+    }
     return json(response, 200, {
       values: state.environments.map((environment) => {
         const rest = { ...environment };

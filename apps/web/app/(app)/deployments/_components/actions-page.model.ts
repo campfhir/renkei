@@ -18,6 +18,9 @@ import { renderVariableText } from '@/lib/code/pipeline-variables-text';
 import { workflowFileName } from '@/lib/code/workflow-file-name';
 import {
   askedDraft,
+  filledDraft,
+  missingIn,
+  type PipelineNeeds,
   type Committed,
   type Draft,
   type Outcome,
@@ -26,6 +29,8 @@ import {
 } from './pipelines-page.model';
 
 export interface ActionsPageSetup extends ActionsSetup {
+  /** Null when the project has no saved pipeline that reads. */
+  pipeline?: PipelineNeeds | null;
   access: {
     /** Why the switch and the variables cannot be changed from here; null when they can. */
     configureNeeds: string | null;
@@ -75,6 +80,8 @@ export type ActionsAction =
   | { type: 'variablesOpened'; scope: Scope; variables: PipelineVariable[] }
   /** The page was sent to set a variable; `canSet` is whether this person may. */
   | { type: 'variableAsked'; ask: VariableAsk; canSet: boolean }
+  /** "Add the N it needs": the set's box opened with a line for each plain variable it lacks. */
+  | { type: 'missingFilled'; scope: Scope }
   | { type: 'variablesChanged'; text: string }
   | { type: 'variablesCancelled' }
   | { type: 'variablesSaved'; outcome: Outcome | null }
@@ -129,6 +136,15 @@ export function actionsReducer(state: ActionsState, action: ActionsAction): Acti
       return 'draft' in opened
         ? { ...state, draft: opened.draft, notice: null }
         : { ...state, notice: opened.notice };
+    }
+    case 'missingFilled': {
+      if (!state.setup) return state;
+      const variables = action.scope.environmentUuid
+        ? state.setup.environments.find((e) => e.uuid === action.scope.environmentUuid)?.variables
+        : state.setup.variables;
+      const missing = plainMissing(state.setup, action.scope);
+      if (!variables || missing.length === 0) return state;
+      return { ...state, draft: filledDraft(action.scope, variables, missing), notice: null };
     }
     case 'variablesChanged':
       return state.draft
@@ -254,4 +270,21 @@ export function secretsNote(count: number): string {
 /** The project's branch as sentences name it. */
 export function branchLabel(branch: string): string {
   return branch || 'the default branch';
+}
+
+// ── What the pipeline reads ──
+
+/** The plain variables a set lacks that the pipeline reads there: what its box can add. */
+export function plainMissing(
+  setup: ActionsPageSetup,
+  scope: Scope
+): { name: string; secured: boolean }[] {
+  return missingIn(setup, setup.pipeline, scope).filter((need) => !need.secured);
+}
+
+/** The secrets a set lacks: set on GitHub, so named under the set rather than added to its box. */
+export function secretsMissingNote(setup: ActionsPageSetup, scope: Scope): string | null {
+  const secrets = missingIn(setup, setup.pipeline, scope).filter((need) => need.secured);
+  if (secrets.length === 0) return null;
+  return `The pipeline also reads ${secrets.length === 1 ? 'the secret' : 'the secrets'} ${secrets.map((s) => s.name).join(', ')}: set ${secrets.length === 1 ? 'it' : 'them'} on GitHub.`;
 }

@@ -27,6 +27,7 @@ import {
 } from '@/lib/code/github-actions';
 import { missingScope, pipelinesProjectContext } from '@/lib/code/pipelines-access';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { pipelineVariableNeeds } from '@/lib/ci/pipeline-builder';
 import { logger } from '@/lib/logger';
 import { whoIs } from '@/lib/log-actor';
 
@@ -80,7 +81,12 @@ export async function GET(
   const access = { configureNeeds };
   if (summary)
     return NextResponse.json({ ...summarizeActions(setup, configureNeeds === null), access });
-  return NextResponse.json({ ...setup, access });
+  // What the saved pipeline reads, so each set can be filled with what it lacks.
+  return NextResponse.json({
+    ...setup,
+    access,
+    pipeline: await pipelineVariableNeeds(projectId),
+  });
 }
 
 export async function PUT(

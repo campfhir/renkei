@@ -46,6 +46,23 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-23',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Fill in the variables a pipeline needs',
+        detail:
+          'On Runs & variables, each variable set offers “Add the N it needs”: it opens the set with a NAME= line (secret NAME= for a secret) for every variable the pipeline reads that the set lacks, the cursor on the first one. A deployment environment the pipeline uses that Bitbucket does not have yet can be added from the same page. On GitHub, missing secrets are named so you can set them there.',
+      },
+      {
+        kind: 'added',
+        title: 'Every branch under Deployments, with a run button',
+        detail:
+          'Each app under Deployments now lists the repository’s branches, feature branches included, with the environment each deploys and its latest pipeline run. Editors can run the checks on any branch, or redeploy an environment from its own branch after confirming. Pipelines written before this need updating once from the Pipeline tab so they can be started by hand.',
+      },
+    ],
+  },
+  {
     date: '2026-11-20',
     entries: [
       {

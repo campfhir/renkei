@@ -63,6 +63,9 @@ import {
   outcomeOf,
   pipelinesReducer,
   pipelinesUrl as urlOfPipelines,
+  environmentsToAdd,
+  fillLabel,
+  missingIn,
   removalQuestion,
   runRequest,
   textRows,
@@ -121,7 +124,7 @@ export default function PipelinesPage({
 
   /** Send a change; on success read the setup again before saying it is done. */
   const act = async (
-    what: 'flip' | 'variables' | 'run' | 'file',
+    what: 'flip' | 'variables' | 'run' | 'file' | 'environment',
     work: () => Promise<{ error: string | null }>,
     done: () => PipelinesAction
   ) => {
@@ -219,6 +222,22 @@ export default function PipelinesPage({
   const pipelinesUrl = urlOfPipelines(repoFullName);
   const branchLabel = labelOfBranch(branch);
   const canSetVariables = mayVariables(state, canEdit);
+
+  /** A set's "Add the N it needs", when the pipeline reads variables it lacks. */
+  const fillFor = (scope: { environmentUuid?: string }) => {
+    const missing = setup ? missingIn(setup, setup.pipeline, scope) : [];
+    return missing.length > 0
+      ? { label: fillLabel(missing), onFill: () => dispatch({ type: 'missingFilled', scope }) }
+      : null;
+  };
+
+  /** Add a deployment environment the pipeline names; the page reads the setup again after. */
+  const addEnvironment = (name: string) =>
+    void act(
+      'environment',
+      async () => sendJsonFull(`${url}/environments`, 'POST', { name }),
+      () => ({ type: 'environmentAdded', name })
+    );
 
   // Sent here to set a variable: once the sets are read, open its box on its line.
   const asked = useRef(false);
@@ -468,6 +487,7 @@ export default function PipelinesPage({
                 open={draftFor(state, {})}
                 last={outcomeFor(state, {})}
                 words={BITBUCKET_WORDS}
+                fill={fillFor({})}
                 onOpen={() =>
                   dispatch({ type: 'variablesOpened', scope: {}, variables: setup.variables })
                 }
@@ -489,6 +509,7 @@ export default function PipelinesPage({
                   open={draftFor(state, { environmentUuid: environment.uuid })}
                   last={outcomeFor(state, { environmentUuid: environment.uuid })}
                   words={BITBUCKET_WORDS}
+                  fill={fillFor({ environmentUuid: environment.uuid })}
                   onOpen={() =>
                     dispatch({
                       type: 'variablesOpened',
@@ -501,6 +522,28 @@ export default function PipelinesPage({
                   onSave={() => void saveVariables(environment.variables)}
                 />
               ))}
+              {canSetVariables
+                ? environmentsToAdd(setup, setup.pipeline).map((name) => (
+                    <section
+                      key={`add-${name}`}
+                      aria-label={`Environment ${name} to add`}
+                      className="rounded-lg border border-dashed border-gray-300 p-3 text-sm dark:border-gray-700"
+                    >
+                      <p>
+                        The pipeline deploys <span className="font-medium">{name}</span>, which
+                        Bitbucket has no deployment environment for yet.{' '}
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void addEnvironment(name)}
+                          className="font-medium text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400"
+                        >
+                          Add {name} on Bitbucket
+                        </button>
+                      </p>
+                    </section>
+                  ))
+                : null}
               {setup.environmentsError ? (
                 <p className="text-xs text-amber-700 dark:text-amber-400">
                   Deployment environments could not be read: {setup.environmentsError}

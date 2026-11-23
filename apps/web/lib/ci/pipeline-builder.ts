@@ -25,6 +25,8 @@ import {
   readPipelineSpec,
   renderPipeline,
   suggestPipeline,
+  variableNeeds,
+  type VariableNeed,
   type CheckTarget,
   type Host,
   type HostFacts,
@@ -134,6 +136,30 @@ export async function builderBlocks(spec: PipelineSpec | null): Promise<BuilderB
     }
   }
   return out;
+}
+
+/** What a project's saved pipeline asks of the host's variable sets, for the Runs & variables page. */
+export interface PipelineVariableNeeds {
+  /** Each variable its steps read, by place (null: pull requests, the repository's set). */
+  needs: VariableNeed[];
+  /** Its environments' names, in pipeline order. */
+  environments: string[];
+}
+
+/** The saved pipeline's needs; null when the project has none that reads. */
+export async function pipelineVariableNeeds(
+  projectId: string
+): Promise<PipelineVariableNeeds | null> {
+  const saved = await getDataStore().ciPipelines.get(projectId);
+  const spec = saved ? readPipelineSpec(saved.spec) : null;
+  if (!spec?.ok) return null;
+  const blocks = await builderBlocks(spec.value);
+  const organization = (key: string, version: number) =>
+    blocks.find((b) => b.key === key && b.version === version) ?? null;
+  return {
+    needs: variableNeeds(spec.value, organization),
+    environments: spec.value.environments.map((e) => e.name),
+  };
 }
 
 /** Targets with the runners the service accounts read; without them when those cannot be read. */
