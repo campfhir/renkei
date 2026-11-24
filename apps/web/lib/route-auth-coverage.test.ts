@@ -74,6 +74,10 @@ const NON_SESSION_AUTH: Record<string, string> = {
     'the x-renkei-seed-token header matches RENKEI_MEMORY_SEED_TOKEN; it is the memory UI ' +
     "suite's sign-in, and on Postgres it never answers",
   'api/upload/[slotId]/route.ts': 'opaque per-slot bearer, single-use claim, expiring',
+  'api/health/check-in/route.ts':
+    'an application’s health check-in: the bearer token issued for one environment of one code ' +
+    'project (lib/ci/health.ts), kept only as a SHA-256 hash; all it can do is record that ' +
+    'environment’s status',
   'api/deployments/report/route.ts':
     "a pipeline step's OpenID Connect token, verified against GitHub Actions' or Bitbucket " +
     "Pipelines' published keys (lib/ci/oidc.ts); it names the repository, and only a project " +

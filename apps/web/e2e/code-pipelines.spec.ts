@@ -133,7 +133,9 @@ test.describe('Code project pipelines', () => {
     // ── Its Environments page, production's branch, the Runs tab: that
     //    branch's runs and the setup ──
     await link.click();
-    await expect(page).toHaveURL(new RegExp(`/code/${ids.projectId}/environments`));
+    await expect(page).toHaveURL(new RegExp(`/code/${ids.projectId}/environments`), {
+      timeout: 30_000,
+    });
     await main.getByRole('tab', { name: 'Runs' }).click();
     await expect(page).toHaveURL(/env=production&branch=main&tab=runs$/);
     await expect(main.getByRole('link', { name: 'Open on Bitbucket' })).toHaveAttribute(
@@ -280,6 +282,8 @@ test.describe('Code project pipelines', () => {
   test('a code chat’s overflow menu opens the project’s environments in a new tab', async ({
     page,
   }) => {
+    // A dev server compiles each route the first time it is asked for one.
+    test.setTimeout(180_000);
     const chatId = await createChat(page.request, { projectId: ids.projectId, title: 'Draft CI' });
     await page.goto(`/chat/${chatId}`);
     const main = page.getByRole('main');

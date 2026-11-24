@@ -236,7 +236,14 @@ describe('the Environments page', () => {
       project: { name: 'sync-worker', repo: 'acme/sync-worker' },
       canEdit: true,
       environments: [
-        { name: 'production', production: true, branches: [], latest: null, running: null },
+        {
+          name: 'production',
+          production: true,
+          branches: [],
+          latest: null,
+          running: null,
+          health: null,
+        },
       ],
       remoteBranches: ['main', 'develop'],
       branchesError: null,
@@ -292,6 +299,46 @@ describe('the Environments page', () => {
         ],
       ],
     ]);
+  });
+
+  it('gives each environment its health check-ins, by name whatever its case; none when no token was issued', async () => {
+    await stored(usual);
+    remoteHas('main', 'develop');
+    const health = getDataStore().ciHealth;
+    await health.issueToken(project.id, 'Production', {
+      hash: 'a'.repeat(64),
+      hint: 'x9k2',
+      issuedBy: caller.subject,
+      at: at(0),
+    });
+    await health.checkIn('a'.repeat(64), {
+      status: 'healthy',
+      message: 'queue depth 3',
+      version: '1.4.2',
+      sentAt: at(5),
+      receivedAt: at(6),
+      intervalSeconds: 300,
+    });
+    const page = await environmentsPage('github', caller, project, true);
+    expect(page.environments.map((e) => [e.name, e.health])).toEqual([
+      [
+        'production',
+        {
+          tokenHint: 'x9k2',
+          issuedAt: at(0).toISOString(),
+          status: 'healthy',
+          message: 'queue depth 3',
+          version: '1.4.2',
+          sentAt: at(5).toISOString(),
+          receivedAt: at(6).toISOString(),
+          intervalSeconds: 300,
+          checkins: 1,
+        },
+      ],
+      ['dev', null],
+    ]);
+    // The token's hash is not the page's to have.
+    expect(JSON.stringify(page)).not.toContain('a'.repeat(64));
   });
 
   it('says why the branches could not be listed, and does not guess which are gone', async () => {
