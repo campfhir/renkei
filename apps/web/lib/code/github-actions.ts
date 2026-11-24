@@ -383,10 +383,12 @@ export async function applyActionsVariables(
       ? await ghJson(auth, [ACTIONS_CONFIG_SCOPE], `${base}/${encodeURIComponent(entry.key)}`, {
           method: 'PATCH',
           json: { name: entry.key, value: entry.value },
+          withholdBody: true,
         })
       : await ghJson(auth, [ACTIONS_CONFIG_SCOPE], base, {
           method: 'POST',
           json: { name: entry.key, value: entry.value },
+          withholdBody: true,
         });
     if (!result.ok) applied.errors.push(`${entry.key}: ${result.error}`);
     else (before ? applied.changed : applied.added).push(entry.key);

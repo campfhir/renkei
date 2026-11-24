@@ -142,7 +142,7 @@ export type AuditAction =
   | 'code.pipelines.variables.replaced'
   /** Pipeline variables or secrets saved from a project's Environments page; names only, never a value. */
   | 'code.variables.saved'
-  /** A pipeline run started from a code project's Runs & variables tab under Deployments. */
+  /** A pipeline run started from a branch's Runs tab on a code project's Environments page. */
   | 'code.pipelines.run'
   /** A bitbucket-pipelines.yml committed from the page, from a template or edited. */
   | 'code.pipelines.file.committed'

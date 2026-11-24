@@ -12,7 +12,7 @@
  * back by name with its value omitted, as the Variables tab of the project’s Environments page shows it,
  * and a chat can neither replace nor remove one, nor write a value for a
  * name that reads as a secret (pipeline-variable-plan.ts decides all of
- * that). The person adds those on the Runs & variables tab. A write only adds,
+ * that). The person adds those on that Variables tab. A write only adds,
  * changes and removes the names it gives — it never prunes a set the way
  * the page's Save does — and the audit log records the keys, never a
  * value.

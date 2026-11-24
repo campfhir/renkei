@@ -438,7 +438,12 @@ export async function createPipelineVariable(
     auth,
     [PIPELINES_VARIABLE_SCOPE],
     variablesPath(base, input.environmentUuid),
-    { method: 'POST', json: { key: input.key, value: input.value, secured: input.secured } }
+    {
+      method: 'POST',
+      json: { key: input.key, value: input.value, secured: input.secured },
+      // A variable's value, perhaps a secret's: never in a log line.
+      withholdBody: true,
+    }
   );
   if (!created.ok) return created;
   const variable = variableOf(created.body);
@@ -474,6 +479,7 @@ export async function updatePipelineVariable(
         secured: input.secured,
         ...(keepValue ? {} : { value: input.value }),
       },
+      withholdBody: true,
     }
   );
   if (!updated.ok) return updated;

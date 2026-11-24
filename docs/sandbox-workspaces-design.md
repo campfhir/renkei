@@ -20,8 +20,9 @@ repository on it, kept apart from ordinary chats:
   starts the clone; the project page follows it until it reads _Ready_.
 - **The project page** shows the repository and its checkout (clone
   again, change repository), the environment as names (replace by
-  pasting a `.env` again, remove one), a card opening the project's app
-  under Deployments (its pipeline, runs and variables; below), and everything
+  pasting a `.env` again, remove one), a link to the project's
+  Environments page (its pipelines, runs and variables, by branch; below),
+  and everything
   a chat project's page has: instructions, files, memory, toolset, the
   chats inside it, sharing. Values are never shown again, to anyone.
 - **New chat** starts a chat in the project. Its chats are listed on the
@@ -292,67 +293,75 @@ a transcript. So, as with browser secrets, values go around the model:
 What a command does with a value it was given — sends it to the service
 it is for — is, of course, the point.
 
-## Pipelines: a page of their own, never a chat tool
+## Pipelines: by branch, on a page of their own, never a chat tool
 
-A code project's pipeline lives under **Deployments**, as its app
-(`/deployments/[projectId]`): what it deployed where, its pipeline built
-from blocks (`pipeline/`), and its host's **runs and variables**
-(`runs/`) — which for a Bitbucket project is the page described here
-(`apps/web/app/(app)/deployments/_components/pipelines-page.tsx`, over
-`/api/code/projects/[projectId]/pipelines` and
-`apps/web/lib/code/bitbucket-pipelines.ts`): the recent runs (state,
-ref, who, when, how long — each opening on Bitbucket, where the steps
-and logs are), a way to start one (a branch or tag, optionally a named
-custom pipeline; `runs/route.ts`, on `pipeline:write` exactly as the
-chat's `bitbucket_trigger_pipeline` is), whether Bitbucket runs pipelines for the repository at
-all, whether a `bitbucket-pipelines.yml` is on the project's branch —
-and when there is none, a link to the Pipeline tab, which builds one
-from the organization's building blocks and opens a pull request, or an
-editor to write one by hand (the pipeline templates that once seeded it
-were dropped in migration 187), which commits it to the branch with the person's
-own grant over `config-file/route.ts`, on `repository:write` as a code
-project's pushes are; the file there is edited the same way — and
-the variables the runs get — the repository's own and each deployment
-environment's, each set edited as one text box (`KEY=value` a line as a
-`.env` reads, `KEY: value` taken too, `secret ` in front of a secured
-one; `parseVariableText`/`renderVariableText`) and applied as the
-difference against what Bitbucket has (`applyVariableText`, over
-`variables/route.ts`): creates, replacements and deletions each on their
-own call, so a refusal names its key and the rest still lands. A secured
-variable renders as `secret KEY=` and keeps its value while that line
-stays; a line taken out removes the variable, after the page names what
-is about to go. The project page carries only a link to it, so it stays
-about the repository, and the tab has the room for a runs table beside
-the setup. It exists to
-make CI/CD the path of least resistance: the page says what is missing
-and what to do about it (turn it on here; start the file from a template
-here, or ask a chat to write one fitted to the code), and the variables
-are set where the person already is. The page is
-framed provider-neutrally — runs, setup, variables — so a GitHub Actions
-variant can fill the same frame from its own reader; today the page and
-the card render for Bitbucket projects only.
+A pipeline file lives on a branch, in version control. So a code
+project's pipelines hang from its branches, on its **Environments** page
+(`/code/[projectId]/environments`,
+`apps/web/app/(app)/code/_components/environments-page.tsx`):
+
+- **Environments.** The project names the environments it deploys to —
+  production, and whatever else it calls them — and assigns each the
+  branches of the repository that deploy it. Exactly one is the
+  production environment and it holds one branch (assigning another
+  replaces it); any other holds as many as it likes; a branch sits in one
+  environment; only branches the remote has can be assigned.
+  `apps/web/lib/ci/environment-rules.ts` holds these rules for the page's
+  model and the route that saves the list alike (`ci_environments`,
+  migration 191).
+- **A branch's Pipeline.** Picking an environment and one of its branches
+  shows that branch's pipeline: built from the organization's building
+  blocks, by hand or with the assistant, as the pull-request checks and
+  the steps that deploy the environment the branch is assigned to. One
+  pipeline per project and branch (`ci_pipelines`); its pull request goes
+  against that branch, and the assistant reads the repository at it.
+- **A branch's Runs.** The host's recent runs of that branch (state, who,
+  when, how long — each opening on the host, where the steps and logs
+  are), whether the host runs pipelines for the repository at all, and
+  the pipeline file (Bitbucket) or workflow files (GitHub) on the branch,
+  with an editor that commits to it with the person's own grant.
+- **Variables.** The repository's variables, which every run gets, and
+  the picked environment's — the host's deployment environment of the
+  same name, made on the host when a variable is first saved for it. A
+  set is rows: a name, a value, and a lock that saves it as a secret (a
+  Bitbucket secured variable; a GitHub secret, sealed to the repository's
+  key in `apps/web/lib/code/sealed-box.ts`). Rows are typed in, or read
+  from a `.env` file picked or pasted on the page, which is parsed in the
+  browser; nothing is sent until Save, which goes to
+  `/api/code/projects/[projectId]/variables` and from there to the host
+  (`apps/web/lib/code/host-variables.ts`). A secret's value never comes
+  back: its row shows the name, and a typed value replaces it.
+- **What runs there.** Each deploy step of a pipeline built from blocks
+  reports to Renkei, signed by the host; the environment shows the commit
+  that runs and its history.
+
+The project page carries only a link to it, so it stays about the
+repository. The page exists to make CI/CD the path of least resistance:
+it says what is missing and what to do about it, and the variables are
+set where the person already is.
 
 The split follows the `.env`'s rule. The **YAML is a file**: a chat can
 write and commit it with the code tools, and a chat can run, watch and
-stop pipelines through the `bitbucket_*` tools. The **switch and the
-variables are not tools**, and are never to be: a pipeline variable is
-where a deploy key or a registry token lives, and a value the model can
-set is a value in a transcript. They are read and written on the page
-with the person's own Bitbucket grant, a value travels to Bitbucket once
-and is never echoed, and Bitbucket keeps a secured variable's value to
-itself (its API never returns one, and neither does this route). The
-audit log records the key and where it lives, never the value.
+stop pipelines through the host's tools. The **switch and the secrets
+are not tools**, and are never to be: a pipeline variable is where a
+deploy key or a registry token lives, and a value the model can set is a
+value in a transcript. A chat reads and sets the plain variables only
+(`lib/code/pipeline-tools.ts`); secrets are written on the page with the
+person's own grant, a value travels to the host once and is never
+echoed, and the host keeps it to itself. No model takes part in a save.
+The audit log records the names and where they live, never a value.
 
 Two Bitbucket scopes sit under it beyond a code project's own three
 (`apps/web/lib/atlassian-scopes.ts`): the switch stands on
 `repository:admin` (the admin bundle, off by default), the variables on
 `pipeline:variable` — a checkbox of its own, "Set pipeline variables",
 that no `bitbucket_*` tool maps to (`mcp-tools/bitbucket/scopes.ts`), so
-granting it registers nothing for the model. A connection narrowed away
-from either is told so in the Connectors page's words before Bitbucket
-is asked. Not on the page, on purpose: workspace-wide variables (a
-workspace's secrets are not one project's to edit), SSH keys, schedules
-and caches — the Bitbucket UI, linked from the section, keeps those.
+granting it registers nothing for the model. On GitHub both stand on the
+Configure Actions capability. A connection narrowed away from one is
+told so in the Connectors page's words before the host is asked. Not on
+the page, on purpose: workspace-wide variables (a workspace's secrets
+are not one project's to edit), SSH keys, schedules and caches — the
+host's own UI, linked from the Runs tab, keeps those.
 
 ## Git credentials
 

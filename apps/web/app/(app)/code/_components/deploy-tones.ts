@@ -1,4 +1,4 @@
-/** The colours a deployment's tone takes on both Deployments pages. */
+/** The colours a deployment’s tone takes on a code project’s Environments page. */
 export const DOT = {
   good: 'bg-green-600',
   running: 'bg-blue-600',

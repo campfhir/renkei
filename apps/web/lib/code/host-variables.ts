@@ -38,6 +38,7 @@ import {
 } from './bitbucket-pipelines';
 import {
   ACTIONS_CONFIG_SCOPE,
+  ACTIONS_READ_SCOPE,
   actionsSetPath,
   listActionsSecretNames,
   listActionsVariables,
@@ -308,7 +309,8 @@ async function githubEnvironmentExists(
   target: Repo,
   name: string
 ): Promise<{ ok: true; exists: boolean } | { ok: false; error: string }> {
-  const response = await auth.fetch([ACTIONS_CONFIG_SCOPE], environmentPath(target, name));
+  // Whether it is there is read as the runs are; changing it is what stands on Configure Actions.
+  const response = await auth.fetch([ACTIONS_READ_SCOPE], environmentPath(target, name));
   if (response.ok) return { ok: true, exists: true };
   if (response.status === 404) return { ok: true, exists: false };
   return { ok: false, error: await describeGitHubFailure(response) };
@@ -454,7 +456,7 @@ export async function applyGithubVariables(
       const put = await auth.fetch(
         [ACTIONS_CONFIG_SCOPE],
         `${secretsBase}/${encodeURIComponent(change.key)}`,
-        { method: 'PUT', json: { encrypted_value: sealed, key_id: key.keyId } }
+        { method: 'PUT', json: { encrypted_value: sealed, key_id: key.keyId }, withholdBody: true }
       );
       if (!put.ok) {
         applied.errors.push(`${change.key}: ${await describeGitHubFailure(put)}`);
@@ -485,11 +487,13 @@ export async function applyGithubVariables(
           {
             method: 'PATCH',
             json: { name: change.key, value: change.value },
+            withholdBody: true,
           }
         )
       : await ghJson(auth, [ACTIONS_CONFIG_SCOPE], variablesBase, {
           method: 'POST',
           json: { name: change.key, value: change.value },
+          withholdBody: true,
         });
     if (!written.ok) {
       applied.errors.push(`${change.key}: ${written.error}`);

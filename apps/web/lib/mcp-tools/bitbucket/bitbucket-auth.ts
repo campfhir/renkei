@@ -21,14 +21,20 @@ export interface BitbucketAuth {
   fetch(
     requiredScopes: readonly string[],
     pathAndQuery: string,
-    init?: { method?: string; json?: unknown; form?: URLSearchParams; accept?: string }
+    init?: {
+      method?: string;
+      json?: unknown;
+      form?: URLSearchParams;
+      accept?: string;
+      /** The body carries a variable's value: a failure is logged without it. */
+      withholdBody?: boolean;
+    }
   ): Promise<Response>;
 }
 
 /** Production's only implementation: the caller's own Bitbucket grant. */
 export function oauthBitbucketAuth(context: MCPToolContext): BitbucketAuth {
-  const granted =
-    context.bitbucketScopes === undefined ? null : new Set(context.bitbucketScopes);
+  const granted = context.bitbucketScopes === undefined ? null : new Set(context.bitbucketScopes);
   return {
     kind: 'oauth',
     async fetch(requiredScopes, pathAndQuery, init) {

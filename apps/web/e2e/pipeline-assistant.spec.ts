@@ -178,10 +178,17 @@ test('pipeline assistant: tailor a block to the source, apply it, make it reusab
     const { jobId } = await answer.json();
     expect(typeof jobId).toBe('string');
     // The pipeline on screen went with the question.
-    expect(answer.request().postDataJSON().spec).toEqual({ checks: [check], environments: [] });
+    // The pipeline on screen is this branch's: its checks and the one environment it deploys.
+    expect(answer.request().postDataJSON().spec).toEqual({
+      checks: [check],
+      environments: [{ name: 'production', branch: 'main', steps: [] }],
+    });
 
+    // The answer is worked out in the background and followed: a dev server compiles
+    // the job's route the first time it is asked for.
     await expect(panel).toContainText(
-      'The README builds with pnpm, so I wrote a build block for it.'
+      'The README builds with pnpm, so I wrote a build block for it.',
+      { timeout: 30_000 }
     );
     await panel.getByText('Read 2 paths').click();
     await expect(panel).toContainText('README.md');
