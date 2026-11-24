@@ -25,6 +25,7 @@ import { LoadingLine } from '@/components/skeleton';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import ActionsPage from './actions-page';
 import { DOT, PILL, card } from './deploy-tones';
+import HealthCheckins from './health-checkins';
 import {
   TABS,
   assignChoices,
@@ -363,6 +364,16 @@ export default function EnvironmentsPage({
                     ) : null}
                   </p>
                 ) : null}
+
+                <HealthCheckins
+                  key={`health-${environment.name}`}
+                  projectId={projectId}
+                  environment={environment.name}
+                  health={environment.health ?? null}
+                  canEdit={editable}
+                  now={now}
+                  onChanged={() => void load()}
+                />
 
                 <h3 className="mt-4 text-xs font-semibold tracking-wide text-gray-500 uppercase">
                   Branches

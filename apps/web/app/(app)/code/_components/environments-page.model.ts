@@ -12,6 +12,7 @@
  * clock is passed in.
  */
 
+import type { HealthView } from '@/lib/ci/health-rules';
 import {
   environmentNameProblem,
   environmentOfBranch,
@@ -49,6 +50,8 @@ export interface EnvironmentView {
   branches: BranchView[];
   latest: DeploymentView | null;
   running: DeploymentView | null;
+  /** Its health check-ins, when a token was issued for it. */
+  health?: HealthView | null;
 }
 
 /** What GET and PUT /api/code/projects/[id]/environments answer. */

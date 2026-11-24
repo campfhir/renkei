@@ -779,6 +779,22 @@ export interface CiEnvironments {
   updated_by: string;
 }
 
+export interface CiHealthCheckins {
+  checkins: Generated<number>;
+  environment: string;
+  interval_seconds: number | null;
+  issued_at: Timestamp;
+  issued_by: string;
+  message: string | null;
+  project_id: string;
+  received_at: Timestamp | null;
+  sent_at: Timestamp | null;
+  status: string | null;
+  token_hash: string;
+  token_hint: string;
+  version: string | null;
+}
+
 export interface CiPipelines {
   branch: string;
   created_at: Generated<Timestamp>;
@@ -1931,6 +1947,7 @@ export interface DB {
   ci_blocks: CiBlocks;
   ci_deployments: CiDeployments;
   ci_environments: CiEnvironments;
+  ci_health_checkins: CiHealthCheckins;
   ci_pipelines: CiPipelines;
   ci_repo_keys: CiRepoKeys;
   ci_targets: CiTargets;

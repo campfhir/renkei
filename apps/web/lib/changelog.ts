@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'added',
+        title: 'Health check-ins from a deployed application',
+        detail:
+          "An application can now tell Renkei how it is after it is deployed. On a code project's Environments page, issue a health token for an environment (shown once; it can be saved straight to the host as that environment's secret), and the application POSTs its status — starting, healthy, degraded, error or stopping — with an optional message, version, send time and when to expect the next check-in. The environment then shows it; when a check-in is late it shows as potentially failing, and after three missed in a row as failed. It is optional and the developer's to implement: an environment that never checks in shows nothing. Code chats know the interface and build it in when asked.",
+      },
+      {
+        kind: 'added',
         title: 'Bulk edit pipeline variables as text',
         detail:
           "Each variable set on a project's Environments page has a Bulk edit box: the set as .env text, to add or change many at once. A line adds a variable or replaces its value; secrets are not listed, since their values cannot be shown, and are replaced by writing their line; a commented line, “# NAME=…”, removes that variable. Applying fills the rows to look over and lock; nothing is sent until Save.",

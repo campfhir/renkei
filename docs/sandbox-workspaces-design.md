@@ -347,6 +347,21 @@ project's pipelines hang from its branches, on its **Environments** page
 - **What runs there.** Each deploy step of a pipeline built from blocks
   reports to Renkei, signed by the host; the environment shows the commit
   that runs and its history.
+- **How it is.** Optional, and the application developer's to implement:
+  an editor issues a health token for an environment (shown once; kept as
+  a SHA-256 hash in `ci_health_checkins`, migration 193), and the
+  application POSTs its status to `/api/health/check-in` with it —
+  `starting`, `healthy`, `degraded`, `error` or `stopping`, with an
+  optional message, version, `sentAt` (its own clock, so time on the
+  network is not counted) and `nextCheckInSeconds` (60 minutes when left
+  out). Renkei never calls the application: lateness is read from the last
+  check-in and the clock (`apps/web/lib/ci/health-rules.ts`) — overdue is
+  potentially failing, three missed in a row is failed — so there is no
+  poller and no outbound request. An environment that never checked in
+  shows nothing. The token can be saved to the host as the environment's
+  `RENKEI_HEALTH_TOKEN` secret beside `RENKEI_HEALTH_URL`, through the
+  variables route; a code chat is told the interface (the chat's system
+  prompt) and never sees a token.
 
 The project page carries only a link to it, so it stays about the
 repository. The page exists to make CI/CD the path of least resistance:

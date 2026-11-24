@@ -7,10 +7,12 @@
  * (deployment-reports.ts). Renkei deploys nothing itself.
  */
 
-import { getDataStore, type CiDeploymentRecord } from '@renkei/db';
+import { getDataStore, type CiDeploymentRecord, type CiHealthRecord } from '@renkei/db';
 import type { Host } from '@renkei/ci-blocks';
 import { bitbucketHostAdapter } from '@/lib/code/repo-host-bitbucket';
 import { githubHostAdapter } from '@/lib/code/repo-host-github';
+import { healthView } from './health';
+import type { HealthView } from './health-rules';
 import {
   assignedBranches,
   environmentProblems,
@@ -59,6 +61,8 @@ export interface EnvironmentView {
   latest: DeploymentView | null;
   /** The newest that succeeded: what runs there now. */
   running: DeploymentView | null;
+  /** Its health check-ins, when a token was issued for it; null when it has none. */
+  health: HealthView | null;
 }
 
 /** What GET /api/code/projects/[id]/environments answers. */
@@ -93,6 +97,12 @@ function view(record: CiDeploymentRecord): DeploymentView {
   };
 }
 
+/** The environment's check-ins, matched by name whatever its case. */
+function healthOf(records: CiHealthRecord[], environment: string): HealthView | null {
+  const found = records.find((r) => r.environment.toLowerCase() === environment.toLowerCase());
+  return found ? healthView(found) : null;
+}
+
 /** The project's environments, as the rules hold them; a project that saved none has its production one. */
 export async function projectEnvironments(projectId: string): Promise<ProjectEnvironment[]> {
   const records = await getDataStore().ciEnvironments.list(projectId);
@@ -118,11 +128,12 @@ export async function environmentsPage(
   canEdit: boolean
 ): Promise<EnvironmentsPage> {
   const store = getDataStore();
-  const [environments, pipelines, deployments, remote] = await Promise.all([
+  const [environments, pipelines, deployments, remote, health] = await Promise.all([
     projectEnvironments(project.id),
     store.ciPipelines.listForProject(project.id),
     store.ciDeployments.recent([project.id], HISTORY),
     remoteBranches(host, caller, project.repo.fullName),
+    store.ciHealth.listForProject(project.id),
   ]);
   const listed = remote.ok ? new Set(remote.branches) : null;
   return {
@@ -153,6 +164,7 @@ export async function environmentsPage(
         }),
         latest: latest ? view(latest) : null,
         running: running ? view(running) : null,
+        health: healthOf(health, environment.name),
       };
     }),
     remoteBranches: remote.ok ? remote.branches : null,

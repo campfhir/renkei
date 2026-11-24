@@ -51,6 +51,7 @@ import { codeTemplates } from './code-templates';
 import { ciBlocks } from './ci-blocks';
 import { ciDeployments } from './ci-deployments';
 import { ciEnvironments } from './ci-environments';
+import { ciHealth } from './ci-health-checkins';
 import { ciPipelines } from './ci-pipelines';
 import { ciRepoKeys } from './ci-repo-keys';
 import { ciTargets } from './ci-targets';
@@ -149,6 +150,7 @@ export const DOMAINS = {
   ciBlocks,
   ciDeployments,
   ciEnvironments,
+  ciHealth,
   ciPipelines,
   ciRepoKeys,
   ciTargets,

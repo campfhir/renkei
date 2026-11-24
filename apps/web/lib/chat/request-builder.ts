@@ -214,6 +214,13 @@ You are the orchestrator of this conversation, and its context is for coordinati
 The sandbox the commands run in has the internet and a full toolchain (Python 3 with pip and venv, Node and pnpm, Go, Rust, Java, a C compiler), so use them as a developer would: install the packages the work needs, look things up, and when a change means producing or rewriting many files the same way, write a script (Python, Node, bash — whatever fits the project) in the checkout and run it with code_run rather than writing each file by hand; a script is deterministic, reviewable and can be run again, and it can stay in the repository when the project will want it later. Commands run with the project's environment variables (code_env_names lists the names; values are never shown): never ask for a secret's value, never put one in a command or a file, and if one is missing ask the person to add it to the project's .env. When you draft a pipeline (bitbucket-pipelines.yml, a GitHub Actions workflow), read code_pipeline_variables first so it uses names that exist, add the plain variables it needs with code_pipeline_set_variables, and name any secret it needs — a token, a key, a password — for the person to add on the Variables tab of the project's Environments page, where it is locked as a secret; never put one in a variable you set. Say what you changed and what you ran.`;
 
 /**
+ * Health check-ins: always there for a code project, and only ever used
+ * when the application's developer wants them — so the model knows the
+ * interface without reaching for it unasked (lib/ci/health-rules.ts).
+ */
+const HEALTH_BRIEF = `Renkei can show how the deployed application is, when the application tells it: a health check-in, always available and entirely optional. Build it in when the person asks for health checks, monitoring or a heartbeat, or mention it when you set up a deployment; do not add it unasked. The application POSTs JSON to the URL in the environment variable RENKEI_HEALTH_URL with the header "Authorization: Bearer $RENKEI_HEALTH_TOKEN": {"status": "starting" | "healthy" | "degraded" | "error" | "stopping", "message"?: a short line, "version"?: a version or commit, "sentAt"?: the time it was sent (ISO 8601, so time on the network is not counted), "nextCheckInSeconds"?: when to expect the next (30 seconds to a week; 60 minutes when left out)}. A late check-in shows the environment as potentially failing and three missed in a row as failed, so check in on a timer comfortably inside the interval you name, "starting" at boot and "stopping" on a clean shutdown. A check-in must never take the application down: send it in the background with a short timeout, ignore its failure, and skip it when either variable is unset. Both are read from the environment, never written into code: the person issues the token for an environment on the project's Environments page, where it can be saved as that environment's variables; you never see or handle the token.`;
+
+/**
  * Services: a project whose tests need a database or a cache gets one
  * beside the checkout, from the organization's allowed images — said
  * only when the deployment offers the tools, so a model never reaches
@@ -388,7 +395,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
         `This is a code project on the repository ${code.repoFullName}` +
           (code.branch ? ` (branch ${code.branch})` : '') +
           (code.ready
-            ? `.${code.clonedNow ? ' It is being cloned into the sandbox as this turn’s first step; that step’s result says whether the checkout is usable.' : ''}${code.envNames.length ? ` Its environment sets: ${code.envNames.join(', ')}.` : ' It has no environment variables.'}\n\n${CODE_BRIEF}\n\n${PREVIEWS_BRIEF}${code.servicesEnabled ? `\n\n${SERVICES_BRIEF}` : ''}`
+            ? `.${code.clonedNow ? ' It is being cloned into the sandbox as this turn’s first step; that step’s result says whether the checkout is usable.' : ''}${code.envNames.length ? ` Its environment sets: ${code.envNames.join(', ')}.` : ' It has no environment variables.'}\n\n${CODE_BRIEF}\n\n${PREVIEWS_BRIEF}\n\n${HEALTH_BRIEF}${code.servicesEnabled ? `\n\n${SERVICES_BRIEF}` : ''}`
             : `. Its checkout is not usable right now (${code.notReady ?? 'not ready'}), so the code_* tools are not available in this turn; say so if the person asks for work in the repository.`)
       );
     }

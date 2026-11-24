@@ -216,6 +216,7 @@ export const EXPECTED_MIGRATIONS = [
   '190-ci-assistant-jobs',
   '191-ci-environments',
   '192-ci-repo-keys',
+  '193-ci-health-checkins',
 ];
 
 export interface MigrationStatus {

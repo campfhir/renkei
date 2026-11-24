@@ -184,6 +184,9 @@ export type AuditAction =
   /** A CI target added or changed (Organization → Targets). */
   /** A code project's environments or their branches changed (its Environments page). */
   | 'ci.environments_saved'
+  /** An environment's health token issued (in place of any before) or taken away; never the token. */
+  | 'ci.health_token_issued'
+  | 'ci.health_token_revoked'
   | 'ci.pipeline_saved'
   | 'ci.pipeline_pull_request'
   | 'ci.promotion_opened'

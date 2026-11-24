@@ -99,6 +99,7 @@ export function memoryChatProjects(tables: MemoryTables): ChatProjectStore {
         tables.delete('ci_pipelines', (r) => r.project_id === wanted);
         tables.delete('ci_environments', (r) => r.project_id === wanted);
         tables.delete('ci_repo_keys', (r) => r.project_id === wanted);
+        tables.delete('ci_health_checkins', (r) => r.project_id === wanted);
         tables.delete('ci_deployments', (r) => r.project_id === wanted);
         tables.delete('artifact_references', (r) => r.project_id === wanted);
         tables.delete('pr_subscriptions', (r) => r.project_id === wanted);

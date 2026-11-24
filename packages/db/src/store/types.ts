@@ -90,6 +90,7 @@ export type * from './domains/code-templates';
 export type * from './domains/ci-blocks';
 export type * from './domains/ci-deployments';
 export type * from './domains/ci-environments';
+export type * from './domains/ci-health-checkins';
 export type * from './domains/ci-pipelines';
 export type * from './domains/ci-repo-keys';
 export type * from './domains/ci-targets';
