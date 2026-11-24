@@ -1,7 +1,9 @@
 import {
+  bulkText,
   canSave,
   changeSummary,
   changes,
+  commentedNames,
   editorReducer,
   fileProblem,
   importedLine,
@@ -150,17 +152,133 @@ describe('a .env file, read in the browser', () => {
     );
     expect(fileProblem({ name: '.env', size: 900 })).toBeNull();
   });
+});
 
-  it('pasted text is read the same way, when the box is applied', () => {
-    const opened = after(loaded([]), { type: 'pasteOpened' });
-    expect(opened.paste).toBe('');
-    const typed = editorReducer(opened, { type: 'pasteChanged', text: 'A=1\nB=2' });
-    expect(typed.rows).toHaveLength(0);
-    const applied = editorReducer(typed, { type: 'pasteApplied' });
-    expect(applied.rows.map((r) => r.key)).toEqual(['A', 'B']);
-    expect(applied.paste).toBeNull();
-    expect(importedLine(applied)).toContain('from what you pasted');
+describe('bulk edit: the set as .env text', () => {
+  const open = (state: EditorState) => editorReducer(state, { type: 'pasteOpened' });
+  const apply = (state: EditorState, text: string) =>
+    editorReducer(editorReducer(open(state), { type: 'pasteChanged', text }), {
+      type: 'pasteApplied',
+    });
+
+  it('opens on the plain variables; a secret is not listed, since its value cannot be shown', () => {
+    const state = open(after(loaded()));
+    expect(state.paste).toBe('API_BASE_URL=https://api.example.test\nREGION=eu-west-1');
+    expect(bulkText(after(loaded([])))).toBe('');
+  });
+
+  it('writes a value the way a .env needs it', () => {
+    const state = after(
+      loaded([
+        { key: 'GREETING', value: 'hello world # not a comment', secured: false },
+        { key: 'EMPTY', value: '', secured: false },
+      ])
+    );
+    expect(bulkText(state)).toBe('GREETING="hello world # not a comment"\nEMPTY=');
+    // What it opens on reads back as no change at all.
+    const applied = apply(state, bulkText(state));
+    expect(isDirty(applied)).toBe(false);
+  });
+
+  it('a line adds a variable or replaces its value; many at once', () => {
+    const state = apply(
+      after(loaded()),
+      'API_BASE_URL=https://api.example.test\nREGION=us-east-1\nTIMEOUT=30\nRETRIES=3\nFEATURES=a,b'
+    );
+    expect(changes(state)).toEqual({
+      set: [
+        { key: 'REGION', value: 'us-east-1', secured: false },
+        { key: 'TIMEOUT', value: '30', secured: false },
+        { key: 'RETRIES', value: '3', secured: false },
+        { key: 'FEATURES', value: 'a,b', secured: false },
+      ],
+      remove: [],
+    });
+    expect(state.paste).toBeNull();
+    expect(importedLine(state)).toBe(
+      'Read 5 variables from the bulk edit: 3 new, 1 changed, 1 already as saved. Lock the ones that are secrets, then save.'
+    );
+  });
+
+  it('a line taken out changes nothing: it adds and replaces, it does not prune', () => {
+    const state = apply(after(loaded()), 'REGION=eu-west-1');
+    expect(isDirty(state)).toBe(false);
+    expect(state.rows.map((r) => r.key)).toEqual(['API_BASE_URL', 'DEPLOY_TOKEN', 'REGION']);
+  });
+
+  it('a secret is replaced by writing its line, and stays locked', () => {
+    const state = apply(after(loaded()), 'DEPLOY_TOKEN=rotated-value');
+    expect(changes(state).set).toEqual([
+      { key: 'DEPLOY_TOKEN', value: 'rotated-value', secured: true },
+    ]);
+  });
+
+  it('a commented line removes the variable it names, whatever the space around the #', () => {
+    for (const line of [
+      '#REGION=eu-west-1',
+      '# REGION=eu-west-1',
+      '   #   REGION = eu-west-1',
+      '#REGION=',
+      '\t#\tREGION=anything at all',
+    ]) {
+      const state = apply(after(loaded()), `API_BASE_URL=https://api.example.test\n${line}`);
+      expect(changes(state)).toEqual({ set: [], remove: ['REGION'] });
+    }
+  });
+
+  it('removes a secret the same way, without its value', () => {
+    const state = apply(after(loaded()), '# DEPLOY_TOKEN=');
+    expect(changes(state)).toEqual({ set: [], remove: ['DEPLOY_TOKEN'] });
+    expect(removalQuestion(state)).toBe(
+      'Remove DEPLOY_TOKEN? Pipeline runs will no longer see it.'
+    );
+    expect(importedLine(state)).toBe(
+      'Read 1 variable from the bulk edit: 1 to remove. Lock the ones that are secrets, then save.'
+    );
+  });
+
+  it('an ordinary comment is a comment: only a line naming a variable that is there removes', () => {
+    const state = apply(
+      after(loaded()),
+      '# the dev stack\n# NOT_SET=1\n#REGION\n## heading\nTIMEOUT=30'
+    );
+    expect(changes(state)).toEqual({
+      set: [{ key: 'TIMEOUT', value: '30', secured: false }],
+      remove: [],
+    });
+    expect(state.problems).toEqual([]);
+  });
+
+  it('a name both set and commented is set: the live line wins', () => {
+    const state = apply(after(loaded()), '# REGION=old\nREGION=us-east-1');
+    expect(changes(state)).toEqual({
+      set: [{ key: 'REGION', value: 'us-east-1', secured: false }],
+      remove: [],
+    });
+  });
+
+  it('commenting a row not saved yet just drops it', () => {
+    const typed = apply(after(loaded([])), 'A=1\nB=2');
+    const state = apply(typed, '# A=1');
+    expect(state.rows.map((r) => r.key)).toEqual(['B']);
+  });
+
+  it('a file that is uploaded never removes: its comments are comments', () => {
+    const state = after(loaded(), { type: 'fileRead', name: '.env', text: '# REGION=eu-west-1' });
+    expect(isDirty(state)).toBe(false);
+    expect(commentedNames('# REGION=1\n #  API = 2\n# words here\n#REGION=3')).toEqual([
+      'REGION',
+      'API',
+    ]);
+  });
+
+  it('nothing is sent by applying, and the box can be closed with nothing changed', () => {
+    const opened = open(after(loaded()));
     expect(editorReducer(opened, { type: 'pasteCancelled' }).paste).toBeNull();
+    const applied = apply(after(loaded()), 'TIMEOUT=30');
+    expect(applied.busy).toBe(false);
+    // An empty box applies nothing.
+    expect(apply(after(loaded()), '   ').imported).toBeNull();
   });
 });
 

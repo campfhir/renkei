@@ -1,9 +1,11 @@
 /**
  * One variable set being edited (variables-editor.tsx): the repository's
  * variables, or one deployment environment's, as rows — a name, a value,
- * and a lock that makes it a secret. Rows come from the host, from typing,
- * and from a `.env` file the person picks or pastes, which is parsed here,
- * in the browser: nothing leaves until Save, and Save sends the change
+ * and a lock that makes it a secret. Rows come from the host, from typing
+ * one at a time, from a `.env` file the person picks, and from the bulk
+ * edit box — the set as `.env` text, where lines add and replace and a
+ * commented line removes — all read here, in the browser: nothing leaves
+ * until Save, and Save sends the change
  * straight to the project's variables route (never to a model).
  *
  * A secret's value is write-only: the host never sends one back, so a
@@ -49,12 +51,19 @@ export interface EditorState {
   busy: boolean;
   /** The save the route refused whole. */
   error: string | null;
-  /** What the last file or paste brought, until the next edit. */
-  imported: { source: string; added: number; updated: number; same: number } | null;
-  /** Lines of the last file or paste that were not variables. */
+  /** What the last file or bulk edit brought, until the next edit. */
+  imported: {
+    source: string;
+    added: number;
+    updated: number;
+    same: number;
+    /** Variables a bulk edit's commented lines marked to go. */
+    removed: number;
+  } | null;
+  /** Lines of the last file or bulk edit that were not variables. */
   problems: string[];
   outcome: Applied | null;
-  /** The paste box, when open. */
+  /** The bulk edit box's text, when it is open. */
   paste: string | null;
   /** The row whose value takes the cursor (the builder's "Set it"). */
   focus: number | null;
@@ -69,6 +78,12 @@ export type EditorAction =
   | { type: 'removeToggled'; id: number }
   /** A `.env` file's text, read in the browser. */
   | { type: 'fileRead'; name: string; text: string }
+  /**
+   * The bulk edit box: the set as `.env` text, to add to and change many at
+   * once. It opens on the plain variables (a secret's value cannot be
+   * shown, so secrets are not in it); applying it adds and replaces what
+   * its lines name, and a commented line, `# NAME=…`, marks NAME to go.
+   */
   | { type: 'pasteOpened' }
   | { type: 'pasteChanged'; text: string }
   | { type: 'pasteCancelled' }
@@ -119,13 +134,61 @@ function loaded(state: EditorState, variables: readonly ListedVariable[]): Edito
   };
 }
 
-/** The rows with a `.env`'s variables merged in: a name already there takes the value, a new one is a new row. */
-function imported(state: EditorState, source: string, text: string): EditorState {
+/** A value as a `.env` line's right-hand side: bare when it can be, double-quoted otherwise. */
+function envValue(value: string): string {
+  if (value === '' || /^[^\s"'#\\]+$/.test(value)) return value;
+  return `"${value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t')}"`;
+}
+
+/**
+ * What the bulk edit box opens on: the plain variables as they stand on
+ * screen, one `NAME=value` a line. Secrets are left out — their values
+ * cannot be shown — and so are rows already marked to go.
+ */
+export function bulkText(state: Pick<EditorState, 'rows'>): string {
+  return state.rows
+    .filter((row) => !row.secured && !row.removed && KEY.test(row.key.trim()))
+    .map((row) => `${row.key.trim()}=${envValue(row.value)}`)
+    .join('\n');
+}
+
+/** A commented-out variable line, `# NAME=…`, with any space around the `#`. */
+const COMMENTED = /^\s*#\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/;
+
+/** The names a bulk edit's commented lines name, in order, once each. */
+export function commentedNames(text: string): string[] {
+  const names: string[] = [];
+  for (const line of text.replace(/\r\n?/g, '\n').split('\n')) {
+    const name = COMMENTED.exec(line)?.[1];
+    if (name && !names.includes(name)) names.push(name);
+  }
+  return names;
+}
+
+/**
+ * The rows with a `.env`'s variables merged in: a name already there takes
+ * the value, a new one is a new row; nothing is taken away for not being
+ * named. A bulk edit (`removals`) also reads its commented lines: `# NAME=…`
+ * marks the saved variable NAME to go — unless a live line sets it too — and
+ * is an ordinary comment when there is no such variable.
+ */
+function imported(
+  state: EditorState,
+  source: string,
+  text: string,
+  options: { removals?: boolean } = {}
+): EditorState {
   const parsed = parseDotenv(text);
   let { rows, nextId } = state;
   let added = 0;
   let updated = 0;
   let same = 0;
+  let removed = 0;
   const problems = [...parsed.problems];
   for (const [key, value] of Object.entries(parsed.values)) {
     if (!KEY.test(key)) {
@@ -151,11 +214,24 @@ function imported(state: EditorState, source: string, text: string): EditorState
     rows = rows.map((r, i) => (i === at ? { ...r, value, removed: false } : r));
     updated += 1;
   }
+  if (options.removals) {
+    for (const name of commentedNames(text)) {
+      if (name in parsed.values) continue;
+      const at = rows.findIndex((row) => row.key === name);
+      const row = at < 0 ? undefined : rows[at];
+      if (!row || row.removed) continue;
+      // A saved variable is marked to go; one not saved yet is just dropped.
+      rows = row.original
+        ? rows.map((r, i) => (i === at ? { ...r, removed: true } : r))
+        : rows.filter((_, i) => i !== at);
+      removed += 1;
+    }
+  }
   return {
     ...state,
     rows,
     nextId,
-    imported: { source, added, updated, same },
+    imported: { source, added, updated, same, removed },
     problems,
     outcome: null,
     error: null,
@@ -208,13 +284,15 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     case 'fileRead':
       return imported(state, action.name, action.text);
     case 'pasteOpened':
-      return { ...state, paste: '' };
+      return { ...state, paste: bulkText(state) };
     case 'pasteChanged':
       return state.paste === null ? state : { ...state, paste: action.text };
     case 'pasteCancelled':
       return { ...state, paste: null };
     case 'pasteApplied':
-      return state.paste?.trim() ? imported(state, 'what you pasted', state.paste) : state;
+      return state.paste?.trim()
+        ? imported(state, 'the bulk edit', state.paste, { removals: true })
+        : state;
     case 'asked': {
       const existing = state.rows.find((row) => row.key === action.name);
       if (existing) {
@@ -381,18 +459,20 @@ export function changeSummary(state: Pick<EditorState, 'rows'>): string | null {
   return parts.length ? parts.join(' · ') : null;
 }
 
-/** The line after a file or paste was read. */
+/** The line after a file or bulk edit was read. */
 export function importedLine(state: Pick<EditorState, 'imported'>): string | null {
   const read = state.imported;
   if (!read) return null;
   const total = read.added + read.updated + read.same;
-  if (total === 0) return `No variables were found in ${read.source}.`;
+  if (total === 0 && read.removed === 0) return `No variables were found in ${read.source}.`;
   const parts = [
     read.added ? `${read.added} new` : '',
     read.updated ? `${read.updated} changed` : '',
     read.same ? `${read.same} already as saved` : '',
+    read.removed ? `${read.removed} to remove` : '',
   ].filter(Boolean);
-  return `Read ${total} variable${total === 1 ? '' : 's'} from ${read.source}: ${parts.join(', ')}. Lock the ones that are secrets, then save.`;
+  const named = total + read.removed;
+  return `Read ${named} variable${named === 1 ? '' : 's'} from ${read.source}: ${parts.join(', ')}. Lock the ones that are secrets, then save.`;
 }
 
 /** The lines under a saved set. */

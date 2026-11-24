@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'added',
+        title: 'Bulk edit pipeline variables as text',
+        detail:
+          "Each variable set on a project's Environments page has a Bulk edit box: the set as .env text, to add or change many at once. A line adds a variable or replaces its value; secrets are not listed, since their values cannot be shown, and are replaced by writing their line; a commented line, “# NAME=…”, removes that variable. Applying fills the rows to look over and lock; nothing is sent until Save.",
+      },
+      {
+        kind: 'added',
         title: 'Pipelines written outside Renkei open as they are',
         detail:
           'When a branch already has a pipeline that was not built in Renkei — a bitbucket-pipelines.yml or GitHub workflows from another editor — its Pipeline tab now opens on that file instead of on a suggestion that would replace it. You can read it, edit it and commit to the branch, or ask the assistant, which reads the repository and proposes the file edited for you to review and commit. Building it from blocks instead is one explicit choice, and says what it does to the file. “Get the report step” gives a few lines to copy into a hand-written pipeline so its environment shows what it deployed, with no secret involved.',

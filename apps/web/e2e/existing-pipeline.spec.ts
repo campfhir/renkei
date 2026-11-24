@@ -188,13 +188,13 @@ test('a pipeline written elsewhere: the tab opens on its file, the assistant edi
       '- npm test'
     );
 
-    // The report step, to copy into the file: taking it is what lets its reports in.
-    const report = main.getByRole('region', { name: 'Show what it deploys' });
-    await report.getByRole('button', { name: 'Get the report step' }).click();
-    const snippet = report.getByLabel('The report step for production');
+    // The block that records deployments is there, ready to copy into the file.
+    const report = main.getByRole('region', { name: 'Record deployments in Renkei' });
+    const snippet = report.getByLabel('What records deployments of production');
     await expect(snippet).toContainText('deployment: production');
     await expect(snippet).toContainText('oidc: true');
     await expect(snippet).toContainText('/api/deployments/report');
+    await expect(report.getByRole('button', { name: 'Copy' })).toBeVisible();
     await shot(page, testInfo, 'existing-pipeline-03-report-step');
 
     // A deploy step carrying it reports, signed as Bitbucket signs a step's token.

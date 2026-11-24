@@ -3,7 +3,8 @@
  * the project page links to its Environments page (and carries no
  * pipeline card); production's branch's Runs tab draws that branch's
  * runs and the setup on the real server; its Variables tab takes one
- * press through — a `.env` pasted, one row locked, saved: the request
+ * press through — several lines typed into the bulk edit box, one row
+ * locked, saved: the request
  * reaching the route and the stand-in, the names drawn and the secured
  * value never on the page; the rest of a set-up repository (the switch
  * on, the file committed to the branch, a run started on it) is staged
@@ -90,7 +91,7 @@ test.describe('Code project pipelines', () => {
     ids = await stage(page, testInfo);
   });
 
-  test('the project page link, a branch’s Runs tab, variables saved from a pasted .env, a set-up repository drawn, phone width', async ({
+  test('the project page link, a branch’s Runs tab, variables saved from the bulk edit box, a set-up repository drawn, phone width', async ({
     page,
   }, testInfo) => {
     // A dev server compiles each route the first time it is asked for one.
@@ -156,7 +157,7 @@ test.describe('Code project pipelines', () => {
     await expectNoHorizontalOverflow(page);
     await shot('code-pipelines-page.png');
 
-    // ── The one press through, on the Variables tab: a .env pasted into
+    // ── The one press through, on the Variables tab: several lines typed into the bulk edit box of
     //    the repository's set, a row locked by hand, saved. The names
     //    appear, the bad line is reported, the secured value is never on
     //    the page again ──
@@ -165,13 +166,13 @@ test.describe('Code project pipelines', () => {
     const production = main.getByTestId('variables-environment-production');
     await expect(repository.getByText('No variables.')).toBeVisible({ timeout: 30_000 });
     await expect(production.getByText('No variables.')).toBeVisible();
-    await repository.getByRole('button', { name: 'Paste .env' }).click();
+    await repository.getByRole('button', { name: 'Bulk edit' }).click();
     await repository
-      .getByLabel('.env contents for Repository variables')
+      .getByLabel('Repository variables as text')
       .fill(
         'BUILD_FLAVOR=npm_secret_value_123\nAPI_BASE_URL=https://api.example.test\nthis line is broken\n'
       );
-    await repository.getByRole('button', { name: 'Read into rows' }).click();
+    await repository.getByRole('button', { name: 'Apply to rows' }).click();
     await expect(repository.getByText(/Not read as variables: line 3/)).toBeVisible();
     await repository.getByRole('button', { name: 'BUILD_FLAVOR is a secret' }).click();
     await repository.getByRole('button', { name: 'Save' }).click();
@@ -186,6 +187,23 @@ test.describe('Code project pipelines', () => {
       'https://api.example.test'
     );
     expect(await page.content()).not.toContain('npm_secret_value_123');
+
+    // The box again: it opens on the plain variables (the secret is not
+    // listed); a line adds, and a commented line removes the variable it names.
+    await repository.getByRole('button', { name: 'Bulk edit' }).click();
+    const box = repository.getByLabel('Repository variables as text');
+    await expect(box).toHaveValue('API_BASE_URL=https://api.example.test');
+    await box.fill('  #  API_BASE_URL=https://api.example.test\nTIMEOUT=30\n');
+    await shot('code-pipelines-bulk-edit.png');
+    await repository.getByRole('button', { name: 'Apply to rows' }).click();
+    await expect(repository.getByTestId('variable-API_BASE_URL')).toContainText('Will be removed');
+    await shot('code-pipelines-bulk-applied.png');
+    page.once('dialog', (dialog) => void dialog.accept());
+    await repository.getByRole('button', { name: 'Save' }).click();
+    await expect(repository.getByRole('status')).toContainText(
+      'Saved: added TIMEOUT · removed API_BASE_URL.'
+    );
+    await expect(repository.getByLabel('Value of API_BASE_URL')).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
     await shot('code-pipelines-variables.png');
 

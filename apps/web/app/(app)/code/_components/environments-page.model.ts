@@ -251,8 +251,7 @@ export function environmentTabs(state: PageState): EnvironmentTab[] {
 export interface BranchRow {
   name: string;
   current: boolean;
-  /** What the builder keeps for it, in a few words. */
-  pipeline: string;
+  /** The pull request that carries a pipeline built here, when there is one. */
   pullRequestUrl: string | null;
   /** Set when the host no longer lists the branch. */
   gone: string | null;
@@ -265,11 +264,6 @@ export function branchRows(state: PageState): BranchRow[] {
   return (environment?.branches ?? []).map((branch) => ({
     name: branch.name,
     current: branch === current,
-    pipeline: !branch.pipeline
-      ? 'No pipeline built here yet'
-      : branch.pipeline.written
-        ? 'Pipeline built here, in a pull request'
-        : 'Pipeline saved here, not in a pull request yet',
     pullRequestUrl: branch.pipeline?.pullRequestUrl ?? null,
     gone:
       branch.onRemote === false

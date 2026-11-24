@@ -310,7 +310,7 @@ test('environments: branches, a branch’s pipeline, variables from a .env, and 
     await environments.getByRole('button', { name: /^dev/ }).click();
     await expect(dev).toContainText('Healthy', { timeout: 30_000 });
     await expect(dev).toContainText('8e41c2a');
-    await expect(dev).toContainText('Pipeline built here, in a pull request');
+    await expect(dev.getByRole('link', { name: 'the pull request' })).toBeVisible();
     await expect(main.getByRole('region', { name: 'Deployments of dev' })).toContainText(
       'Pipelines #101'
     );

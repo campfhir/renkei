@@ -394,7 +394,6 @@ export default function EnvironmentsPage({
                           <Icon path={ICONS.gitBranch} className="h-3.5 w-3.5 shrink-0" />
                           <span className="font-mono break-all">{row.name}</span>
                         </button>
-                        <span className="text-xs text-gray-500">{row.pipeline}</span>
                         {row.pullRequestUrl ? (
                           <ExternalLink
                             href={row.pullRequestUrl}

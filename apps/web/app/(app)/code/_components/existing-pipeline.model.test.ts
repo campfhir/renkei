@@ -265,9 +265,9 @@ describe('the report step', () => {
     expect(run([{ type: 'reportAsked' }], failed).reportError).toBeNull();
   });
 
-  it('closed, it is gone, and “Copied” with it', () => {
+  it('copying it says so', () => {
     const copied = run([{ type: 'reportRead', step }, { type: 'copied' }], read);
-    expect(run([{ type: 'reportClosed' }], copied)).toMatchObject({ report: null, copied: false });
+    expect(copied.copied).toBe(true);
   });
 
   it('leaves the file and its edit alone', () => {

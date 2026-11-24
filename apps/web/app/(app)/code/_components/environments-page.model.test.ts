@@ -152,24 +152,22 @@ describe('the environments', () => {
     ]);
   });
 
-  it('a branch says what the builder keeps for it, and when the remote has dropped it', () => {
+  it('a branch links to its pipeline’s pull request, and says when the remote has dropped it', () => {
     expect(branchRows(page({ environment: 'dev' }))).toEqual([
       {
         name: 'develop',
         current: true,
-        pipeline: 'Pipeline built here, in a pull request',
         pullRequestUrl: 'https://bitbucket.org/acme/app/pull-requests/3',
         gone: null,
       },
       {
         name: 'feature/intake',
         current: false,
-        pipeline: 'Pipeline saved here, not in a pull request yet',
         pullRequestUrl: null,
         gone: 'Bitbucket no longer has this branch; take it off, or push it again.',
       },
     ]);
-    expect(branchRows(page())[0]?.pipeline).toBe('No pipeline built here yet');
+    expect(branchRows(page())[0]?.pullRequestUrl).toBeNull();
   });
 });
 

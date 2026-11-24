@@ -55,7 +55,6 @@ export type ExistingAction =
   | { type: 'reportAsked' }
   | { type: 'reportRead'; step: ReportStep }
   | { type: 'reportFailed'; error: string }
-  | { type: 'reportClosed' }
   | { type: 'copied' };
 
 export const initialExisting: ExistingState = {
@@ -156,8 +155,6 @@ export function existingReducer(state: ExistingState, action: ExistingAction): E
       return { ...state, reportBusy: false, report: action.step };
     case 'reportFailed':
       return { ...state, reportBusy: false, reportError: action.error };
-    case 'reportClosed':
-      return { ...state, report: null, copied: false };
     case 'copied':
       return { ...state, copied: true };
   }

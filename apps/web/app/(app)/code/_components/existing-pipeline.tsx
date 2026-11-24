@@ -10,8 +10,8 @@
  * The file as it is on the branch, read with the person's own grant; an
  * editor that commits straight to the branch, by hand or with the
  * assistant's proposal put into it (the assistant in the dock works on
- * this file, as text); the report step to copy into it, so the
- * environment shows what it deployed; and, said plainly, what building
+ * this file, as text); a block of YAML ready to copy into it, which lets
+ * Renkei record its deployments; and, said plainly, what building
  * from blocks instead would do to the file.
  */
 
@@ -118,6 +118,14 @@ export default function ExistingPipeline({
     }
     dispatch({ type: 'reportRead', step: result.data });
   };
+
+  // The block is there to copy as soon as the file is: preparing it also
+  // tells Renkei which repository's reports are this project's.
+  const wanted = canEdit && !state.report && !state.reportBusy && !state.reportError;
+  useEffect(() => {
+    if (wanted) void takeReportStep();
+    // Asked once, when first wanted.
+  }, [wanted]);
 
   const copy = async (text: string) => {
     try {
@@ -284,54 +292,42 @@ export default function ExistingPipeline({
       <section aria-labelledby="report-heading" className={`${cardClass} space-y-2`}>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <h2 id="report-heading" className="text-sm font-semibold">
-            Show what it deploys
+            Record deployments in Renkei
           </h2>
-          {canEdit && !state.report ? (
+          {state.report ? (
             <button
               type="button"
-              disabled={state.reportBusy}
-              onClick={() => void takeReportStep()}
-              className={`ml-auto ${secondaryButtonClass}`}
+              onClick={() => void copy(state.report?.snippet ?? '')}
+              className={`ml-auto inline-flex items-center gap-1 ${secondaryButtonClass}`}
             >
-              {state.reportBusy ? 'Preparing…' : 'Get the report step'}
+              <Icon path={state.copied ? ICONS.check : ICONS.copy} className="h-3.5 w-3.5" />
+              {state.copied ? 'Copied' : 'Copy'}
             </button>
           ) : null}
         </div>
         <p className="text-xs text-gray-500">
-          Renkei shows what runs in {environment} when the step that deploys it says so. A pipeline
-          built from blocks has that step written in; one written by hand takes a few lines, copied
-          into it. No secret is involved: {HOST[host]} signs a short-lived token for the step, and
-          Renkei checks it.
+          Adding this to the pipeline lets Renkei record each deployment of {environment}: the
+          commit, when, and whether it worked. No secret is involved: {HOST[host]} signs a
+          short-lived token for the step, and Renkei checks it.
         </p>
+        {state.reportBusy ? <LoadingLine size="xs" label="Writing the block…" /> : null}
         {state.reportError ? (
           <p role="alert" className="text-xs text-red-600 dark:text-red-400">
             {state.reportError}
           </p>
         ) : null}
         {state.report ? (
-          <div className="space-y-2">
-            <p className="text-xs">{state.report.where}</p>
+          <>
             <pre
-              aria-label={`The report step for ${state.report.environment}`}
+              aria-label={`What records deployments of ${state.report.environment}`}
               className="max-h-80 overflow-auto rounded-md border border-gray-200 bg-gray-50 p-3 font-mono text-xs leading-relaxed dark:border-gray-800 dark:bg-gray-900/60"
             >
               {state.report.snippet}
             </pre>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => void copy(state.report?.snippet ?? '')}
-                className={`inline-flex items-center gap-1 ${secondaryButtonClass}`}
-              >
-                <Icon path={state.copied ? ICONS.check : ICONS.copy} className="h-3.5 w-3.5" />
-                {state.copied ? 'Copied' : 'Copy'}
-              </button>
-              <span role="status" className="text-xs text-gray-500">
-                Reports from this repository are now taken for this project. Once the step is on{' '}
-                {branch} and a deploy runs, {state.report.environment} shows it above.
-              </span>
-            </div>
-          </div>
+            <p className="text-xs text-gray-500">{state.report.where}</p>
+          </>
+        ) : !canEdit ? (
+          <p className="text-xs text-gray-500">An editor of the project gets the block here.</p>
         ) : null}
       </section>
 

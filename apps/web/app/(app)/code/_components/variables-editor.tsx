@@ -10,9 +10,10 @@
  *
  * A row is a name, a value and a lock; locked, it is saved as a secret,
  * and its value is never shown again. Rows are typed in, or read from a
- * `.env` file the person picks (or pastes): the file is read and parsed
- * here in the browser, its rows land in the table to be looked over and
- * locked, and nothing is sent until Save — which goes to the project's
+ * `.env` file the person picks, or the bulk edit box (the set as `.env`
+ * text: lines add and replace, a commented line removes): either is read
+ * and parsed here in the browser, its rows land in the table to be looked
+ * over and locked, and nothing is sent until Save — which goes to the project's
  * variables route and from there to the host. No model takes part.
  *
  * What the editor decides — what a file adds, what Save sends, when it
@@ -286,7 +287,7 @@ function VariableSetCard({
               onClick={() => dispatch({ type: 'pasteOpened' })}
               className={linkButtonClass}
             >
-              Paste .env
+              Bulk edit
             </button>
           </span>
         ) : null}
@@ -297,21 +298,36 @@ function VariableSetCard({
       ) : null}
 
       {state.paste !== null ? (
-        <div className="mt-3 space-y-2">
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            dispatch({ type: 'pasteApplied' });
+          }}
+          aria-label={`Bulk edit ${title}`}
+          className="mt-3 space-y-2"
+        >
           <textarea
             value={state.paste}
             onChange={(event) => dispatch({ type: 'pasteChanged', text: event.target.value })}
-            rows={5}
+            rows={Math.max(6, Math.min(24, state.paste.split('\n').length + 2))}
             spellCheck={false}
             autoFocus
-            aria-label={`.env contents for ${title}`}
-            placeholder={'API_BASE_URL=https://api.example.test\nDEPLOY_TOKEN=…'}
+            aria-label={`${title} as text`}
+            placeholder={
+              'API_BASE_URL=https://api.example.test\nDEPLOY_TOKEN=…\n# OLD_NAME=to remove it'
+            }
             className={`font-mono ${inputClass}`}
           />
+          <p className="text-xs text-gray-500">
+            One <span className="font-mono">NAME=value</span> a line, as a .env. A line adds the
+            variable or replaces its value. Secrets are not listed, since their values cannot be
+            shown: write <span className="font-mono">NAME=value</span> to replace one. To remove a
+            variable, comment its line: <span className="font-mono"># NAME=…</span>. A line taken
+            out changes nothing.
+          </p>
           <div className="flex items-center justify-end gap-2">
             <p className="mr-auto text-xs text-gray-500">
-              One <span className="font-mono">NAME=value</span> a line. Reading it fills the rows
-              below; nothing is saved yet.
+              Applying fills the rows below to look over and lock; nothing is saved yet.
             </p>
             <button
               type="button"
@@ -320,16 +336,11 @@ function VariableSetCard({
             >
               Cancel
             </button>
-            <button
-              type="button"
-              disabled={!state.paste.trim()}
-              onClick={() => dispatch({ type: 'pasteApplied' })}
-              className={primaryButtonClass}
-            >
-              Read into rows
+            <button type="submit" disabled={!state.paste.trim()} className={primaryButtonClass}>
+              Apply to rows
             </button>
           </div>
-        </div>
+        </form>
       ) : null}
 
       {read ? (
