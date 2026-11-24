@@ -37,7 +37,18 @@
  */
 
 /** How the builder renders a field. */
-export type FilterInputKind = 'text' | 'text-list' | 'picker-list' | 'select';
+export type FilterInputKind =
+  | 'text'
+  | 'text-list'
+  | 'picker-list'
+  | 'select'
+  /**
+   * Any number of a field's fixed `options`, ticked: "only when it failed,
+   * stopped or reports an error". None ticked is no constraint, so there
+   * is no empty option; a stored value that is not one of the options is
+   * dropped, which can only widen the filter.
+   */
+  | 'choice-list';
 
 /**
  * One fixed choice of a 'select' field. The empty value renders as the
@@ -122,7 +133,11 @@ export interface TriggerFilterField {
   invalidMessage: string;
   /** Required for 'picker-list': the option list IS the input. */
   picker?: FilterOptionSource;
-  /** Required for 'select': the fixed choices, one of them empty for "any". */
+  /**
+   * Required for 'select': the fixed choices, one of them empty for "any".
+   * Required for 'choice-list' too: the choices to tick, none of them empty;
+   * each one's `describe` is the word it takes in the sentence.
+   */
   options?: FilterSelectOption[];
   /**
    * A NON-EXCLUSIVE typeahead for a 'text-list'. Suggestions help; a typed
@@ -192,10 +207,22 @@ const CASE_FOLDING: ReadonlySet<FilterMatchKind> = new Set<FilterMatchKind>([
 const LIST_INPUTS: ReadonlySet<FilterInputKind> = new Set<FilterInputKind>([
   'text-list',
   'picker-list',
+  'choice-list',
 ]);
 
 function isListField(field: TriggerFilterField): boolean {
   return LIST_INPUTS.has(field.input);
+}
+
+/** Whether a 'choice-list' entry is one of the field's choices. */
+function isChoice(field: TriggerFilterField, entry: string): boolean {
+  return (field.options ?? []).some((option) => option.value === entry);
+}
+
+/** "a", "a or b", "a, b or c". */
+function anyOf(words: string[]): string {
+  if (words.length <= 1) return words[0] ?? '';
+  return `${words.slice(0, -1).join(', ')} or ${words[words.length - 1]}`;
 }
 
 /** Trim, and fold case only where the matcher compares human text. */
@@ -236,7 +263,15 @@ export function normalizeMatch(fields: TriggerFilterField[], raw: unknown): Trig
     if (value === undefined) continue;
     if (isListField(field)) {
       const entries = Array.isArray(value) ? value : [value];
-      const cleaned = [...new Set(entries.map((entry) => foldEntry(field, entry)).filter(Boolean))];
+      const given = [...new Set(entries.map((entry) => foldEntry(field, entry)).filter(Boolean))];
+      // Choices are kept in the field's own order, however they were ticked
+      // or written, so one filter always reads and stores the same way.
+      const cleaned =
+        field.input === 'choice-list'
+          ? (field.options ?? [])
+              .map((option) => option.value)
+              .filter((value) => given.includes(value))
+          : given;
       if (cleaned.length > 0) {
         out[field.id] = cleaned.slice(0, field.maxEntries ?? MAX_FILTER_ENTRIES);
       }
@@ -295,6 +330,9 @@ export function validateMatch(fields: TriggerFilterField[], raw: unknown): strin
       for (const entry of entries) {
         const cleaned = foldEntry(field, entry);
         if (cleaned && field.pattern && !field.pattern.test(cleaned)) {
+          problems.push(`${field.invalidMessage} ("${entry}")`);
+        }
+        if (cleaned && field.input === 'choice-list' && !isChoice(field, cleaned)) {
           problems.push(`${field.invalidMessage} ("${entry}")`);
         }
       }
@@ -396,6 +434,15 @@ export function describeFilters(fields: TriggerFilterField[], match: unknown): s
   for (const field of fields) {
     const entries = constraintOf(field, match);
     if (entries.length === 0) continue;
+    if (field.input === 'choice-list') {
+      // Every ticked choice is named: there are few, and "any of 3 states"
+      // would hide exactly what the reader wants to check.
+      const words = entries.map(
+        (entry) => field.options?.find((option) => option.value === entry)?.describe || entry
+      );
+      parts.push(field.describeOne.replace('{value}', anyOf(words)));
+      continue;
+    }
     const many =
       readMode(match, field) === 'all' && field.describeAll
         ? field.describeAll

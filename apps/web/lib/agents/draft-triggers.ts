@@ -63,9 +63,13 @@ export function triggerPromptLines(triggerOffer: TriggerOffer): string[] {
                 .filter((option) => option.value)
                 .map((option) => `"${option.value}"`)
                 .join(' | ')}`
-            : field.input === 'text'
-              ? 'one string'
-              : 'a list of strings'
+            : field.input === 'choice-list'
+              ? `a list of any of ${(field.options ?? [])
+                  .map((option) => `"${option.value}"`)
+                  .join(', ')}; omit it for all of them`
+              : field.input === 'text'
+                ? 'one string'
+                : 'a list of strings'
         } — ${field.label.toLowerCase()}. ${field.hint}`,
         // Taught explicitly rather than left to be guessed: the
         // default is the permissive one, so the only way to get ALL

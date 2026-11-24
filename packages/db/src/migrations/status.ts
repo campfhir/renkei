@@ -206,7 +206,19 @@ export const EXPECTED_MIGRATIONS = [
   '180-sandboxes',
   '181-sandbox-archives',
   '182-sandbox-subjects',
-  '183-chat-agents',
+  '183-ci-blocks',
+  '184-ci-targets',
+  '185-ci-pipelines',
+  '186-ci-deployments',
+  '187-drop-pipeline-templates',
+  '188-fabric-operations',
+  '189-fabric-ci-blocks',
+  '190-ci-assistant-jobs',
+  '191-ci-environments',
+  '192-ci-repo-keys',
+  '193-ci-health-checkins',
+  '194-ci-health-announced',
+  '195-chat-agents',
 ];
 
 export interface MigrationStatus {

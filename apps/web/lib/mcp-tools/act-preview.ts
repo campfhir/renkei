@@ -84,6 +84,8 @@ export const PREVIEW_EXEMPT_CONNECTORS: readonly string[] = [
   'salesforce-admin',
   'sandbox',
   'user-memory',
+  // Read-only.
+  'deployments',
 ];
 
 /** Single tools that only write to Renkei: a suggestion on the feed, never to the provider. */

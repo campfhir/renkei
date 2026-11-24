@@ -46,6 +46,177 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-24',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Deployment and application-health notifications, tools and agent triggers',
+        detail:
+          "When a pipeline reports a deployment, or a deployed application's health check-ins change (or stop arriving), Renkei now tells the code project's owner and everyone it is shared with. Preferences has a new Deployments card: failed deployments and applications that failed, stopped or report a problem are on by default; successful deployments, an overdue check-in and recoveries are off until you switch them on. Agents can be triggered by these changes, and a trigger ticks exactly which ones wake it — failed deployments only, say, or an application that failed, stopped or reports an error — as well as the environment and project, and chats and agents can read environments, deployments and health with the new deployments_status and deployments_history tools. All of it is for people with a Bitbucket or GitHub connection.",
+      },
+      {
+        kind: 'added',
+        title: 'Health check-ins from a deployed application',
+        detail:
+          "An application can now tell Renkei how it is after it is deployed. On a code project's Environments page, issue a health token for an environment (shown once; it can be saved straight to the host as that environment's secret), and the application POSTs its status — starting, healthy, degraded, error or stopping — with an optional message, version, send time and when to expect the next check-in. The environment then shows it; when a check-in is late it shows as potentially failing, and after three missed in a row as failed. It is optional and the developer's to implement: an environment that never checks in shows nothing. Code chats know the interface and build it in when asked.",
+      },
+      {
+        kind: 'added',
+        title: 'Bulk edit pipeline variables as text',
+        detail:
+          "Each variable set on a project's Environments page has a Bulk edit box: the set as .env text, to add or change many at once. A line adds a variable or replaces its value; secrets are not listed, since their values cannot be shown, and are replaced by writing their line; a commented line, “# NAME=…”, removes that variable. Applying fills the rows to look over and lock; nothing is sent until Save.",
+      },
+      {
+        kind: 'added',
+        title: 'Pipelines written outside Renkei open as they are',
+        detail:
+          'When a branch already has a pipeline that was not built in Renkei — a bitbucket-pipelines.yml or GitHub workflows from another editor — its Pipeline tab now opens on that file instead of on a suggestion that would replace it. You can read it, edit it and commit to the branch, or ask the assistant, which reads the repository and proposes the file edited for you to review and commit. Building it from blocks instead is one explicit choice, and says what it does to the file. “Get the report step” gives a few lines to copy into a hand-written pipeline so its environment shows what it deployed, with no secret involved.',
+      },
+      {
+        kind: 'added',
+        title: 'Variables and secrets from a .env file',
+        detail:
+          "The Variables tab of a project's Environments page edits the repository's and each environment's pipeline variables as rows. Upload or paste a .env file: it is read in your browser, each row can be locked as a secret before anything is sent, and Save sends them straight to Bitbucket or GitHub — never to a model. GitHub secrets can now be set from Renkei (sealed to the repository's key), and the “secret NAME=” text syntax is gone.",
+      },
+      {
+        kind: 'changed',
+        title: 'Environments: pipelines, runs and variables by branch',
+        detail:
+          "A code project's pipelines moved from the Deployments section to its own Environments page (the Pipelines link on a Bitbucket project, Actions on a GitHub one). Name the environments you deploy to, assign each the branches of the repository that deploy it — production takes exactly one — then pick an environment and a branch to see that branch's pipeline, its runs and its variables. A pipeline is now built per branch, and its pull request goes against that branch, because the pipeline file lives there. Pipelines built before this are split into one per environment branch; the Deployments item is gone from the menu, and promoting between environments from Renkei with it.",
+      },
+    ],
+  },
+  {
+    date: '2026-11-20',
+    entries: [
+      {
+        kind: 'changed',
+        title: '“Set it” opens the variable ready for its value',
+        detail:
+          'A variable the pipeline is missing now has a link for each environment it is missing from. It opens that environment’s variables with the line already written — NAME=, or secret NAME= for a secret — and the cursor after the =, so you just type the value; a variable that is already there is opened with its value selected. On GitHub, a missing secret says where on GitHub to set it.',
+      },
+    ],
+  },
+  {
+    date: '2026-11-19',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'Agents name the right person in SharePoint person columns',
+        detail:
+          'SharePoint list items now show the person behind each person column instead of a bare number, and agents look up the right person (yourself included) before setting one, rather than copying a number from another row. Agents also find the tool for editing a list item instead of offering to delete and re-add it.',
+      },
+      {
+        kind: 'added',
+        title: 'Agents can work with SharePoint lists',
+        detail:
+          'Agents can now read SharePoint lists, search and page through their items, and add, change and delete items, naming a list by its title or link. With the new "Manage SharePoint lists" permission they can also create lists and add or remove columns; removing a column or deleting an item asks for approval first.',
+      },
+      {
+        kind: 'fixed',
+        title: 'The pipeline assistant no longer stops halfway',
+        detail:
+          'A large pipeline proposal that ran past the model’s reply limit, or a long read of the repository, used to end the answer at "Next I’ll propose the pipeline change" with nothing proposed. The assistant now keeps working toward what you asked until it answers, sending a cut-off proposal again in a shorter form; after three proposals that do not read it stops and says what was wrong.',
+      },
+      {
+        kind: 'changed',
+        title: 'The pipeline assistant counts toward your usage',
+        detail:
+          'What the pipeline assistant spends on the model now shows in usage, as the spend of the person who asked.',
+      },
+      {
+        kind: 'changed',
+        title: 'The pipeline assistant works in the background',
+        detail:
+          'Asking the pipeline assistant no longer holds the page waiting on one long request: the server works the answer out and the panel shows what it is doing as it goes ("Reading package.json"), and an answer cut short by a restart says so instead of spinning.',
+      },
+      {
+        kind: 'added',
+        title: 'Pipelines make the branches they deploy from',
+        detail:
+          "An environment whose branch the repository does not have yet no longer waits on someone to create it: opening the pipeline's pull request makes the branch from the project's branch, and the page and the pull request say which were made.",
+      },
+      {
+        kind: 'fixed',
+        title: 'Pipelines for projects on the default branch',
+        detail:
+          'A code project that follows its repository\'s default branch now gets a suggested pipeline whose production deploys from that branch, and its pull request opens against it; before, production had no branch, so the pipeline could not be saved and the pipeline assistant answered "The pipeline in the builder does not read." The assistant also now works from a pipeline that does not read yet, and fixes what is wrong with it.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Restoring an evicted sandbox no longer fails at random',
+        detail:
+          "Bringing back a sandbox's files after it was put away for being idle could, now and then, fail on a perfectly good archive; it now always reads the archive to its end.",
+      },
+      {
+        kind: 'added',
+        title: 'List a Salesforce org’s Apex classes and triggers',
+        detail:
+          'Agents connected to Salesforce can now list the org’s Apex classes and triggers by name — version, status, size, who changed each last, and the object and events a trigger fires on — filtered by name or object and paged, then read any of them line by line.',
+      },
+      {
+        kind: 'added',
+        title: 'Pipeline assistant: blocks tailored to the source',
+        detail:
+          "A code project's Pipeline tab under Deployments has an assistant in a floating button you can drag to any corner, opening a window you resize to taste: it reads the repository and proposes the pipeline with blocks written for this project where the organization's don't fit, which you apply, check and save as usual. Operators can have it turn one of those blocks into a general building block, saved as a draft in the catalogue to review and publish for every project.",
+      },
+      {
+        kind: 'added',
+        title: 'Microsoft Fabric connector, deployed through CI',
+        detail:
+          "Connect Microsoft Fabric on its own card to browse your workspaces, lakehouse tables, notebooks and data pipelines from the Fabric page or a chat; a definition Fabric takes a while to prepare fills in live, and you are notified if you have moved on. Changes go through CI: a chat proposes notebooks, pipelines and each environment's workspace as a pull request on a code project, and the new Fabric building blocks deploy them when merged, signing in with the repository's OpenID Connect token.",
+      },
+    ],
+  },
+  {
+    date: '2026-11-18',
+    heading: 'CI and deployments',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Read Bitbucket runners as an OAuth consumer',
+        detail:
+          'The Targets page can read a Bitbucket workspace’s runners with an OAuth consumer’s client credentials instead of an API token: the one people already connect Bitbucket through, with nothing to paste, or a consumer of its own. Bitbucket asks that the consumer be private and have the Runners: Read permission, and the page says which is missing.',
+      },
+      {
+        kind: 'added',
+        title: 'Building blocks for pipelines',
+        detail:
+          'Operators keep the organization’s CI building blocks in Organization settings: a step written once — what it runs on, its inputs, the variables it needs, its commands — and shown as a Bitbucket step and a GitHub Actions job. Draft one with AI, publish it as a numbered version, and start from six starter blocks for Node, Python, Go and on-premises deploys.',
+      },
+      {
+        kind: 'added',
+        title: 'Targets from your runners',
+        detail:
+          'Connect a Bitbucket workspace and a GitHub App, and the Targets page lists their self-hosted runners with their labels and whether they are online. Name a target by its labels, or make one from a runner in one click; a deploy then picks a target instead of guessing labels.',
+      },
+      {
+        kind: 'added',
+        title: 'Build a pipeline from blocks',
+        detail:
+          'Each code project gets a pipeline builder: checks on every pull request, then each environment’s branch and the blocks that build and deploy it, suggested from the repository’s files. It shows the whole file it writes, checks it against your runners, variables and branches as you edit, and opens a pull request with it — Renkei never commits to your branch or deploys.',
+      },
+      {
+        kind: 'added',
+        title: 'Deployments: what runs where',
+        detail:
+          'A new Deployments item shows what each code project’s pipeline deployed to each environment, as the pipeline’s own deploy steps report it — signed by Bitbucket or GitHub, so no token is stored anywhere. See what is behind, open the pull request that promotes dev to production, and merge it from there; the pipeline deploys and reports back.',
+      },
+      {
+        kind: 'changed',
+        title: 'Pipelines moved to Deployments',
+        detail:
+          'A code project’s pipeline, its Bitbucket Pipelines or GitHub Actions runs and its variables are now tabs of its app under Deployments, beside what it deployed where. The project page links there, a code chat’s More menu opens it in a new tab, and old links still land in the right place.',
+      },
+      {
+        kind: 'changed',
+        title: 'Pipeline templates are gone',
+        detail:
+          'The organization’s catalog of starting pipeline files, and its page in Organization settings, are removed: build a project’s pipeline from building blocks on its Pipeline tab instead, or write the file by hand on the Runs & variables tab.',
+      },
+    ],
+  },
+  {
     date: '2026-11-17',
     entries: [
       {

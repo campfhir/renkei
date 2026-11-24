@@ -49,6 +49,13 @@ import { chatAgents } from './chat-agents';
 import { artifacts } from './artifacts';
 import { codeProjects } from './code-projects';
 import { codeTemplates } from './code-templates';
+import { ciBlocks } from './ci-blocks';
+import { ciDeployments } from './ci-deployments';
+import { ciEnvironments } from './ci-environments';
+import { ciHealth } from './ci-health-checkins';
+import { ciPipelines } from './ci-pipelines';
+import { ciRepoKeys } from './ci-repo-keys';
+import { ciTargets } from './ci-targets';
 import { chatModels } from './chat-models';
 import { actionableItems } from './actionable-items';
 import { firstRun } from './first-run';
@@ -88,6 +95,8 @@ import { resourceKeys } from './resource-keys';
 import { delegateSigningKeys } from './delegate-signing-keys';
 import { delegateAccessEvents } from './delegate-access-events';
 import { delegateGitTickets } from './delegate-git-tickets';
+import { fabricOperations } from './fabric-operations';
+import { ciAssistantJobs } from './ci-assistant-jobs';
 import { sealedEnvelopes } from './sealed-envelopes';
 import { legacyEnvelopes } from './legacy-envelopes';
 import { advisoryLocks } from './advisory-locks';
@@ -140,6 +149,13 @@ export const DOMAINS = {
   artifacts,
   codeProjects,
   codeTemplates,
+  ciBlocks,
+  ciDeployments,
+  ciEnvironments,
+  ciHealth,
+  ciPipelines,
+  ciRepoKeys,
+  ciTargets,
   chatModels,
   actionableItems,
   firstRun,
@@ -178,6 +194,8 @@ export const DOMAINS = {
   delegateSigningKeys,
   delegateAccessEvents,
   delegateGitTickets,
+  fabricOperations,
+  ciAssistantJobs,
   sealedEnvelopes,
   legacyEnvelopes,
   advisoryLocks,

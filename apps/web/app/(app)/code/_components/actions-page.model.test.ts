@@ -6,7 +6,6 @@ import {
   commitMessageFor,
   committedReminder,
   initialActions,
-  secretsNote,
   workflowNameProblem,
   workflowRequest,
   workflowsLine,
@@ -35,55 +34,27 @@ const setup = (over: Partial<ActionsPageSetup> = {}): ActionsPageSetup => ({
 const fold = (actions: ActionsAction[], from: ActionsState = initialActions): ActionsState =>
   actions.reduce(actionsReducer, from);
 
-describe('editing a variable set', () => {
-  it('opens a set as its plain variables, as text', () => {
-    const state = fold([
-      { type: 'loaded', setup: setup() },
-      { type: 'variablesOpened', scope: {}, variables: setup().variables },
-    ]);
-    expect(state.draft).toEqual({ text: 'REGION=eu' });
-  });
-
-  it('keeps an environment’s name as its scope, and clears the box after a save', () => {
-    const state = fold([
-      { type: 'variablesOpened', scope: { environmentUuid: 'production' }, variables: [] },
-      { type: 'variablesChanged', text: 'A=1' },
-    ]);
-    expect(state.draft).toEqual({ environmentUuid: 'production', text: 'A=1' });
-    const saved = fold(
-      [
-        { type: 'sent', what: 'variables' },
-        {
-          type: 'variablesSaved',
-          outcome: {
-            environmentUuid: 'production',
-            added: ['A'],
-            changed: [],
-            removed: [],
-            errors: [],
-            problems: [],
-          },
-        },
-      ],
-      state
-    );
-    expect(saved.draft).toBeNull();
-    expect(saved.busy).toBe(false);
-    expect(saved.outcome?.added).toEqual(['A']);
-  });
-
-  it('a refused change keeps every editor as it was and shows why', () => {
-    const open = fold([{ type: 'variablesOpened', scope: {}, variables: [] }]);
+describe('a change that is refused', () => {
+  it('keeps the open editor as it was and shows why', () => {
+    const open = fold([{ type: 'fileOpened', name: 'ci.yml', text: 'name: CI' }]);
     const failed = fold(
       [
-        { type: 'sent', what: 'variables' },
+        { type: 'sent', what: 'file' },
         { type: 'failed', error: 'GitHub said no' },
       ],
       open
     );
-    expect(failed.draft).toEqual({ text: '' });
+    expect(failed.fileDraft?.text).toBe('name: CI');
     expect(failed.error).toBe('GitHub said no');
     expect(failed.busy).toBe(false);
+  });
+
+  it('a new change clears the last refusal while it is in flight', () => {
+    const failed = fold([{ type: 'failed', error: 'GitHub said no' }]);
+    const again = fold([{ type: 'sent', what: 'flip' }], failed);
+    expect(again.error).toBeNull();
+    expect(again.busy).toBe(true);
+    expect(fold([{ type: 'flipped' }], again).busy).toBe(false);
   });
 });
 
@@ -94,9 +65,6 @@ describe('writing a workflow file', () => {
         type: 'fileOpened',
         name,
         text,
-        templates: [
-          { id: 't1', provider: 'github', name: 'Node', description: null, body: 'on: push' },
-        ],
       },
     ]);
 
@@ -107,7 +75,6 @@ describe('writing a workflow file', () => {
       name: 'ci.yml',
       text: 'on: pull_request',
       message: 'Update ci.yml',
-      templateId: '',
     });
   });
 
@@ -136,11 +103,10 @@ describe('writing a workflow file', () => {
     expect(commitMessageFor('nope')).toBe('Add a workflow');
   });
 
-  it('a picked template fills the box, and Commit sends the box as it is', () => {
+  it('Commit sends the box as it is, the name and message trimmed', () => {
     let state = opened(null, null);
     state = fold(
       [
-        { type: 'templatePicked', templateId: 't1' },
         { type: 'fileChanged', field: 'name', value: ' ci.yml ' },
         { type: 'fileChanged', field: 'message', value: '  Add CI  ' },
         { type: 'fileChanged', field: 'text', value: 'on: push\njobs: {}' },
@@ -164,7 +130,7 @@ describe('writing a workflow file', () => {
 
   it('names a taken or unusable file name, and nothing while the name is empty', () => {
     const files = setup().workflows!;
-    const draft = (name: string) => ({ isNew: true, name, text: '', message: '', templateId: '' });
+    const draft = (name: string) => ({ isNew: true, name, text: '', message: '' });
     expect(workflowNameProblem(draft(''), files)).toBeNull();
     expect(workflowNameProblem(draft('CI.yml'), files)).toMatch(/already a workflow/);
     expect(workflowNameProblem(draft('x'), files)).toMatch(/ending .yml or .yaml/);
@@ -174,7 +140,7 @@ describe('writing a workflow file', () => {
 
   it('a commit closes the editor and says where it went', () => {
     const state = fold([
-      { type: 'fileOpened', name: 'ci.yml', text: 'x', templates: [] },
+      { type: 'fileOpened', name: 'ci.yml', text: 'x' },
       { type: 'sent', what: 'file' },
       {
         type: 'fileCommitted',
@@ -211,10 +177,5 @@ describe('the words on the page', () => {
       workflowsLine(setup({ workflows: null, workflowsError: 'GitHub is down' }), 'main')
     ).toBe('GitHub is down');
     expect(branchLabel('')).toBe('the default branch');
-  });
-
-  it('says secrets are set on GitHub', () => {
-    expect(secretsNote(0)).toMatch(/added on GitHub/);
-    expect(secretsNote(2)).toMatch(/listed by name/);
   });
 });

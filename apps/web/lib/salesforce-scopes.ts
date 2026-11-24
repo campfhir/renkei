@@ -30,7 +30,7 @@ export const SALESFORCE_SCOPE_OPTIONS: ScopeOption[] = [
       'salesforce_check_access, salesforce_list_objects, salesforce_describe_object, ' +
       'salesforce_search, salesforce_query, salesforce_get_record, salesforce_list_related, ' +
       'salesforce_find_relationship_path, salesforce_record_history, salesforce_list_changes, ' +
-      'salesforce_download_file (into the scratch space) — any standard or custom object the person can see.',
+      'salesforce_download_file (into the scratch space), salesforce_list_apex (Apex classes and triggers by name), salesforce_read_apex (Apex source by line) — any standard or custom object the person can see.',
     userHint:
       'Find and read records — standard and custom objects, their related records, history and files — with your own Salesforce access.',
     group: 'records',

@@ -10,14 +10,17 @@
  * Started by playwright.config.ts as a second webServer, on the port the
  * app's SANDBOX_WORKER_URL names (see the repo-root .env.development).
  * The same process also stands in for Bitbucket, Jira administration's
- * option endpoints and Mistral OCR (handleMistralOcr below).
+ * option endpoints, Microsoft Fabric (handleFabric) and Mistral OCR
+ * (handleMistralOcr below).
  */
 
 /* global process, Buffer, setTimeout, URL, URLSearchParams, console */
 
 import { createServer } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { generateKeyPairSync, randomUUID, sign as signWith } from 'node:crypto';
 import JSZip from 'jszip';
+import nacl from 'tweetnacl';
+import { blake2b } from '@noble/hashes/blake2b';
 
 const PORT = Number(process.env.SANDBOX_STUB_PORT ?? '8092');
 const API_KEY = process.env.SANDBOX_WORKER_API_KEY ?? 'e2e-sandbox-key';
@@ -456,6 +459,14 @@ function readBody(request) {
         resolve({});
       }
     });
+  });
+}
+
+function readText(request) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    request.on('data', (chunk) => chunks.push(chunk));
+    request.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
   });
 }
 
@@ -1441,6 +1452,64 @@ function handlePipelineVariables(request, response, list, uuid) {
  */
 const GITHUB_ACTIONS = new Map();
 
+/**
+ * The key GitHub seals secrets to: a secret arrives as a libsodium sealed
+ * box (the app's lib/code/sealed-box.ts). This stand-in opens each one as
+ * GitHub would, and refuses one that does not open — so a secret saved in
+ * the browser suite was really sealed to this key — then keeps its name
+ * and forgets its value, as GitHub never gives one back.
+ */
+const SECRET_KEY = nacl.box.keyPair();
+const SECRET_KEY_ID = 'stub-key-1';
+
+function opensSealed(base64) {
+  const sealed = new Uint8Array(Buffer.from(String(base64 ?? ''), 'base64'));
+  if (sealed.length < 48) return false;
+  const ephemeral = sealed.subarray(0, 32);
+  const both = new Uint8Array(64);
+  both.set(ephemeral, 0);
+  both.set(SECRET_KEY.publicKey, 32);
+  const nonce = blake2b(both, { dkLen: 24 });
+  return nacl.box.open(sealed.subarray(32), nonce, ephemeral, SECRET_KEY.secretKey) !== null;
+}
+
+/** The secrets endpoints of one set: the names, the sealing key, and putting or deleting one. */
+function handleActionsSecrets(request, response, names, name) {
+  if (!name) {
+    return json(response, 200, {
+      total_count: names.length,
+      secrets: names.map((secret) => ({ name: secret })),
+    });
+  }
+  if (name === 'public-key') {
+    return json(response, 200, {
+      key_id: SECRET_KEY_ID,
+      key: Buffer.from(SECRET_KEY.publicKey).toString('base64'),
+    });
+  }
+  const wanted = decodeURIComponent(name);
+  if (request.method === 'PUT') {
+    void readBody(request).then((body) => {
+      if (body.key_id !== SECRET_KEY_ID || !opensSealed(body.encrypted_value)) {
+        return error(response, 422, 'unprocessable', 'The secret is not sealed to the key.');
+      }
+      const existed = names.includes(wanted);
+      if (!existed) names.push(wanted);
+      response.writeHead(existed ? 204 : 201);
+      response.end();
+    });
+    return;
+  }
+  if (request.method === 'DELETE') {
+    const at = names.indexOf(wanted);
+    if (at < 0) return error(response, 404, 'not_found', 'Not Found');
+    names.splice(at, 1);
+    response.writeHead(204);
+    return response.end();
+  }
+  return error(response, 405, 'method_not_allowed');
+}
+
 function actionsOf(fullName) {
   if (!GITHUB_ACTIONS.has(fullName)) {
     GITHUB_ACTIONS.set(fullName, {
@@ -1506,6 +1575,98 @@ function handleActionsVariables(request, response, list, name) {
   return error(response, 405, 'method_not_allowed');
 }
 
+/**
+ * Self-hosted runners for the Targets page (ci-targets.spec.ts), on an
+ * organization or workspace named `e2e-ci-*`: two on each host. GitHub's
+ * through a GitHub App's installation token (the JWT is not checked, as
+ * nothing here holds the App's public key; the token it returns is what
+ * the runner list requires); Bitbucket's from the workspace's runners
+ * endpoint, to the token its token endpoint gives the code hosts' test
+ * OAuth consumer (e2e/support/code-host.ts) by client credentials.
+ */
+const BITBUCKET_CONSUMER = `Basic ${Buffer.from('e2e-bitbucket-client:e2e-bitbucket-secret').toString('base64')}`;
+const BITBUCKET_CONSUMER_TOKEN = 'bb_e2e_consumer';
+const CI_RUNNERS = {
+  github: [
+    {
+      id: 101,
+      name: 'workers-02',
+      os: 'linux',
+      status: 'online',
+      busy: true,
+      labels: [{ name: 'self-hosted' }, { name: 'Linux' }, { name: 'onprem-workers' }],
+    },
+    {
+      id: 102,
+      name: 'build-mac-01',
+      os: 'macos',
+      status: 'online',
+      busy: false,
+      labels: [{ name: 'self-hosted' }, { name: 'macOS' }, { name: 'ARM64' }],
+    },
+  ],
+  bitbucket: [
+    {
+      uuid: '{e2e-runner-1}',
+      name: 'workers-01',
+      labels: ['self.hosted', 'linux', 'onprem-workers'],
+      state: { status: 'ONLINE' },
+    },
+    {
+      uuid: '{e2e-runner-2}',
+      name: 'dmz-edge-01',
+      labels: ['self.hosted', 'linux', 'dmz'],
+      state: { status: 'OFFLINE' },
+    },
+  ],
+};
+
+function handleCiRunners(request, url, response) {
+  const gh = /^\/github\/orgs\/(e2e-ci-[^/]+)\/(installation|actions\/runners)$/.exec(url.pathname);
+  if (gh && gh[2] === 'installation')
+    return json(response, 200, { id: 9001, account: { login: gh[1] } });
+  if (
+    request.method === 'POST' &&
+    url.pathname === '/github/app/installations/9001/access_tokens'
+  ) {
+    return json(response, 201, {
+      token: 'ghs_e2e_installation',
+      expires_at: '2099-01-01T00:00:00Z',
+    });
+  }
+  if (gh && gh[2] === 'actions/runners') {
+    if (request.headers.authorization !== 'Bearer ghs_e2e_installation')
+      return error(response, 401, 'unauthorized');
+    return json(response, 200, {
+      total_count: CI_RUNNERS.github.length,
+      runners: CI_RUNNERS.github,
+    });
+  }
+  if (request.method === 'POST' && url.pathname === '/bitbucket/site/oauth2/access_token') {
+    void readText(request).then((body) => {
+      if (new URLSearchParams(body).get('grant_type') !== 'client_credentials')
+        return json(response, 400, { error: 'unsupported_grant_type' });
+      if (request.headers.authorization !== BITBUCKET_CONSUMER)
+        return json(response, 400, { error: 'invalid_client' });
+      return json(response, 200, {
+        access_token: BITBUCKET_CONSUMER_TOKEN,
+        token_type: 'bearer',
+        expires_in: 7200,
+        scopes: 'runner',
+      });
+    });
+    return;
+  }
+  if (
+    /^\/bitbucket\/2\.0\/workspaces\/e2e-ci-[^/]+\/pipelines-config\/runners$/.test(url.pathname)
+  ) {
+    if (request.headers.authorization !== `Bearer ${BITBUCKET_CONSUMER_TOKEN}`)
+      return error(response, 401, 'unauthorized');
+    return json(response, 200, { pagelen: 100, values: CI_RUNNERS.bitbucket });
+  }
+  return null;
+}
+
 /** GitHub's REST API as far as the Actions page and its chat tools reach. */
 function handleGitHubActions(request, url, response) {
   const path = url.pathname.slice('/github'.length);
@@ -1532,11 +1693,29 @@ function handleGitHubActions(request, url, response) {
   const repoVariables = /^actions\/variables(?:\/([^/]+))?$/.exec(rest);
   if (repoVariables)
     return handleActionsVariables(request, response, state.variables, repoVariables[1]);
-  if (rest === 'actions/secrets') {
-    return json(response, 200, {
-      total_count: state.secrets.length,
-      secrets: state.secrets.map((name) => ({ name })),
-    });
+  const repoSecrets = /^actions\/secrets(?:\/([^/]+))?$/.exec(rest);
+  if (repoSecrets) return handleActionsSecrets(request, response, state.secrets, repoSecrets[1]);
+  // The branches the Environments page offers to assign.
+  if (rest === 'branches') {
+    return json(
+      response,
+      200,
+      ['main', 'develop', 'release/2.0'].map((name, index) => ({
+        name,
+        commit: { sha: `${index}a1b2c3d4e5f6`.padEnd(40, '0') },
+      }))
+    );
+  }
+  // One environment: whether it is there, and making it.
+  const oneEnvironment = /^environments\/([^/]+)$/.exec(rest);
+  if (oneEnvironment) {
+    const name = decodeURIComponent(oneEnvironment[1]);
+    const found = state.environments.find((entry) => entry.name === name);
+    if (request.method === 'PUT') {
+      if (!found) state.environments.push({ name, variables: [], secrets: [] });
+      return json(response, 200, { name });
+    }
+    return found ? json(response, 200, { name }) : error(response, 404, 'not_found', 'Not Found');
   }
   if (rest === 'environments') {
     return json(response, 200, {
@@ -1551,10 +1730,7 @@ function handleGitHubActions(request, url, response) {
     );
     if (!found) return error(response, 404, 'not_found', 'Not Found');
     if (environment[2] === 'secrets') {
-      return json(response, 200, {
-        total_count: found.secrets.length,
-        secrets: found.secrets.map((name) => ({ name })),
-      });
+      return handleActionsSecrets(request, response, found.secrets, environment[3]);
     }
     return handleActionsVariables(request, response, found.variables, environment[3]);
   }
@@ -1593,6 +1769,192 @@ function handleGitHubActions(request, url, response) {
     }
   }
   return error(response, 404, 'not_found', 'Not Found');
+}
+
+/**
+ * The pipeline builder's repositories (`acme/pipeline-demo-*`,
+ * pipeline-builder.spec.ts): their branches, the pull requests opened on
+ * them, and a commit through the src endpoint kept on the branch it names
+ * — so the file the builder puts on its own branch is not on main until
+ * the pull request merges. The rest (variables, environments, the file on
+ * main) is handleBitbucket's, by repository.
+ */
+const PIPELINE_DEMO = new Map();
+
+/** A demo repository's UUID: fixed per name, as Bitbucket's is per repository. */
+function pipelineDemoUuid(fullName) {
+  const hex = Buffer.from(fullName).toString('hex').padEnd(12, '0').slice(-12);
+  return `{00000000-0000-4000-8000-${hex}}`;
+}
+
+/** What develop has that main lacks, newest first, as Bitbucket lists commits. */
+const PIPELINE_DEMO_COMMITS = [
+  {
+    hash: '8e41c2a9f0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5',
+    message: 'Show the intake status on the case page',
+    author: { raw: 'Priya Shah <priya@example.test>', user: { display_name: 'Priya Shah' } },
+  },
+  {
+    hash: '71c0b3e9f0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5',
+    message: 'Retry the address lookup once on a timeout',
+    author: { raw: 'Jordan Lee <jordan@example.test>', user: { display_name: 'Jordan Lee' } },
+  },
+];
+
+/**
+ * Bitbucket Pipelines' OpenID Connect, stood in for: the stub signs a
+ * step's token with a key of its own and publishes the key at the
+ * workspace's issuer, `…/workspaces/{workspace}/pipelines-config/identity/oidc/keys.json`.
+ * `POST /e2e/bitbucket-step-token` hands a spec the token a step would hold
+ * in $BITBUCKET_STEP_OIDC_TOKEN (deployments.spec.ts).
+ */
+const OIDC_KEY = generateKeyPairSync('rsa', { modulusLength: 2048 });
+const OIDC_JWK = {
+  ...OIDC_KEY.publicKey.export({ format: 'jwk' }),
+  kid: 'e2e-oidc',
+  alg: 'RS256',
+  use: 'sig',
+};
+const base64url = (value) => Buffer.from(value).toString('base64url');
+
+function bitbucketStepToken(origin, body) {
+  const now = Math.floor(Date.now() / 1000);
+  const header = base64url(JSON.stringify({ alg: 'RS256', kid: 'e2e-oidc', typ: 'JWT' }));
+  const payload = base64url(
+    JSON.stringify({
+      iss: `${origin}/bitbucket/2.0/workspaces/${body.workspace ?? 'acme'}/pipelines-config/identity/oidc`,
+      aud: 'ari:cloud:bitbucket::workspace/e2e',
+      sub: `${body.repositoryUuid}:{step}`,
+      repositoryUuid: body.repositoryUuid,
+      branchName: body.branchName ?? 'main',
+      iat: now,
+      exp: now + 300,
+    })
+  );
+  const signature = signWith('sha256', Buffer.from(`${header}.${payload}`), OIDC_KEY.privateKey);
+  return `${header}.${payload}.${signature.toString('base64url')}`;
+}
+
+function pipelineDemoOf(fullName) {
+  if (!PIPELINE_DEMO.has(fullName)) {
+    PIPELINE_DEMO.set(fullName, {
+      branches: new Map([
+        ['main', 'a1b2c3d4e5f6'],
+        ['develop', 'f6e5d4c3b2a1'],
+      ]),
+      files: new Map(),
+      pulls: [],
+    });
+  }
+  return PIPELINE_DEMO.get(fullName);
+}
+
+function handlePipelineDemo(request, url, response) {
+  const found = /^\/bitbucket\/2\.0\/repositories\/(acme)\/(pipeline-demo-[^/]+)(?:\/(.*))?$/.exec(
+    url.pathname
+  );
+  if (!found) return null;
+  const fullName = `${found[1]}/${found[2]}`;
+  const state = pipelineDemoOf(fullName);
+  const rest = found[3] ?? '';
+  // The repository itself, with the UUID its step tokens name it by.
+  if (rest === '' && request.method === 'GET') {
+    return json(response, 200, {
+      uuid: pipelineDemoUuid(fullName),
+      full_name: fullName,
+      name: found[2],
+      project: { key: 'DEMO' },
+      mainbranch: { name: 'main' },
+      updated_on: '2026-09-01T00:00:00Z',
+    });
+  }
+  // What develop has that main lacks: `commits?include=develop&exclude=main`.
+  if (rest === 'commits' && request.method === 'GET') {
+    const include = url.searchParams.get('include');
+    const exclude = url.searchParams.get('exclude');
+    const merged = state.pulls.some(
+      (pr) =>
+        pr.state === 'MERGED' &&
+        pr.source?.branch?.name === include &&
+        pr.destination?.branch?.name === exclude
+    );
+    return json(response, 200, {
+      values: include === 'develop' && exclude === 'main' && !merged ? PIPELINE_DEMO_COMMITS : [],
+    });
+  }
+  const pull = /^pullrequests\/(\d+)(\/merge)?$/.exec(rest);
+  if (pull) {
+    const pr = state.pulls.find((p) => p.id === Number(pull[1]));
+    if (!pr) return error(response, 404, 'not_found');
+    if (pull[2] && request.method === 'POST') {
+      pr.state = 'MERGED';
+      return json(response, 200, pr);
+    }
+    return json(response, 200, pr);
+  }
+  const match = [null, found[1], found[2], rest];
+  if (!['refs/branches', 'pullrequests', 'src'].includes(rest)) return null;
+  if (match[3] === 'refs/branches' && request.method === 'POST') {
+    // A branch made from a commit, as Bitbucket's refs/branches POST does.
+    void readBody(request).then((body) => {
+      const name = body.name ?? '';
+      const hash = body.target?.hash ?? '';
+      if (!name || !hash) return error(response, 400, 'bad_request', 'name and target.hash');
+      if (state.branches.has(name)) return error(response, 400, 'bad_request', `${name} exists`);
+      state.branches.set(name, hash);
+      json(response, 201, { name, target: { hash } });
+    });
+    return;
+  }
+  if (match[3] === 'refs/branches') {
+    return json(response, 200, {
+      values: [...state.branches].map(([name, hash]) => ({ name, target: { hash } })),
+    });
+  }
+  if (match[3] === 'pullrequests' && request.method === 'GET') {
+    const wanted = (url.searchParams.get('state') ?? 'OPEN').toUpperCase();
+    return json(response, 200, { values: state.pulls.filter((pr) => pr.state === wanted) });
+  }
+  if (match[3] === 'pullrequests' && request.method === 'POST') {
+    void readBody(request).then((body) => {
+      const id = state.pulls.length + 1;
+      const pr = {
+        id,
+        title: body.title ?? '',
+        description: body.description ?? '',
+        state: 'OPEN',
+        source: body.source,
+        destination: body.destination,
+        author: { display_name: 'E2E Dev' },
+        updated_on: new Date().toISOString(),
+        links: { html: { href: `https://bitbucket.org/${fullName}/pull-requests/${id}` } },
+      };
+      state.pulls.push(pr);
+      json(response, 201, pr);
+    });
+    return;
+  }
+  if (match[3] === 'src' && request.method === 'POST') {
+    const chunks = [];
+    request.on('data', (chunk) => chunks.push(chunk));
+    request.on('end', () => {
+      const form = new URLSearchParams(Buffer.concat(chunks).toString('utf8'));
+      const branch = form.get('branch') ?? 'main';
+      const parents = form.get('parents');
+      if (!state.branches.has(branch)) {
+        // Bitbucket makes a branch it does not know from the parent named.
+        if (!parents) return error(response, 400, 'bad_request', `No branch ${branch}`);
+        state.branches.set(branch, parents);
+      }
+      state.files.set(branch, form.get('bitbucket-pipelines.yml') ?? '');
+      state.branches.set(branch, `c${String(state.files.size).padStart(11, '0')}`);
+      if (branch === 'main') pipelinesOf(fullName).configFile = state.files.get(branch);
+      response.writeHead(201);
+      response.end();
+    });
+    return;
+  }
+  return null;
 }
 
 function handleBitbucket(request, url, response) {
@@ -1635,6 +1997,16 @@ function handleBitbucket(request, url, response) {
     }
     return json(response, 200, { values: state.runs });
   }
+  // The branches the Environments page offers to assign, on any repository
+  // (the pipeline-demo ones keep their own, in handlePipelineDemo).
+  if (/^\/repositories\/[^/]+\/[^/]+\/refs\/branches$/.test(path) && request.method === 'GET') {
+    return json(response, 200, {
+      values: [
+        { name: 'main', target: { hash: 'a1b2c3d4e5f6' } },
+        { name: 'develop', target: { hash: 'f6e5d4c3b2a1' } },
+      ],
+    });
+  }
   const repoVariables =
     /^\/repositories\/([^/]+)\/([^/]+)\/pipelines_config\/variables(?:\/([^/]+))?$/.exec(path);
   if (repoVariables) {
@@ -1644,6 +2016,21 @@ function handleBitbucket(request, url, response) {
   const environments = /^\/repositories\/([^/]+)\/([^/]+)\/environments$/.exec(path);
   if (environments) {
     const state = pipelinesOf(`${environments[1]}/${environments[2]}`);
+    if (request.method === 'POST') {
+      // A deployment environment made from the Variables tab.
+      void readBody(request).then((body) => {
+        const made = {
+          uuid: `{${randomUUID()}}`,
+          name: String(body.name ?? ''),
+          environment_type: { name: body.environment_type?.name ?? 'Test' },
+          rank: state.environments.length + 3,
+          variables: [],
+        };
+        state.environments.push(made);
+        json(response, 201, { uuid: made.uuid, name: made.name });
+      });
+      return;
+    }
     return json(response, 200, {
       values: state.environments.map((environment) => {
         const rest = { ...environment };
@@ -3116,6 +3503,162 @@ async function handleMistralOcr(request, response) {
   });
 }
 
+/**
+ * Microsoft Fabric, stood in for (the app is pointed at /fabric with
+ * FABRIC_API_BASE_URL; the connect flow is the in-memory app's own fake
+ * OAuth). Stateless and the same for everyone: one workspace holding a
+ * notebook, a data pipeline and a lakehouse with two tables. Asking for a
+ * definition starts a long-running operation, as Fabric does: 202 with an
+ * operation id that carries when it started, Running (with a percentage)
+ * until FABRIC_DEFINITION_MS have passed, then Succeeded with the
+ * definition as its result — so a spec sees the wait, then the arrival.
+ */
+const FABRIC_DEFINITION_MS = Number(process.env.FABRIC_STUB_DEFINITION_MS ?? '4000');
+const FABRIC_WORKSPACE = '0f0f0f0f-0000-4000-8000-00000000f001';
+const FABRIC_NOTEBOOK = '0f0f0f0f-0000-4000-8000-00000000f002';
+const FABRIC_PIPELINE = '0f0f0f0f-0000-4000-8000-00000000f003';
+const FABRIC_LAKEHOUSE = '0f0f0f0f-0000-4000-8000-00000000f004';
+const FABRIC_ITEMS = [
+  {
+    id: FABRIC_NOTEBOOK,
+    displayName: 'Load orders',
+    type: 'Notebook',
+    description: 'Bronze to silver',
+  },
+  { id: FABRIC_PIPELINE, displayName: 'Nightly load', type: 'DataPipeline', description: '' },
+  { id: FABRIC_LAKEHOUSE, displayName: 'Bronze', type: 'Lakehouse', description: '' },
+  {
+    id: '0f0f0f0f-0000-4000-8000-00000000f005',
+    displayName: 'Revenue',
+    type: 'Report',
+    description: '',
+  },
+].map((item) => ({ ...item, workspaceId: FABRIC_WORKSPACE }));
+const FABRIC_NOTEBOOK_IPYNB = JSON.stringify({
+  nbformat: 4,
+  nbformat_minor: 5,
+  metadata: { language_info: { name: 'python' } },
+  cells: [
+    { cell_type: 'markdown', metadata: {}, source: ['# Load orders\n', 'Bronze to silver.'] },
+    {
+      cell_type: 'code',
+      metadata: {},
+      execution_count: null,
+      outputs: [],
+      source: ['df = spark.read.table("bronze.orders")\n', 'df.write.saveAsTable("silver.orders")'],
+    },
+  ],
+});
+const FABRIC_PIPELINE_JSON = JSON.stringify({
+  properties: {
+    activities: [
+      { name: 'Copy orders', type: 'Copy', dependsOn: [] },
+      {
+        name: 'Run Load orders',
+        type: 'TridentNotebook',
+        dependsOn: [{ activity: 'Copy orders', dependencyConditions: ['Succeeded'] }],
+      },
+    ],
+  },
+});
+
+function fabricDefinition(kind) {
+  const [path, text] =
+    kind === 'notebook'
+      ? ['notebook-content.ipynb', FABRIC_NOTEBOOK_IPYNB]
+      : ['pipeline-content.json', FABRIC_PIPELINE_JSON];
+  return {
+    definition: {
+      ...(kind === 'notebook' ? { format: 'ipynb' } : {}),
+      parts: [
+        { path, payload: Buffer.from(text).toString('base64'), payloadType: 'InlineBase64' },
+        {
+          path: '.platform',
+          payload: Buffer.from('{"metadata":{"type":"Notebook"}}').toString('base64'),
+          payloadType: 'InlineBase64',
+        },
+      ],
+    },
+  };
+}
+
+function handleFabric(request, url, response) {
+  const path = url.pathname.replace(/^\/fabric\/v1/, '');
+  if (!request.headers.authorization) return json(response, 401, { errorCode: 'Unauthorized' });
+  if (request.method === 'GET' && path === '/workspaces') {
+    return json(response, 200, {
+      value: [
+        { id: FABRIC_WORKSPACE, displayName: 'Sales Analytics', type: 'Workspace', capacityId: '' },
+      ],
+    });
+  }
+  if (request.method === 'GET' && path === `/workspaces/${FABRIC_WORKSPACE}`) {
+    return json(response, 200, {
+      id: FABRIC_WORKSPACE,
+      displayName: 'Sales Analytics',
+      type: 'Workspace',
+    });
+  }
+  if (request.method === 'GET' && path === `/workspaces/${FABRIC_WORKSPACE}/items`) {
+    const type = url.searchParams.get('type');
+    return json(response, 200, {
+      value: FABRIC_ITEMS.filter((item) => !type || item.type === type),
+    });
+  }
+  if (
+    request.method === 'GET' &&
+    path === `/workspaces/${FABRIC_WORKSPACE}/lakehouses/${FABRIC_LAKEHOUSE}/tables`
+  ) {
+    return json(response, 200, {
+      data: [
+        {
+          name: 'orders',
+          type: 'Managed',
+          format: 'Delta',
+          location: 'abfss://onelake/Tables/orders',
+        },
+        {
+          name: 'customers',
+          type: 'Managed',
+          format: 'Delta',
+          location: 'abfss://onelake/Tables/customers',
+        },
+      ],
+    });
+  }
+  const getDefinition = path.match(
+    new RegExp(`^/workspaces/${FABRIC_WORKSPACE}/(notebooks|dataPipelines)/([^/]+)/getDefinition$`)
+  );
+  if (request.method === 'POST' && getDefinition) {
+    const kind = getDefinition[1] === 'notebooks' ? 'notebook' : 'pipeline';
+    const operationId = `${kind}.${Date.now()}`;
+    response.writeHead(202, {
+      Location: `${url.origin}/fabric/v1/operations/${operationId}`,
+      'x-ms-operation-id': operationId,
+      'Retry-After': '1',
+    });
+    response.end();
+    return;
+  }
+  const operation = path.match(/^\/operations\/(notebook|pipeline)\.(\d+)(\/result)?$/);
+  if (request.method === 'GET' && operation) {
+    const elapsed = Date.now() - Number(operation[2]);
+    const done = elapsed >= FABRIC_DEFINITION_MS;
+    if (operation[3]) {
+      return done
+        ? json(response, 200, fabricDefinition(operation[1]))
+        : json(response, 400, { errorCode: 'OperationNotSucceeded', message: 'Not finished yet.' });
+    }
+    return json(response, 200, {
+      status: done ? 'Succeeded' : 'Running',
+      percentComplete: done
+        ? 100
+        : Math.min(95, Math.round((elapsed / FABRIC_DEFINITION_MS) * 100)),
+    });
+  }
+  return json(response, 404, { errorCode: 'EntityNotFound', message: 'Not found.' });
+}
+
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? '/', 'http://stub.internal');
   // The worker's /health names what it can do (apps/worker-sandbox
@@ -3137,6 +3680,32 @@ const server = createServer((request, response) => {
   // Bitbucket, stood in for: the app is pointed here with
   // BITBUCKET_API_BASE_URL, so the picker's browsing and a project page's
   // README are exercised without the network.
+  // CI runners for the Targets page, on e2e-ci-* organizations and workspaces.
+  if (
+    /^\/(github\/orgs\/e2e-ci-|github\/app\/installations\/|bitbucket\/2\.0\/workspaces\/e2e-ci-|bitbucket\/site\/oauth2\/access_token$)/.test(
+      url.pathname
+    )
+  ) {
+    if (handleCiRunners(request, url, response) !== null) return;
+    return error(response, 404, 'not_found', 'Not Found');
+  }
+  if (
+    /^\/bitbucket\/2\.0\/workspaces\/[^/]+\/pipelines-config\/identity\/oidc\/keys\.json$/.test(
+      url.pathname
+    )
+  ) {
+    return json(response, 200, { keys: [OIDC_JWK] });
+  }
+  if (request.method === 'POST' && url.pathname === '/e2e/bitbucket-step-token') {
+    void readBody(request).then((body) => {
+      if (typeof body.repositoryUuid !== 'string') return error(response, 400, 'bad_request');
+      json(response, 200, { token: bitbucketStepToken(`http://${request.headers.host}`, body) });
+    });
+    return;
+  }
+  if (url.pathname.startsWith('/bitbucket/2.0/repositories/acme/pipeline-demo-')) {
+    if (handlePipelineDemo(request, url, response) !== null) return;
+  }
   if (url.pathname.startsWith('/bitbucket/2.0/')) return handleBitbucket(request, url, response);
   // GitHub, stood in for (the app is pointed at /github with
   // GITHUB_API_BASE_URL); the connect flow's token and identity are the
@@ -3165,6 +3734,8 @@ const server = createServer((request, response) => {
   // Jira administration's option endpoints, for applying change requests.
   if (url.pathname.startsWith('/jira/')) return handleJiraAdmin(request, url, response);
   if (url.pathname.startsWith('/automation/')) return handleAutomation(request, url, response);
+  // Microsoft Fabric, stood in for: see handleFabric.
+  if (url.pathname.startsWith('/fabric/v1/')) return handleFabric(request, url, response);
   if (request.headers.authorization !== `Bearer ${API_KEY}`) {
     return error(response, 401, 'unauthorized');
   }

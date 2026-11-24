@@ -1,38 +1,14 @@
-import { notFound, redirect } from 'next/navigation';
-import { ATLASSIAN_BITBUCKET } from '@renkei/provider-grants';
-import { getSessionFromCookies } from '@/lib/session';
-import { signInUrl } from '@/lib/sign-in-url';
-import { resolveResourceAccess } from '@/lib/chat/access';
-import { getProjectRow } from '@/lib/chat/projects';
-import PipelinesPage from '../../_components/pipelines-page';
+import { redirect } from 'next/navigation';
 
 /**
- * A code project's Pipelines: its repository's recent runs, the switch
- * and the pipeline file, and the variables the runs get — on a page of
- * its own so the project page stays a summary. Editors change the setup;
- * viewers read it. Bitbucket only, for now: a GitHub Actions variant
- * would branch here on the repository's provider.
+ * A code project's pipelines, runs and variables are on its Environments
+ * page, by branch. Old links land there.
  */
-export default async function CodeProjectPipelinesPage({
+export default async function MovedToEnvironments({
   params,
 }: {
   params: Promise<{ projectId: string }>;
-}) {
+}): Promise<never> {
   const { projectId } = await params;
-  const session = await getSessionFromCookies();
-  if (!session) redirect(signInUrl(`/code/${projectId}/pipelines`));
-  const access = await resolveResourceAccess(session.subject, 'chat_project', projectId);
-  if (!access) notFound();
-  const project = await getProjectRow(projectId);
-  if (!project || project.kind !== 'code' || !project.repo) notFound();
-  if (project.repo.provider !== ATLASSIAN_BITBUCKET) notFound();
-  return (
-    <PipelinesPage
-      projectId={projectId}
-      projectName={project.name}
-      repoFullName={project.repo.fullName}
-      branch={project.repo.branch}
-      canEdit={access.role !== 'viewer'}
-    />
-  );
+  redirect(`/code/${projectId}/environments`);
 }

@@ -27,6 +27,14 @@ import { createUploadSlotsSweep, UPLOAD_SLOTS_SWEEP_INTERVAL_MS } from './health
 import { createAgentFiringsSweep, AGENT_FIRINGS_SWEEP_INTERVAL_MS } from './health/agent-firings';
 import { createWebexSentSweep, WEBEX_SENT_SWEEP_INTERVAL_MS } from './health/webex-sent';
 import { withSweepLock } from './health/sweep-lock';
+import {
+  createFabricOperationsSweep,
+  FABRIC_OPERATIONS_SWEEP_INTERVAL_MS,
+} from './health/fabric-operations';
+import {
+  createDeploymentHealthSweep,
+  DEPLOYMENT_HEALTH_SWEEP_INTERVAL_MS,
+} from './health/deployment-health';
 import { createSettledRetentionSweep, SETTLED_RETENTION_SWEEP_MS } from '@renkei/queue';
 import { sweepWebexWebhooks, WEBHOOK_HEALTH_INTERVAL_MS } from './health/webex-webhooks';
 import { sweepContentWatches, CONTENT_WATCH_INTERVAL_MS } from './health/content-watches';
@@ -162,6 +170,22 @@ async function main(): Promise<void> {
               'webexsent/sweep',
               WEBEX_SENT_SWEEP_INTERVAL_MS,
               createWebexSentSweep()
+            ),
+            // Each row is leased before it is looked at (claimDue's SKIP
+            // LOCKED), so replicas share the work without an advisory lock.
+            schedulePeriodicSweep(
+              'Fabric operations',
+              'fabric/operations-sweep',
+              FABRIC_OPERATIONS_SWEEP_INTERVAL_MS,
+              createFabricOperationsSweep()
+            ),
+            // Applications that stopped checking in. The announced state
+            // moves by compare-and-set, so replicas need no lock.
+            schedulePeriodicSweep(
+              'deployment health',
+              'deployments/health-sweep',
+              DEPLOYMENT_HEALTH_SWEEP_INTERVAL_MS,
+              createDeploymentHealthSweep()
             ),
           ]
         : [];

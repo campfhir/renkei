@@ -1,47 +1,38 @@
 'use client';
 
 /**
- * A GitHub code project's Actions page — the Bitbucket Pipelines page
- * (pipelines-page.tsx) for GitHub, drawn from the same parts
- * (pipeline-parts.tsx): the recent runs; the setup — whether GitHub runs
- * Actions for the repository at all, and the workflow files on the
- * branch, each editable, with a way to start a new one from the org's
- * pipeline templates — and the variables runs get, the repository's and
- * each deployment environment's, each set edited as one text box,
- * `KEY=value` a line, applied as a difference. Read on open and after
- * every change, with the person's own GitHub grant. Its summary card on
- * the project page is actions-summary.tsx.
+ * A branch's runs on GitHub Actions: the "Runs" tab of a branch on a code
+ * project's Environments page (environments-page.tsx picks the
+ * environment and the branch) — the Bitbucket one (pipelines-page.tsx)
+ * for GitHub, drawn from the same parts (pipeline-parts.tsx): the
+ * branch's recent runs, and the setup — whether GitHub runs Actions for
+ * the repository at all, and the workflow files on the branch, each
+ * editable, with a way to write a new one (the branch's Pipeline tab
+ * builds one from blocks). Read on open and after every change, with the
+ * person's own GitHub grant.
  *
- * Secrets are the one thing that differs: GitHub takes them only sealed
- * to a repository key, so they are listed by name, read-only, shown as
- * secured, with a link to where a person adds one. A chat reads and sets
- * the plain variables itself (lib/code/pipeline-tools.ts) and can write a
- * workflow file; the switch and secrets are the person's.
+ * The variables and secrets the runs get are the Variables tab's
+ * (variables-editor.tsx), not this one's. A chat can write a workflow
+ * file; the switch is the person's.
  *
- * The same body opens as a modal from a code chat's overflow menu
- * (`presentation="modal"`, via pipelines-modal.tsx). What the page
- * decides — the requests, when Commit can be pressed, the words after a
- * change — is actions-page.model.ts.
+ * What the page decides — the requests, when Commit can be pressed, the
+ * words after a change — is actions-page.model.ts.
  */
 
 import { useCallback, useEffect, useReducer } from 'react';
-import BackLink from '@/components/back-link';
 import ExternalLink from '@/components/external-link';
 import LocalTime from '@/components/local-time';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
-import type { VariablesApplied } from '@/lib/code/bitbucket-pipelines';
-import { actionsSecretsUrl, actionsUrl } from '@/lib/code/github-actions-urls';
+import { actionsUrl } from '@/lib/code/github-actions-urls';
 import type { HostPipelineRun } from '@/lib/code/repo-host';
-import type { PipelineTemplate } from '@/lib/code/pipeline-templates';
-import Pill, { type PillTone } from './pill';
-import VariableGroup, {
+import Pill, { type PillTone } from '@/app/(app)/code/_components/pill';
+import {
   StatusPill,
   cardClass,
   inputClass,
   linkButtonClass,
   primaryButtonClass,
   secondaryButtonClass,
-  type VariableWords,
 } from './pipeline-parts';
 import {
   actionsReducer,
@@ -49,28 +40,14 @@ import {
   canCommitWorkflow,
   canConfigure,
   committedReminder,
-  environmentHint,
   initialActions,
-  secretsNote,
   workflowNameProblem,
   workflowRequest,
   workflowsLine,
   type ActionsAction,
   type ActionsPageSetup,
 } from './actions-page.model';
-import {
-  draftFor,
-  outcomeFor,
-  outcomeOf,
-  removalQuestion,
-  templateBlankOption,
-  templateOptionLabel,
-  textRows,
-  variablesGoing,
-  variablesRequest,
-  type Committed,
-  type Outcome,
-} from './pipelines-page.model';
+import { textRows, type Committed } from './pipelines-page.model';
 
 const STATE_TONE: Record<HostPipelineRun['state'], PillTone> = {
   success: 'green',
@@ -87,47 +64,32 @@ const STATE_LABEL: Record<HostPipelineRun['state'], string> = {
   other: 'Unknown',
 };
 
-const GITHUB_WORDS: VariableWords = {
-  placeholder: 'API_BASE_URL=https://api.example.test\nREGION=eu-west-1',
-  help: (
-    <>
-      One <span className="font-mono">KEY=value</span> a line, as a .env. These are Actions
-      variables: plain values a workflow reads as <span className="font-mono">vars.NAME</span>.
-      Anything secret is a secret, added on GitHub. A line taken out removes the variable.
-    </>
-  ),
-};
-
 export default function ActionsPage({
   projectId,
-  projectName,
   repoFullName,
   branch,
   canEdit,
-  presentation = 'page',
 }: {
   projectId: string;
-  projectName: string;
   repoFullName: string;
-  /** The project's branch; empty for the repository's default. */
+  /** The branch whose runs and workflow files these are. */
   branch: string;
   canEdit: boolean;
-  /** A page of its own, or the body of a modal (no back link or page header). */
-  presentation?: 'page' | 'modal';
 }) {
   const url = `/api/code/projects/${projectId}/actions`;
   const [state, dispatch] = useReducer(actionsReducer, initialActions);
-  const { setup, loadError, error, busy, draft, fileDraft, templates, committed } = state;
+  const onBranch = `branch=${encodeURIComponent(branch)}`;
+  const { setup, loadError, error, busy, fileDraft, committed } = state;
 
   const reload = useCallback(async () => {
-    const result = await getJson<ActionsPageSetup>(url);
+    const result = await getJson<ActionsPageSetup>(`${url}?${onBranch}`);
     if (result.data) dispatch({ type: 'loaded', setup: result.data });
     else
       dispatch({
         type: 'loadFailed',
         error: result.error ?? 'The Actions setup could not be read.',
       });
-  }, [url]);
+  }, [url, onBranch]);
 
   useEffect(() => {
     void reload();
@@ -135,7 +97,7 @@ export default function ActionsPage({
 
   /** Send a change; on success read the setup again before saying it is done. */
   const act = async (
-    what: 'flip' | 'variables' | 'file',
+    what: 'flip' | 'file',
     work: () => Promise<{ error: string | null }>,
     done: () => ActionsAction
   ) => {
@@ -156,39 +118,14 @@ export default function ActionsPage({
       () => ({ type: 'flipped' })
     );
 
-  const saveVariables = async (current: ActionsPageSetup['variables']) => {
-    if (!draft) return;
-    const question = removalQuestion(variablesGoing(draft.text, current));
-    if (question && !window.confirm(question)) return;
-    let result: Outcome | null = null;
-    await act(
-      'variables',
-      async () => {
-        const response = await sendJsonFull<VariablesApplied & { problems: string[] }>(
-          `${url}/variables`,
-          'PUT',
-          variablesRequest(draft)
-        );
-        if (response.data && !response.error) result = outcomeOf(draft, response.data);
-        return response;
-      },
-      () => ({ type: 'variablesSaved', outcome: result })
-    );
-  };
-
-  /** Open the editor: a workflow as it is on the branch, or an empty one for a template to fill. */
+  /** Open the editor: a workflow as it is on the branch, or an empty one to write. */
   const openFile = async (name: string | null) => {
     dispatch({ type: 'fileOpening' });
-    const [file, catalog] = await Promise.all([
-      name
-        ? getJson<{ text: string | null }>(`${url}/workflow-file?name=${encodeURIComponent(name)}`)
-        : Promise.resolve({ data: { text: null }, error: null }),
-      templates
-        ? Promise.resolve({ data: { templates }, error: null })
-        : getJson<{ templates: PipelineTemplate[] }>(
-            `/api/code/pipeline-templates?provider=github`
-          ),
-    ]);
+    const file = name
+      ? await getJson<{ text: string | null }>(
+          `${url}/workflow-file?name=${encodeURIComponent(name)}&${onBranch}`
+        )
+      : { data: { text: null }, error: null };
     if (file.error) {
       dispatch({ type: 'fileOpenFailed', error: file.error });
       return;
@@ -197,7 +134,6 @@ export default function ActionsPage({
       type: 'fileOpened',
       name,
       text: file.data?.text ?? null,
-      templates: catalog.data?.templates ?? [],
     });
   };
 
@@ -209,7 +145,7 @@ export default function ActionsPage({
       'file',
       async () => {
         const response = await sendJsonFull<Committed & { name: string }>(
-          `${url}/workflow-file`,
+          `${url}/workflow-file?${onBranch}`,
           'PUT',
           request
         );
@@ -221,10 +157,8 @@ export default function ActionsPage({
   };
 
   const hostUrl = actionsUrl(repoFullName);
-  const secretsUrl = actionsSecretsUrl(repoFullName);
   const branchLabel = labelOfBranch(branch);
   const canSet = canConfigure(state, canEdit);
-  const modal = presentation === 'modal';
 
   const refreshButton = (
     <button
@@ -245,58 +179,27 @@ export default function ActionsPage({
     </ExternalLink>
   ) : null;
 
-  const secretsFor = (names: ActionsPageSetup['secrets']) => ({
-    secrets: names,
-    secretsNote: (
-      <>
-        {secretsNote(names.length)}{' '}
-        {secretsUrl ? (
-          <ExternalLink href={secretsUrl} className="underline">
-            Open secrets on GitHub
-          </ExternalLink>
-        ) : null}
-      </>
-    ),
-  });
-
   return (
-    <div className={modal ? '' : 'min-h-0 flex-1 overflow-y-auto'}>
-      {modal ? (
-        <div className="flex items-center gap-2 border-b border-gray-200 px-4 py-2 dark:border-gray-800">
-          <p className="min-w-0 flex-1 truncate text-xs text-gray-500">
-            <span className="font-mono">{repoFullName}</span>
-            {setup ? (
-              <>
-                {' '}
-                <StatusPill enabled={setup.enabled} />
-              </>
-            ) : null}
-          </p>
-          {refreshButton}
-          {hostLink}
-        </div>
-      ) : (
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
-          <BackLink href={`/code/${projectId}`} label={projectName} />
-          <div className="min-w-0 flex-1">
-            <h1 className="flex items-center gap-2 text-sm font-semibold">
-              <span className="truncate">Actions</span>
-              {setup ? <StatusPill enabled={setup.enabled} /> : null}
-            </h1>
-            <p className="truncate text-xs text-gray-500">
-              {projectName} · <span className="font-mono">{repoFullName}</span>
-            </p>
-          </div>
-          {refreshButton}
-          {hostLink}
-        </header>
-      )}
+    <div>
+      <div className="flex items-center gap-2">
+        <p className="min-w-0 flex-1 truncate text-xs text-gray-500">
+          GitHub Actions
+          {setup ? (
+            <>
+              {' '}
+              <StatusPill enabled={setup.enabled} />
+            </>
+          ) : null}
+        </p>
+        {refreshButton}
+        {hostLink}
+      </div>
 
-      <div className={`mx-auto space-y-4 p-4 ${modal ? 'max-w-none' : 'max-w-6xl'}`}>
+      <div className="mt-3 space-y-4">
         <p className="text-xs text-gray-500">
-          How GitHub builds and deploys this repository. A chat in the project can write workflow
-          files, run or cancel workflows, and read and set the plain variables; the switch and
-          secrets are set here and on GitHub, by you, and a chat never sees a secret.
+          How GitHub runs <span className="font-mono">{branch}</span>. A chat in the project can
+          write workflow files and run or cancel workflows; the switch is set here, by you. The
+          variables and secrets its runs get are on the Variables tab.
         </p>
         {loadError ? (
           <p role="alert" className="text-sm text-red-600 dark:text-red-400">
@@ -314,7 +217,7 @@ export default function ActionsPage({
         {setup ? (
           <div
             aria-busy={busy}
-            className={`grid grid-cols-[minmax(0,1fr)] gap-4 lg:items-start ${modal ? 'xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]' : 'lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]'}`}
+            className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:items-start xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]"
           >
             <div className="space-y-4">
               <RunsCard runs={setup.runs} error={setup.runsError} />
@@ -353,6 +256,9 @@ export default function ActionsPage({
                     <dt className="text-gray-500">Workflows</dt>
                     <dd className="min-w-0 basis-full sm:flex-1 sm:basis-auto">
                       {workflowsLine(setup, branchLabel)}{' '}
+                      {setup.workflows && setup.workflows.length > 0 ? null : (
+                        <>Build one from blocks on this branch’s Pipeline tab. </>
+                      )}
                       {canEdit && !fileDraft ? (
                         <button
                           type="button"
@@ -362,7 +268,7 @@ export default function ActionsPage({
                         >
                           {setup.workflows && setup.workflows.length > 0
                             ? 'New workflow'
-                            : 'Start from a template'}
+                            : 'or write one by hand'}
                         </button>
                       ) : null}
                     </dd>
@@ -429,25 +335,6 @@ export default function ActionsPage({
                         ) : null}
                       </label>
                     ) : null}
-                    {templates && templates.length > 0 ? (
-                      <label className="block text-xs">
-                        <span className="text-gray-500">Start from a template</span>
-                        <select
-                          value={fileDraft.templateId}
-                          onChange={(event) =>
-                            dispatch({ type: 'templatePicked', templateId: event.target.value })
-                          }
-                          className={`mt-0.5 ${inputClass}`}
-                        >
-                          <option value="">{templateBlankOption(fileDraft)}</option>
-                          {templates.map((template) => (
-                            <option key={template.id} value={template.id}>
-                              {templateOptionLabel(template)}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    ) : null}
                     <textarea
                       value={fileDraft.text}
                       onChange={(event) =>
@@ -478,8 +365,8 @@ export default function ActionsPage({
                     </label>
                     <div className="flex items-center justify-end gap-2">
                       <p className="mr-auto text-xs text-gray-500">
-                        Commit goes straight to {branchLabel}, with your GitHub access. The picked
-                        template is a starting point; what is in the box is what lands.
+                        Commit goes straight to {branchLabel}, with your GitHub access: what is in
+                        the box is what lands.
                       </p>
                       <button
                         type="button"
@@ -508,59 +395,6 @@ export default function ActionsPage({
                   </p>
                 ) : null}
               </section>
-
-              <VariableGroup
-                title="Repository variables"
-                hint="Every workflow run gets these."
-                variables={setup.variables}
-                {...secretsFor(setup.secrets)}
-                error={setup.variablesError}
-                scopeId="repository"
-                canEdit={canSet}
-                needs={canEdit ? setup.access.configureNeeds : null}
-                busy={busy}
-                open={draftFor(state, {})}
-                last={outcomeFor(state, {})}
-                words={GITHUB_WORDS}
-                onOpen={() =>
-                  dispatch({ type: 'variablesOpened', scope: {}, variables: setup.variables })
-                }
-                onChange={(text) => dispatch({ type: 'variablesChanged', text })}
-                onCancel={() => dispatch({ type: 'variablesCancelled' })}
-                onSave={() => void saveVariables(setup.variables)}
-              />
-              {setup.environments.map((environment) => (
-                <VariableGroup
-                  key={environment.uuid}
-                  title={environment.name}
-                  hint={environmentHint()}
-                  variables={environment.variables}
-                  {...secretsFor(environment.secrets)}
-                  error={environment.error}
-                  scopeId={environment.uuid}
-                  canEdit={canSet}
-                  needs={null}
-                  busy={busy}
-                  open={draftFor(state, { environmentUuid: environment.uuid })}
-                  last={outcomeFor(state, { environmentUuid: environment.uuid })}
-                  words={GITHUB_WORDS}
-                  onOpen={() =>
-                    dispatch({
-                      type: 'variablesOpened',
-                      scope: { environmentUuid: environment.uuid },
-                      variables: environment.variables,
-                    })
-                  }
-                  onChange={(text) => dispatch({ type: 'variablesChanged', text })}
-                  onCancel={() => dispatch({ type: 'variablesCancelled' })}
-                  onSave={() => void saveVariables(environment.variables)}
-                />
-              ))}
-              {setup.environmentsError ? (
-                <p className="text-xs text-amber-700 dark:text-amber-400">
-                  Deployment environments could not be read: {setup.environmentsError}
-                </p>
-              ) : null}
             </div>
           </div>
         ) : null}

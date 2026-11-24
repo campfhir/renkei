@@ -108,6 +108,11 @@ export async function loadChatView(
       projectId: chat.projectId,
       projectName: project?.name ?? null,
       projectKind: project?.kind ?? null,
+      projectHost: project?.repo
+        ? project.repo.provider === 'github'
+          ? 'github'
+          : 'bitbucket'
+        : null,
       projectBranch: chat.workspaceId ? (branches.get(chat.workspaceId) ?? null) : null,
       llmModelId: chat.llmModelId,
       toolConfig: chat.toolConfig,

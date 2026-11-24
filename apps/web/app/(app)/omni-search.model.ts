@@ -252,13 +252,19 @@ export function buildSections(input: SectionInput): Section[] {
 
   // Settings, connectors and organization settings, each down to the
   // element that holds them.
+  // A place that leads to a page already listed under Pages (a connected
+  // connector's own page) is not listed twice.
+  const pageHrefs = new Set(pageResults.map((page) => page.href));
   const placeResults = (section: OmniPlace['section']) =>
     input.places
-      .filter((place) => place.section === section)
+      .filter((place) => place.section === section && !pageHrefs.has(place.href))
       .slice(0, LIMITS.places)
       .map((place): Result => ({
         // A connector not on the page is searched for in the catalog.
-        href: section === 'Connectors' ? withFind(place.href, query) : place.href,
+        href:
+          section === 'Connectors' && place.href.startsWith('/connectors')
+            ? withFind(place.href, query)
+            : place.href,
         label: place.title,
         detail: place.where,
         icon: place.icon,

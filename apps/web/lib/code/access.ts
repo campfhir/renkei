@@ -148,6 +148,20 @@ export async function codeProjectProviderAccess(
 }
 
 /**
+ * Whether the person has a code host connected at all — Bitbucket or
+ * GitHub, whatever its scopes. What deployments stand on: their
+ * notifications, their settings and the tools that read them are only for
+ * someone who has one.
+ */
+export async function hasCodeHost(subject: string): Promise<boolean> {
+  const [bitbucket, github] = await Promise.all([
+    grantScopeRow(subject, ATLASSIAN_BITBUCKET),
+    grantScopeRow(subject, GITHUB),
+  ]);
+  return bitbucket !== undefined || github !== undefined;
+}
+
+/**
  * One sentence saying what to do, for the page and the route's refusal:
  * connect the host, or reconnect it with the missing checkboxes on.
  */

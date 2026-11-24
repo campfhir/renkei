@@ -204,6 +204,21 @@ async function refOf(auth: BitbucketAuth, base: string, branch: string): Promise
   return str(rec(repo.body.mainbranch).name) || null;
 }
 
+/** A project's branch, or the repository's main branch when the project names none; null when unread. */
+export async function branchToRead(
+  auth: BitbucketAuth,
+  fullName: string,
+  branch: string
+): Promise<string | null> {
+  const [workspace, slug] = fullName.split('/');
+  if (!workspace || !slug) return branch || null;
+  return refOf(
+    auth,
+    `/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(slug)}`,
+    branch
+  );
+}
+
 /**
  * What to put in a `/src/{node}/…` path for a branch. Bitbucket splits
  * that path on `/` even when the slash is encoded, so a branch such as

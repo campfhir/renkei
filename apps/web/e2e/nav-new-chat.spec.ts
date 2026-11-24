@@ -49,7 +49,12 @@ test('app menu: a new chat is listed as soon as its first message is sent', asyn
 
     // The prompt is in the thread, the reply is not yet — and the chat is
     // already in the menu, under the title derived from the prompt.
-    await expect(page.getByRole('main').getByText(/Plan the launch week/).first()).toBeVisible();
+    await expect(
+      page
+        .getByRole('main')
+        .getByText(/Plan the launch week/)
+        .first()
+    ).toBeVisible();
     await expect(page.getByText('Here is the plan.')).toHaveCount(0);
     await expect(row).toBeVisible();
     await expect(row).toContainText('Plan the launch week');

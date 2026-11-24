@@ -5,7 +5,14 @@
  */
 
 import type { ConnectorConfig } from '@renkei/connector-config';
-import { GITHUB, SALESFORCE, SALESFORCE_ADMIN, type ProviderGrant } from '@renkei/provider-grants';
+import {
+  FABRIC,
+  GITHUB,
+  MICROSOFT,
+  SALESFORCE,
+  SALESFORCE_ADMIN,
+  type ProviderGrant,
+} from '@renkei/provider-grants';
 import {
   hostAllowed,
   providerSpec,
@@ -31,6 +38,34 @@ function withEnv<T>(patch: Record<string, string | undefined>, run: () => T): T 
     }
   }
 }
+
+describe('the Fabric grant', () => {
+  const fabric = providerSpec(FABRIC);
+  const microsoft = providerSpec(MICROSOFT);
+  if (!fabric || !microsoft) throw new Error('fabric or microsoft spec missing');
+
+  it("reaches Fabric's API and never Graph; a Microsoft 365 token never reaches Fabric", () => {
+    expect(
+      hostAllowed(fabric, new URL('https://api.fabric.microsoft.com/v1/workspaces'), FABRIC)
+    ).toBe(true);
+    expect(hostAllowed(fabric, new URL('https://graph.microsoft.com/v1.0/me'), FABRIC)).toBe(false);
+    expect(
+      hostAllowed(microsoft, new URL('https://api.fabric.microsoft.com/v1/workspaces'), MICROSOFT)
+    ).toBe(false);
+  });
+
+  it("refreshes at the directory's own token endpoint", () => {
+    const config: ConnectorConfig = {
+      connector: FABRIC,
+      enabled: true,
+      settings: { clientId: 'c', directoryTenantId: 'tenant-1' },
+      secrets: { clientSecret: 's' },
+    };
+    expect(tokenEndpointFor(fabric, config)).toBe(
+      'https://login.microsoftonline.com/tenant-1/oauth2/v2.0/token'
+    );
+  });
+});
 
 describe('hostAllowed', () => {
   const github = providerSpec(GITHUB);
@@ -192,8 +227,8 @@ describe('standInViolations', () => {
     );
     expect(standInViolations({ NODE_ENV: 'production' })).toEqual([]);
     // Jira Administration and JSM share one, the Jira gateway's.
-    expect(Object.values(STAND_IN_ENV)).toHaveLength(6);
-    expect(new Set(Object.values(STAND_IN_ENV)).size).toBe(5);
+    expect(Object.values(STAND_IN_ENV)).toHaveLength(7);
+    expect(new Set(Object.values(STAND_IN_ENV)).size).toBe(6);
   });
 });
 

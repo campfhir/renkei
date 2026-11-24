@@ -28,6 +28,8 @@ interface NavProps {
   version: string;
   /** Admin changes waiting for an operator, for an operator's Changes row; null otherwise. */
   pendingChanges?: number | null;
+  /** Whether this person has connected Microsoft Fabric: its page gets a row. */
+  fabricConnected?: boolean;
   children: ReactNode;
 }
 
@@ -87,6 +89,7 @@ export default function AppNav({
   chats,
   version,
   pendingChanges = null,
+  fabricConnected = false,
   children,
 }: NavProps) {
   const isNarrow = useMediaQuery(NARROW);
@@ -214,6 +217,9 @@ export default function AppNav({
         // kind of chat; the page keeps its address under /chat.
         { href: `/chat/artifacts`, label: 'Artifacts', icon: ICONS.layers },
         { href: `/files`, label: 'Files', icon: ICONS.folder },
+        // Microsoft Fabric's workspaces, for someone who connected it — the
+        // connector with a page of its own (app/(app)/fabric/).
+        ...(fabricConnected ? [{ href: `/fabric`, label: 'Fabric', icon: ICONS.dataTable }] : []),
         // Every admin connector's change requests, for the people who
         // approve them; the count is what waits on them.
         ...(isOperator
@@ -348,13 +354,16 @@ export default function AppNav({
       {groups.map((group) => (
         <div
           key={group.label}
-          className={group.extra ? 'mb-3 flex min-h-[25.5rem] flex-1 flex-col' : 'mb-3'}
+          // The chat section keeps room for its links and four chats: rows sit 2px
+          // apart so that, with every Workspace row an operator has, the column
+          // still fits a 1366×768 laptop without scrolling (nav-chat-scroll.spec.ts).
+          className={group.extra ? 'mb-3 flex min-h-[23.75rem] flex-1 flex-col' : 'mb-3'}
           {...(group.coach ? anchors[group.coach] : {})}
         >
           <p className="mb-1 px-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
             {group.label}
           </p>
-          <ul className="space-y-1">
+          <ul className="space-y-0.5">
             {group.items.map((item) => {
               const under =
                 pathname === item.href || (!item.exact && pathname.startsWith(`${item.href}/`));
@@ -445,7 +454,12 @@ export default function AppNav({
           Renkei
         </Link>
 
-        <OmniSearch pages={pages} chats={chats} isOperator={isOperator} />
+        <OmniSearch
+          pages={pages}
+          chats={chats}
+          isOperator={isOperator}
+          connected={fabricConnected ? ['fabric'] : []}
+        />
         <GlobalShortcuts chats={chats} isOperator={isOperator} />
 
         <div className="flex items-center gap-2">

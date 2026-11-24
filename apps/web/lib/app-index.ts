@@ -29,6 +29,10 @@ export const APP_PLACES: AppPlace[] = APP_PLACE_ENTRIES.map(withIcon);
  * The places every word of `needle` appears in, title matches first. The
  * caller passes the needle already lower-cased.
  */
-export function matchPlaces(needle: string, isOperator: boolean): AppPlace[] {
-  return matchPlaceEntries(needle, isOperator).map(withIcon);
+export function matchPlaces(
+  needle: string,
+  isOperator: boolean,
+  connected: ReadonlySet<string> = new Set()
+): AppPlace[] {
+  return matchPlaceEntries(needle, isOperator, connected).map(withIcon);
 }

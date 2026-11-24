@@ -34,6 +34,7 @@ const GRANT = {
     'x',
     'Mail.ReadWrite',
     'Sites.ReadWrite.All',
+    'Sites.Manage.All',
     'Files.ReadWrite.All',
     'Chat.Read',
     'Notes.ReadWrite',

@@ -8,17 +8,16 @@
  * recent runs, and the variables runs get — the repository's own and
  * each deployment environment's.
  *
- * What is the same as Bitbucket's page is the same code: a variable set
- * is one `KEY=value` text box applied as a difference (parseVariableText),
- * and a variable here is the PipelineVariable the page already draws —
- * its `uuid` is its name, since GitHub names variables rather than
- * numbering them. An environment's `uuid` is its name for the same reason.
+ * What is the same as Bitbucket's is the same shape: a variable here is
+ * the PipelineVariable the pages already draw — its `uuid` is its name,
+ * since GitHub names variables rather than numbering them. An
+ * environment's `uuid` is its name for the same reason.
  *
  * What differs is secrets. GitHub never sends a secret's value back (as
- * Bitbucket never sends a secured variable's), but it also takes one only
- * sealed to a repository public key with libsodium's sealed box, which
- * nothing here carries. So secrets are listed by name, read-only, shown as
- * secured, and set on github.com; every other half of the page works.
+ * Bitbucket never sends a secured variable's), and takes one only sealed
+ * to a public key: the Variables tab's saves do that (host-variables.ts,
+ * sealed-box.ts). Here they are listed by name, and a chat's tool — which
+ * writes plain variables only — is told a secret is not its to set.
  */
 
 import {
@@ -31,7 +30,6 @@ import {
 } from '@/lib/mcp-tools/github/client';
 import type { GitHubAuth } from '@/lib/mcp-tools/github/github-auth';
 import {
-  parseVariableText,
   type PipelineVariable,
   type VariableEntry,
   type VariablesApplied,
@@ -385,10 +383,12 @@ export async function applyActionsVariables(
       ? await ghJson(auth, [ACTIONS_CONFIG_SCOPE], `${base}/${encodeURIComponent(entry.key)}`, {
           method: 'PATCH',
           json: { name: entry.key, value: entry.value },
+          withholdBody: true,
         })
       : await ghJson(auth, [ACTIONS_CONFIG_SCOPE], base, {
           method: 'POST',
           json: { name: entry.key, value: entry.value },
+          withholdBody: true,
         });
     if (!result.ok) applied.errors.push(`${entry.key}: ${result.error}`);
     else (before ? applied.changed : applied.added).push(entry.key);
@@ -421,28 +421,6 @@ export async function deleteActionsVariable(
     { method: 'DELETE' }
   );
   return response.ok ? { ok: true } : { ok: false, error: await describeGitHubFailure(response) };
-}
-
-/** The page's Save: parse the text, read the set, apply the difference. */
-export async function applyActionsVariableText(
-  auth: GitHubAuth,
-  fullName: string,
-  environment: string | undefined,
-  text: string
-): Promise<
-  { ok: true; applied: VariablesApplied; problems: string[] } | { ok: false; error: string }
-> {
-  const parsed = parseVariableText(text);
-  const current = await listActionsVariables(auth, fullName, environment);
-  if (!current.ok) return current;
-  const applied = await applyActionsVariables(
-    auth,
-    fullName,
-    environment,
-    current.variables,
-    parsed.entries
-  );
-  return { ok: true, applied, problems: parsed.problems };
 }
 
 // ——— Workflow files ———

@@ -1,5 +1,5 @@
 /**
- * Agents in chat (migration 183): the tasks a chat handed one of the
+ * Agents in chat (migration 195): the tasks a chat handed one of the
  * person's agents (`chat_agent_asks` — one agent run each, tied to the
  * `chat_ask_agent` call that started it), and the agents a chat project
  * names as its team (`chat_project_agents`). Who may ask which agent is

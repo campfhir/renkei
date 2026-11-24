@@ -10,6 +10,8 @@
  * for operators only, the same rule the search applies.
  */
 
+import { getDataStore } from '@renkei/db';
+import { FABRIC } from '@renkei/provider-grants';
 import { matchPlaceEntries } from '@/lib/app-places';
 import { errorResult, textResult, type LocalTool, type LocalToolContext } from '../local-tools';
 import { loadChatSidebar } from '../sidebar';
@@ -25,6 +27,8 @@ export interface AppPage {
   about: string;
   keywords: string;
   operatorOnly?: boolean;
+  /** Listed only for someone who connected this connector (its capability key). */
+  connector?: string;
 }
 
 /** The pages of the menu (app/(app)/nav.tsx) and the doors beside them. */
@@ -60,6 +64,13 @@ export const APP_PAGES: readonly AppPage[] = [
     keywords: 'shares folders network drive',
   },
   {
+    title: 'Fabric',
+    href: '/fabric',
+    about: 'Microsoft Fabric workspaces, lakehouse tables, notebooks and data pipelines.',
+    keywords: 'microsoft fabric lakehouse notebook pipeline workspace power bi',
+    connector: 'fabric',
+  },
+  {
     title: 'Changes',
     href: '/changes',
     about: 'Change requests waiting for approval.',
@@ -87,8 +98,10 @@ export const APP_PAGES: readonly AppPage[] = [
   {
     title: 'Code',
     href: '/code',
-    about: 'Code projects: a repository to work in.',
-    keywords: 'code projects repository repositories git',
+    about:
+      'Code projects: a repository to work in. Each has an Environments page: the environments it deploys to, the branches assigned to them, and each branch’s pipeline, runs and variables.',
+    keywords:
+      'code projects repository repositories git deploys deployments environments production pipeline variables secrets',
   },
   {
     title: 'New code project',
@@ -196,8 +209,19 @@ interface Destination {
   title: string;
 }
 
-function pageDestinations(operator: boolean): Destination[] {
-  return APP_PAGES.filter((page) => operator || page.operatorOnly !== true).map((page) => ({
+/** The connectors with a page of their own that this person has connected. */
+async function connectedPages(subject: string): Promise<Set<string>> {
+  const grants = await getDataStore()
+    .providerGrants.listForSubject(subject, { provider: FABRIC })
+    .catch(() => []);
+  return new Set(grants.length > 0 ? ['fabric'] : []);
+}
+
+function pageDestinations(operator: boolean, connected: ReadonlySet<string>): Destination[] {
+  return APP_PAGES.filter(
+    (page) =>
+      (operator || page.operatorOnly !== true) && (!page.connector || connected.has(page.connector))
+  ).map((page) => ({
     label: page.title,
     href: page.href,
     detail: page.about,
@@ -280,20 +304,23 @@ export function navigationTools(): LocalTool[] {
       },
       async execute(input, context) {
         const operator = isOperator(context);
-        const pages = pageDestinations(operator);
+        const connected = await connectedPages(context.subject);
+        const pages = pageDestinations(operator, connected);
         const query = typeof input.to === 'string' ? input.to.trim() : '';
         if (!query) {
           return textResult(`The main pages of Renkei:\n${linesOf(context, pages)}`);
         }
-        const places: Destination[] = matchPlaceEntries(query.toLowerCase(), operator).map(
-          (place) => ({
-            label: place.title,
-            href: place.href,
-            detail: place.where,
-            title: place.title.toLowerCase(),
-            haystack: '',
-          })
-        );
+        const places: Destination[] = matchPlaceEntries(
+          query.toLowerCase(),
+          operator,
+          connected
+        ).map((place) => ({
+          label: place.title,
+          href: place.href,
+          detail: place.where,
+          title: place.title.toLowerCase(),
+          haystack: '',
+        }));
         const found = [
           ...matchDestinations(query, pages),
           ...places,

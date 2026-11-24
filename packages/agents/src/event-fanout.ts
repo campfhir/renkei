@@ -52,6 +52,9 @@ function dedupeKeyFor(event: AgentEventInput): string | null {
   // event type, so the batch id alone names the firing.
   const batchId = typeof payload.batchId === 'string' ? payload.batchId : '';
   if (batchId) return `batch:${batchId}`;
+  // A deployment or health change names itself (@renkei/ci-blocks changes.ts).
+  const changeId = typeof payload.changeId === 'string' ? payload.changeId : '';
+  if (changeId) return `change:${changeId}`;
   return event.eventId ? `event:${event.eventId}` : null;
 }
 

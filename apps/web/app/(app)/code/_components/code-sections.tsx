@@ -12,17 +12,14 @@
  * mention of a branch at all; a chat's title bar is where the checkout's
  * current branch lives and switches) and the state of its checkout on
  * the sandbox — none until the first chat clones it, then ready,
- * cloning, or failed with why.
+ * cloning, or failed with why — with a link to the project's Environments
+ * page, where each environment's branches are and, by branch, its
+ * pipeline, runs and variables.
  *
  * The rail, most-looked-at first: a card summarizing the project's open pull
  * requests (pulls-summary.tsx / pulls-page.tsx) and its recent commits
  * (commits-summary.tsx / commits-page.tsx), both read through the
- * host-agnostic RepoHostAdapter (lib/code/repo-host.ts); a card for its
- * CI — Bitbucket Pipelines (pipelines-summary.tsx / pipelines-page.tsx:
- * the switch, the config file, the variables) or, for a GitHub project,
- * its Actions counterpart (actions-summary.tsx / actions-page.tsx: the
- * switch, the workflow files, the variables, secrets by name), drawn
- * from the same parts (pipeline-parts.tsx); and a card summarizing
+ * host-agnostic RepoHostAdapter (lib/code/repo-host.ts); a card summarizing
  * its services — the containers beside the checkout — opening its
  * Services page (services-summary.tsx, services-page.tsx); and last the
  * environment: the names of the variables the project's commands run
@@ -31,6 +28,7 @@
  */
 
 import { useEffect, useState, type ReactNode } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import type {
@@ -40,8 +38,6 @@ import type {
 } from '@/lib/code/project-view';
 import ExternalLink from '@/components/external-link';
 import LocalTime from '@/components/local-time';
-import PipelinesSummary from './pipelines-summary';
-import ActionsSummary from './actions-summary';
 import ServicesSummaryCard from './services-summary';
 import PullsSummary from './pulls-summary';
 import CommitsSummary from './commits-summary';
@@ -119,14 +115,23 @@ export function CodeRepoStrip({
         <h2 className="text-sm font-semibold">Repository</h2>
         <span className="font-mono text-sm">{code.repoFullName}</span>
         {statusPill}
-        {hostUrl ? (
-          <ExternalLink
-            href={hostUrl}
-            className="ml-auto text-xs font-medium whitespace-nowrap text-blue-600 hover:underline dark:text-blue-400"
+        <span className="ml-auto flex items-center gap-3">
+          {/* Its Environments page, named as the host names what runs there: each environment's branches, and a branch's pipeline, runs and variables. */}
+          <Link
+            href={`/code/${projectId}/environments`}
+            className="text-xs font-medium whitespace-nowrap text-blue-600 hover:underline dark:text-blue-400"
           >
-            Open on {hostLabel}
-          </ExternalLink>
-        ) : null}
+            {isGitHub ? 'Actions' : 'Pipelines'}
+          </Link>
+          {hostUrl ? (
+            <ExternalLink
+              href={hostUrl}
+              className="text-xs font-medium whitespace-nowrap text-blue-600 hover:underline dark:text-blue-400"
+            >
+              Open on {hostLabel}
+            </ExternalLink>
+          ) : null}
+        </span>
       </div>
       <p className="mt-0.5 text-xs text-gray-500">
         {!code.enabled
@@ -173,24 +178,10 @@ export function CodeRail({
   /** The Environment card, or its skeleton while it loads. */
   environment: ReactNode;
 }) {
-  const isGitHub = code.repoProvider === 'github';
   return (
     <>
       <PullsSummary href={`/code/${projectId}/pulls`} projectId={projectId} />
       <CommitsSummary href={`/code/${projectId}/commits`} projectId={projectId} />
-      {isGitHub ? (
-        <ActionsSummary
-          href={`/code/${projectId}/actions`}
-          projectId={projectId}
-          branch={code.branch}
-        />
-      ) : (
-        <PipelinesSummary
-          href={`/code/${projectId}/pipelines`}
-          projectId={projectId}
-          branch={code.branch}
-        />
-      )}
       {code.enabled ? (
         <ServicesSummaryCard href={`/code/${projectId}/services`} projectId={projectId} />
       ) : null}

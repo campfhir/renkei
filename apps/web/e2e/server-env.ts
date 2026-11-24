@@ -42,9 +42,11 @@ export function memoryServerEnv(): Record<string, string> {
     SANDBOX_WORKER_API_KEY: 'e2e-sandbox-key',
     SETUP_SECRET: E2E_SETUP_SECRET,
     BITBUCKET_API_BASE_URL: `${SANDBOX_STUB_URL}/bitbucket/2.0`,
+    BITBUCKET_OAUTH_TOKEN_URL: `${SANDBOX_STUB_URL}/bitbucket/site/oauth2/access_token`,
     GITHUB_API_BASE_URL: `${SANDBOX_STUB_URL}/github`,
     JIRA_ADMIN_API_BASE_URL: `${SANDBOX_STUB_URL}/jira`,
     JIRA_AUTOMATION_API_BASE_URL: `${SANDBOX_STUB_URL}/automation`,
+    FABRIC_API_BASE_URL: `${SANDBOX_STUB_URL}/fabric`,
     BLOB_STORE_PROVIDER: process.env.BLOB_STORE_PROVIDER ?? 'local',
     BLOB_STORE_LOCAL_DIR:
       process.env.BLOB_STORE_LOCAL_DIR ?? path.join(WEB, 'test-results', 'blobs'),

@@ -140,7 +140,9 @@ export type AuditAction =
   | 'code.pipelines.disabled'
   /** A variable set replaced from its text box: which keys were added, changed, removed. */
   | 'code.pipelines.variables.replaced'
-  /** A pipeline run started from a code project's Pipelines page. */
+  /** Pipeline variables or secrets saved from a project's Environments page; names only, never a value. */
+  | 'code.variables.saved'
+  /** A pipeline run started from a branch's Runs tab on a code project's Environments page. */
   | 'code.pipelines.run'
   /** A bitbucket-pipelines.yml committed from the page, from a template or edited. */
   | 'code.pipelines.file.committed'
@@ -176,6 +178,24 @@ export type AuditAction =
   | 'code.branch_switch'
   /** Every uncommitted change on the checkout discarded (git reset --hard + clean -fd). */
   | 'code.discard_changes'
+  /** A CI building block's draft published as its next version (Organization → Building blocks). */
+  | 'ci.block_published'
+  | 'ci.block_deleted'
+  /** A CI target added or changed (Organization → Targets). */
+  /** A code project's environments or their branches changed (its Environments page). */
+  | 'ci.environments_saved'
+  /** An environment's health token issued (in place of any before) or taken away; never the token. */
+  | 'ci.health_token_issued'
+  | 'ci.health_token_revoked'
+  | 'ci.pipeline_saved'
+  | 'ci.pipeline_pull_request'
+  | 'ci.promotion_opened'
+  | 'ci.promotion_merged'
+  | 'ci.target_saved'
+  | 'ci.target_deleted'
+  /** A host's CI service account saved or forgotten; its secret is never in the event. */
+  | 'ci.account_saved'
+  | 'ci.account_removed'
   /**
    * A Jira admin change request was applied from its review page — what
    * Renkei changed in Jira's configuration, and on whose click. Recorded

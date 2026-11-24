@@ -29,6 +29,9 @@ export default [
       // Plain Node CJS jest setupFiles entry — no tsconfig project covers it,
       // same category as the standalone scripts above.
       'apps/web/jest.env-integration.js',
+      // Plain Node CJS jest transform for ESM-only packages (jose) — same
+      // category as the setupFiles entry above.
+      'apps/web/jest.esm-transform.cjs',
       // Service worker: runs in its own global scope (`self`, `clients`),
       // served as-is from public/, outside every tsconfig project — same
       // category as the standalone scripts above.

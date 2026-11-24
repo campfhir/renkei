@@ -39,10 +39,7 @@ const BROWSE_LABELS: Record<FilterOptionSource, { browse: string; search: string
   'microsoft-people': { browse: 'Find people', search: 'Search the directory…' },
 };
 
-async function loadOptions(
-  source: FilterOptionSource,
-  query: string
-): Promise<ChipOption[]> {
+async function loadOptions(source: FilterOptionSource, query: string): Promise<ChipOption[]> {
   const url = new URL(OPTION_ROUTES[source](), window.location.origin);
   if (query) url.searchParams.set('q', query);
   const response = await fetch(url.toString());
@@ -136,6 +133,45 @@ export default function TriggerFilterPanel({
                         value={option.value}
                         checked={selected === option.value}
                         onChange={() => set(field, option.value)}
+                      />
+                      {option.label}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            );
+          }
+
+          if (field.input === 'choice-list') {
+            // None ticked is "no constraint": set() removes an empty list,
+            // so unticking the last one deletes the filter outright.
+            const ticked = valuesOf(match, field);
+            return (
+              <fieldset key={field.id}>
+                <legend className="text-sm font-medium">{field.label}</legend>
+                <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{field.hint}</p>
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  {(field.options ?? []).map((option) => (
+                    <label
+                      key={option.value}
+                      className="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={ticked.includes(option.value)}
+                        onChange={(event) =>
+                          set(
+                            field,
+                            // Kept in the options' order, whatever order they were ticked in.
+                            (field.options ?? [])
+                              .map((each) => each.value)
+                              .filter((value) =>
+                                value === option.value
+                                  ? event.target.checked
+                                  : ticked.includes(value)
+                              )
+                          )
+                        }
                       />
                       {option.label}
                     </label>

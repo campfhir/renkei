@@ -732,6 +732,119 @@ export interface ChatWidgetDecisions {
   state_key: string;
 }
 
+export interface CiAssistantJobs {
+  created_at: Generated<Timestamp>;
+  error: string | null;
+  finished_at: Timestamp | null;
+  id: string;
+  project_id: string;
+  result: Json | null;
+  status: Generated<string>;
+  step: string | null;
+  subject: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface CiBlocks {
+  created_at: Generated<Timestamp>;
+  created_by: string | null;
+  description: string | null;
+  draft: Json | null;
+  id: Generated<string>;
+  key: string;
+  kind: string;
+  latest_version: Generated<number>;
+  name: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface CiBlockVersions {
+  block_id: string;
+  definition: Json;
+  published_at: Generated<Timestamp>;
+  published_by: string;
+  version: number;
+}
+
+export interface CiDeployments {
+  actor: string | null;
+  branch: string | null;
+  commit_sha: string;
+  created_at: Generated<Timestamp>;
+  detail: string | null;
+  environment: string;
+  finished_at: Timestamp | null;
+  id: Generated<string>;
+  project_id: string;
+  run_id: string;
+  run_url: string | null;
+  started_at: Timestamp;
+  status: string;
+  target: string | null;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface CiEnvironments {
+  branches: Generated<Json>;
+  created_at: Generated<Timestamp>;
+  name: string;
+  position: number;
+  production: Generated<boolean>;
+  project_id: string;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+}
+
+export interface CiHealthCheckins {
+  announced_state: string | null;
+  checkins: Generated<number>;
+  environment: string;
+  interval_seconds: number | null;
+  issued_at: Timestamp;
+  issued_by: string;
+  message: string | null;
+  project_id: string;
+  received_at: Timestamp | null;
+  sent_at: Timestamp | null;
+  status: string | null;
+  token_hash: string;
+  token_hint: string;
+  version: string | null;
+}
+
+export interface CiPipelines {
+  branch: string;
+  created_at: Generated<Timestamp>;
+  host: string;
+  project_id: string;
+  pull_request_url: string | null;
+  repo_key: string | null;
+  spec: Json;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+  written_at: Timestamp | null;
+  written_text: string | null;
+}
+
+export interface CiRepoKeys {
+  created_at: Generated<Timestamp>;
+  host: string;
+  project_id: string;
+  repo_key: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface CiTargets {
+  created_at: Generated<Timestamp>;
+  created_by: string | null;
+  description: string | null;
+  id: Generated<string>;
+  kind: Generated<string>;
+  labels: Json;
+  name: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface CoachMarkProgress {
   completed_at: Timestamp | null;
   completed_count: Generated<number>;
@@ -1258,16 +1371,6 @@ export interface OperatorSessions {
   subject: string;
 }
 
-export interface PipelineTemplates {
-  body: string;
-  created_at: Generated<Timestamp>;
-  description: string | null;
-  id: Generated<string>;
-  name: string;
-  provider: Generated<string>;
-  updated_at: Generated<Timestamp>;
-}
-
 export interface PrPipelineEvents {
   action_taken: string | null;
   conclusion: string;
@@ -1564,6 +1667,28 @@ export interface DelegateSigningKeys {
   singleton: Generated<boolean>;
 }
 
+export interface FabricOperations {
+  created_at: Generated<Timestamp>;
+  error: string | null;
+  finished_at: Timestamp | null;
+  format: string | null;
+  id: string;
+  item_id: string;
+  item_name: Generated<string>;
+  kind: string;
+  next_poll_at: Timestamp | null;
+  notified_at: Timestamp | null;
+  operation_id: string | null;
+  percent_complete: number | null;
+  result: Json | null;
+  status: Generated<string>;
+  subject: string;
+  updated_at: Generated<Timestamp>;
+  watched_at: Timestamp | null;
+  workspace_id: string;
+  workspace_name: Generated<string>;
+}
+
 export interface DelegateGitTickets {
   created_at: Generated<Timestamp>;
   expires_at: Timestamp;
@@ -1831,10 +1956,20 @@ export interface DB {
   chats: Chats;
   delegate_access_events: DelegateAccessEvents;
   delegate_git_tickets: DelegateGitTickets;
+  fabric_operations: FabricOperations;
   delegate_instances: DelegateInstances;
   delegate_signing_keys: DelegateSigningKeys;
   device_key_requests: DeviceKeyRequests;
   key_delegations: KeyDelegations;
+  ci_assistant_jobs: CiAssistantJobs;
+  ci_block_versions: CiBlockVersions;
+  ci_blocks: CiBlocks;
+  ci_deployments: CiDeployments;
+  ci_environments: CiEnvironments;
+  ci_health_checkins: CiHealthCheckins;
+  ci_pipelines: CiPipelines;
+  ci_repo_keys: CiRepoKeys;
+  ci_targets: CiTargets;
   coach_mark_progress: CoachMarkProgress;
   code_language_gaps: CodeLanguageGaps;
   code_project_templates: CodeProjectTemplates;
@@ -1875,7 +2010,6 @@ export interface DB {
   oidc_role_mappings: OidcRoleMappings;
   operator_sessions: OperatorSessions;
   pending_oidc_signin: PendingOidcSignin;
-  pipeline_templates: PipelineTemplates;
   platform_audit_log: PlatformAuditLog;
   platform_settings: PlatformSettings;
   pr_pipeline_events: PrPipelineEvents;

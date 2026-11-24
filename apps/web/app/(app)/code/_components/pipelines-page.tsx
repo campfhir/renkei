@@ -1,137 +1,77 @@
 'use client';
 
 /**
- * A Bitbucket code project's Pipelines page: the recent runs, the setup
- * — whether Bitbucket runs pipelines for the repository at all, and
- * whether a `bitbucket-pipelines.yml` is on the branch, with an editor
- * that starts one from the org's pipeline templates and commits it, or
- * edits the one there — and the variables the runs get, the repository's
- * and each deployment environment's, each set edited as one text box,
- * `KEY=value` a line, and applied as a difference. Read on open and after
- * every change, with the person's own Bitbucket grant. Its summary card
- * on the project page is pipelines-summary.tsx; its GitHub counterpart,
+ * A branch's runs on Bitbucket Pipelines: the "Runs" tab of a branch on a
+ * code project's Environments page (environments-page.tsx picks the
+ * environment and the branch). The branch's recent runs, and the setup —
+ * whether Bitbucket runs pipelines for the repository at all, and whether
+ * a `bitbucket-pipelines.yml` is on the branch, with an editor that
+ * writes one and commits it, or edits the one there (the branch's
+ * Pipeline tab builds one from blocks). Read on open and after every
+ * change, with the person's own Bitbucket grant. Its GitHub counterpart,
  * drawn from the same parts (pipeline-parts.tsx), is actions-page.tsx.
  *
- * The same body opens as a modal from a code chat's overflow menu
- * (`presentation="modal"`, via pipelines-modal.tsx): no back link or page
- * header, a slim toolbar instead, so a person can look at or change the
- * setup beside the conversation that is drafting it.
+ * The variables the runs get, and the secured ones, are the Variables
+ * tab's (variables-editor.tsx), not this one's.
  *
  * A run can be started from here too, on the scope the chat's trigger
  * tool stands on. A chat can also write the YAML (a file, committed like
- * any other), stop a run, and read and set the plain variables
- * (lib/code/pipeline-tools.ts) — but never a secured one, and it cannot
- * flip the switch: where deploy keys and registry tokens live is set
- * here by a person. A secured value goes to Bitbucket once and is never
- * shown again; Bitbucket itself never sends one back.
+ * any other) and stop a run, but it cannot flip the switch.
  *
  * The layout is one column of cards on a phone (where the runs are
- * cards too, not a table) and two on a wide screen, runs beside setup
- * and variables. What the page decides — the requests, when they can be
- * sent, what a save takes away, the words after each change — is
- * pipelines-page.model.ts.
+ * cards too, not a table) and two on a wide screen, runs beside setup.
+ * What the page decides — the requests, when they can be sent, the words
+ * after each change — is pipelines-page.model.ts.
  */
 
 import { useCallback, useEffect, useReducer, type Dispatch } from 'react';
-import BackLink from '@/components/back-link';
 import ExternalLink from '@/components/external-link';
 import LocalTime from '@/components/local-time';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
-import type {
-  PipelineRun,
-  PipelineVariable,
-  VariablesApplied,
-} from '@/lib/code/bitbucket-pipelines';
-import type { PipelineTemplate } from '@/lib/code/pipeline-templates';
-import VariableGroup, {
-  RunStatePill,
-  StatusPill,
-  cardClass,
-  inputClass,
-  linkButtonClass,
-  type VariableWords,
-} from './pipeline-parts';
+import type { PipelineRun } from '@/lib/code/bitbucket-pipelines';
+import { RunStatePill, StatusPill, cardClass, inputClass, linkButtonClass } from './pipeline-parts';
 import {
   branchLabel as labelOfBranch,
   canCommit,
   canRun,
-  canSetVariables as mayVariables,
   canStartRun,
   committedReminder,
-  draftFor,
   duration,
-  environmentHint,
   fileRequest,
   initialPipelines,
-  outcomeFor,
-  outcomeOf,
   pipelinesReducer,
   pipelinesUrl as urlOfPipelines,
-  removalQuestion,
   runRequest,
-  templateBlankOption,
-  templateOptionLabel,
   textRows,
-  variablesGoing,
-  variablesRequest,
   type Committed,
-  type Outcome,
   type PipelinesAction,
   type RunDraft,
   type Setup,
 } from './pipelines-page.model';
 
-const BITBUCKET_WORDS: VariableWords = {
-  placeholder: 'API_BASE_URL=https://api.example.test\nsecret DEPLOY_TOKEN=…',
-  help: (
-    <>
-      One <span className="font-mono">KEY=value</span> a line, as a .env; start a line with{' '}
-      <span className="font-mono">secret</span> to secure it — Bitbucket masks it in logs and never
-      shows the value again, so a secured one shows here as{' '}
-      <span className="font-mono">secret KEY=</span> and keeps its value while that line stays. A
-      line taken out removes the variable.
-    </>
-  ),
-};
-
 export default function PipelinesPage({
   projectId,
-  projectName,
   repoFullName,
   branch,
   canEdit,
-  presentation = 'page',
 }: {
   projectId: string;
-  projectName: string;
   repoFullName: string;
-  /** The project's branch; empty for the repository's default. */
+  /** The branch whose runs and pipeline file these are. */
   branch: string;
   canEdit: boolean;
-  /** A page of its own, or the body of a modal (no back link or page header). */
-  presentation?: 'page' | 'modal';
 }) {
   const url = `/api/code/projects/${projectId}/pipelines`;
   const [state, dispatch] = useReducer(pipelinesReducer, initialPipelines);
-  const {
-    setup,
-    loadError,
-    error,
-    busy,
-    draft,
-    runDraft,
-    started,
-    fileDraft,
-    templates,
-    committed,
-  } = state;
+  const onBranch = `?branch=${encodeURIComponent(branch)}`;
+  const { setup, loadError, error, busy, runDraft, started, fileDraft, committed } = state;
 
   const reload = useCallback(async () => {
-    const result = await getJson<Setup>(url);
+    const result = await getJson<Setup>(`${url}${onBranch}`);
     if (result.data) dispatch({ type: 'loaded', setup: result.data });
     else
       dispatch({ type: 'loadFailed', error: result.error ?? 'The pipelines could not be read.' });
-  }, [url]);
+  }, [url, onBranch]);
 
   useEffect(() => {
     void reload();
@@ -139,7 +79,7 @@ export default function PipelinesPage({
 
   /** Send a change; on success read the setup again before saying it is done. */
   const act = async (
-    what: 'flip' | 'variables' | 'run' | 'file',
+    what: 'flip' | 'run' | 'file',
     work: () => Promise<{ error: string | null }>,
     done: () => PipelinesAction
   ) => {
@@ -160,41 +100,12 @@ export default function PipelinesPage({
       () => ({ type: 'flipped' })
     );
 
-  /**
-   * Save one set from its text. Keys about to disappear are named first:
-   * a secured value cannot be brought back once its line is gone.
-   */
-  const saveVariables = async (current: PipelineVariable[]) => {
-    if (!draft) return;
-    const question = removalQuestion(variablesGoing(draft.text, current));
-    if (question && !window.confirm(question)) return;
-    let result: Outcome | null = null;
-    await act(
-      'variables',
-      async () => {
-        const response = await sendJsonFull<VariablesApplied & { problems: string[] }>(
-          `${url}/variables`,
-          'PUT',
-          variablesRequest(draft)
-        );
-        if (response.data && !response.error) result = outcomeOf(draft, response.data);
-        return response;
-      },
-      () => ({ type: 'variablesSaved', outcome: result })
-    );
-  };
-
-  /** Open the file editor: the file as it is on the branch, or empty for a template to fill. */
+  /** Open the file editor: the file as it is on the branch, or an empty one to write. */
   const openFile = async () => {
     dispatch({ type: 'fileOpening' });
-    const [file, catalog] = await Promise.all([
-      getJson<{ ref: string; text: string | null }>(`${url}/config-file`),
-      templates
-        ? Promise.resolve({ data: { templates }, error: null })
-        : getJson<{ templates: PipelineTemplate[] }>(
-            `/api/code/pipeline-templates?provider=atlassian-bitbucket`
-          ),
-    ]);
+    const file = await getJson<{ ref: string; text: string | null }>(
+      `${url}/config-file${onBranch}`
+    );
     if (file.error) {
       dispatch({ type: 'fileOpenFailed', error: file.error });
       return;
@@ -202,7 +113,6 @@ export default function PipelinesPage({
     dispatch({
       type: 'fileOpened',
       text: file.data?.text ?? null,
-      templates: catalog.data?.templates ?? [],
     });
   };
 
@@ -213,7 +123,7 @@ export default function PipelinesPage({
       'file',
       async () => {
         const response = await sendJsonFull<Committed>(
-          `${url}/config-file`,
+          `${url}/config-file${onBranch}`,
           'PUT',
           fileRequest(fileDraft)
         );
@@ -244,8 +154,6 @@ export default function PipelinesPage({
 
   const pipelinesUrl = urlOfPipelines(repoFullName);
   const branchLabel = labelOfBranch(branch);
-  const canSetVariables = mayVariables(state, canEdit);
-
   const refreshButton = (
     <button
       type="button"
@@ -264,46 +172,28 @@ export default function PipelinesPage({
       Open on Bitbucket
     </ExternalLink>
   ) : null;
-  const modal = presentation === 'modal';
 
   return (
-    <div className={modal ? '' : 'min-h-0 flex-1 overflow-y-auto'}>
-      {modal ? (
-        <div className="flex items-center gap-2 border-b border-gray-200 px-4 py-2 dark:border-gray-800">
-          <p className="min-w-0 flex-1 truncate text-xs text-gray-500">
-            <span className="font-mono">{repoFullName}</span>
-            {setup ? (
-              <>
-                {' '}
-                <StatusPill enabled={setup.enabled} />
-              </>
-            ) : null}
-          </p>
-          {refreshButton}
-          {hostLink}
-        </div>
-      ) : (
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
-          <BackLink href={`/code/${projectId}`} label={projectName} />
-          <div className="min-w-0 flex-1">
-            <h1 className="flex items-center gap-2 text-sm font-semibold">
-              <span className="truncate">Pipelines</span>
-              {setup ? <StatusPill enabled={setup.enabled} /> : null}
-            </h1>
-            <p className="truncate text-xs text-gray-500">
-              {projectName} · <span className="font-mono">{repoFullName}</span>
-            </p>
-          </div>
-          {refreshButton}
-          {hostLink}
-        </header>
-      )}
+    <div>
+      <div className="flex items-center gap-2">
+        <p className="min-w-0 flex-1 truncate text-xs text-gray-500">
+          Bitbucket Pipelines
+          {setup ? (
+            <>
+              {' '}
+              <StatusPill enabled={setup.enabled} />
+            </>
+          ) : null}
+        </p>
+        {refreshButton}
+        {hostLink}
+      </div>
 
-      <div className={`mx-auto space-y-4 p-4 ${modal ? 'max-w-none' : 'max-w-6xl'}`}>
+      <div className="mt-3 space-y-4">
         <p className="text-xs text-gray-500">
-          How Bitbucket builds and deploys this repository. A chat in the project can write the
-          pipeline file, start or stop runs, and read and set the plain variables; the switch and
-          secured values are set here, by you, and a chat never sees one.
+          How Bitbucket runs <span className="font-mono">{branch}</span>. A chat in the project can
+          write the pipeline file and start or stop runs; the switch is set here, by you. The
+          variables and secured values its runs get are on the Variables tab.
         </p>
         {loadError ? (
           <p role="alert" className="text-sm text-red-600 dark:text-red-400">
@@ -321,7 +211,7 @@ export default function PipelinesPage({
         {setup ? (
           <div
             aria-busy={busy}
-            className={`grid grid-cols-[minmax(0,1fr)] gap-4 lg:items-start ${modal ? 'xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]' : 'lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]'}`}
+            className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:items-start xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]"
           >
             <div className="space-y-4">
               <RunsCard
@@ -332,7 +222,7 @@ export default function PipelinesPage({
                 busy={busy}
                 draft={runDraft}
                 dispatch={dispatch}
-                defaultRef={branch || 'main'}
+                defaultRef={branch}
                 onStart={startRun}
                 started={started}
               />
@@ -388,19 +278,23 @@ export default function PipelinesPage({
                         </span>
                       ) : setup.configFile === 'absent' ? (
                         <span>
-                          Not on {branchLabel} yet.{' '}
+                          Not on {branchLabel} yet. Build it from blocks on this branch’s Pipeline
+                          tab
                           {canEdit && !fileDraft ? (
-                            <button
-                              type="button"
-                              disabled={busy}
-                              onClick={() => void openFile()}
-                              className={linkButtonClass}
-                            >
-                              Start from a template
-                            </button>
-                          ) : null}{' '}
-                          A chat in this project can write one fitted to the code. Runs start once
-                          it is committed and Pipelines is on.
+                            <>
+                              {', or '}
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void openFile()}
+                                className={linkButtonClass}
+                              >
+                                write one by hand
+                              </button>
+                            </>
+                          ) : null}
+                          . A chat in this project can write one fitted to the code too. Runs start
+                          once it is committed and Pipelines is on.
                         </span>
                       ) : (
                         <span className="text-gray-500">Could not be checked.</span>
@@ -417,25 +311,6 @@ export default function PipelinesPage({
                     aria-label="Pipeline file"
                     className="mt-3 space-y-2"
                   >
-                    {templates && templates.length > 0 ? (
-                      <label className="block text-xs">
-                        <span className="text-gray-500">Start from a template</span>
-                        <select
-                          value={fileDraft.templateId}
-                          onChange={(event) => {
-                            dispatch({ type: 'templatePicked', templateId: event.target.value });
-                          }}
-                          className={`mt-0.5 ${inputClass}`}
-                        >
-                          <option value="">{templateBlankOption(fileDraft)}</option>
-                          {templates.map((template) => (
-                            <option key={template.id} value={template.id}>
-                              {templateOptionLabel(template)}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    ) : null}
                     <textarea
                       value={fileDraft.text}
                       onChange={(event) =>
@@ -466,8 +341,8 @@ export default function PipelinesPage({
                     </label>
                     <div className="flex items-center justify-end gap-2">
                       <p className="mr-auto text-xs text-gray-500">
-                        Commit goes straight to {branchLabel}, with your Bitbucket access. The
-                        picked template is a starting point; what is in the box is what lands.
+                        Commit goes straight to {branchLabel}, with your Bitbucket access: what is
+                        in the box is what lands.
                       </p>
                       <button
                         type="button"
@@ -496,57 +371,6 @@ export default function PipelinesPage({
                   </p>
                 ) : null}
               </section>
-
-              <VariableGroup
-                title="Repository variables"
-                hint="Every pipeline run gets these."
-                variables={setup.variables}
-                error={setup.variablesError}
-                scopeId="repository"
-                canEdit={canSetVariables}
-                needs={canEdit ? setup.access.variablesNeeds : null}
-                busy={busy}
-                open={draftFor(state, {})}
-                last={outcomeFor(state, {})}
-                words={BITBUCKET_WORDS}
-                onOpen={() =>
-                  dispatch({ type: 'variablesOpened', scope: {}, variables: setup.variables })
-                }
-                onChange={(text) => dispatch({ type: 'variablesChanged', text })}
-                onCancel={() => dispatch({ type: 'variablesCancelled' })}
-                onSave={() => void saveVariables(setup.variables)}
-              />
-              {setup.environments.map((environment) => (
-                <VariableGroup
-                  key={environment.uuid}
-                  title={environment.name}
-                  hint={environmentHint(environment)}
-                  variables={environment.variables}
-                  error={environment.error}
-                  scopeId={environment.uuid}
-                  canEdit={canSetVariables}
-                  needs={null}
-                  busy={busy}
-                  open={draftFor(state, { environmentUuid: environment.uuid })}
-                  last={outcomeFor(state, { environmentUuid: environment.uuid })}
-                  words={BITBUCKET_WORDS}
-                  onOpen={() =>
-                    dispatch({
-                      type: 'variablesOpened',
-                      scope: { environmentUuid: environment.uuid },
-                      variables: environment.variables,
-                    })
-                  }
-                  onChange={(text) => dispatch({ type: 'variablesChanged', text })}
-                  onCancel={() => dispatch({ type: 'variablesCancelled' })}
-                  onSave={() => void saveVariables(environment.variables)}
-                />
-              ))}
-              {setup.environmentsError ? (
-                <p className="text-xs text-amber-700 dark:text-amber-400">
-                  Deployment environments could not be read: {setup.environmentsError}
-                </p>
-              ) : null}
             </div>
           </div>
         ) : null}

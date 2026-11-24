@@ -836,7 +836,9 @@ export async function registerPullRequestTools(
       );
       if (!response.ok) return errText(await describeBitbucketFailure(response));
       return textResult(
-        reopen ? `Comment ${commentId} reopened on #${id}.` : `Comment ${commentId} resolved on #${id}.`
+        reopen
+          ? `Comment ${commentId} reopened on #${id}.`
+          : `Comment ${commentId} resolved on #${id}.`
       );
     }
   );

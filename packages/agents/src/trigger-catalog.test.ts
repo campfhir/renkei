@@ -8,7 +8,7 @@
  */
 
 import { TRIGGER_EVENT_CATALOG, matchesTriggerEvent, triggerEventById } from './trigger-catalog';
-import { normalizeMatch, describeFilters } from './trigger-filters';
+import { normalizeMatch, describeFilters, validateMatch } from './trigger-filters';
 
 describe('catalog invariants', () => {
   it('has unique ids of the form source/type', () => {
@@ -38,6 +38,17 @@ describe('catalog invariants', () => {
       for (const field of event.filters) {
         if (field.input !== 'select') continue;
         expect(field.options?.some((option) => option.value === '')).toBe(true);
+      }
+    }
+  });
+
+  it('gives every tick-several filter its choices, none of them empty, each with its word', () => {
+    for (const event of TRIGGER_EVENT_CATALOG) {
+      for (const field of event.filters) {
+        if (field.input !== 'choice-list') continue;
+        expect(field.options?.length).toBeGreaterThan(1);
+        expect(field.options?.every((option) => option.value && option.describe)).toBe(true);
+        expect(field.describeOne).toContain('{value}');
       }
     }
   });
@@ -130,5 +141,126 @@ describe('batch/job.completed', () => {
     expect(matchesTriggerEvent('batch/job.started', { nameContains: 'weekly' }, started)).toBe(
       false
     );
+  });
+});
+
+describe('deployments/deployment.changed', () => {
+  const ID = 'deployments/deployment.changed';
+  const fields = triggerEventById(ID)?.filters ?? [];
+  const change = (over: Record<string, unknown> = {}) => ({
+    changeId: 'deployment:d1:failed',
+    projectId: 'p1',
+    project: 'Shop',
+    repository: 'acme/shop',
+    environment: 'production',
+    status: 'failed',
+    ...over,
+  });
+
+  it('wakes for every report when nothing is ticked', () => {
+    expect(matchesTriggerEvent(ID, undefined, change({ status: 'started' }))).toBe(true);
+    expect(matchesTriggerEvent(ID, normalizeMatch(fields, { statuses: [] }), change())).toBe(true);
+  });
+
+  it('wakes only for the outcomes ticked: failed alone, or failed and succeeded', () => {
+    const failed = normalizeMatch(fields, { statuses: ['failed'] });
+    expect(matchesTriggerEvent(ID, failed, change())).toBe(true);
+    expect(matchesTriggerEvent(ID, failed, change({ status: 'succeeded' }))).toBe(false);
+    expect(matchesTriggerEvent(ID, failed, change({ status: 'started' }))).toBe(false);
+
+    const ended = normalizeMatch(fields, { statuses: ['failed', 'succeeded'] });
+    expect(matchesTriggerEvent(ID, ended, change())).toBe(true);
+    expect(matchesTriggerEvent(ID, ended, change({ status: 'succeeded' }))).toBe(true);
+    expect(matchesTriggerEvent(ID, ended, change({ status: 'started' }))).toBe(false);
+    expect(describeFilters(fields, ended)).toBe('when the deployment has failed or succeeded');
+  });
+
+  it('reads a filter saved as one status the same way', () => {
+    expect(normalizeMatch(fields, { statuses: 'failed' })).toEqual({ statuses: ['failed'] });
+  });
+
+  it('can keep to one environment and one project, by name', () => {
+    const match = normalizeMatch(fields, {
+      statuses: ['failed'],
+      environmentContains: 'prod',
+      projectContains: 'shop',
+    });
+    expect(matchesTriggerEvent(ID, match, change())).toBe(true);
+    expect(matchesTriggerEvent(ID, match, change({ environment: 'staging' }))).toBe(false);
+    expect(matchesTriggerEvent(ID, match, change({ project: 'Billing' }))).toBe(false);
+  });
+});
+
+describe('deployments/health.changed', () => {
+  const ID = 'deployments/health.changed';
+  const fields = triggerEventById(ID)?.filters ?? [];
+  const change = (state: string, previous = 'healthy') => ({
+    changeId: `health:p1:production:${state}:2026-11-24T10:00:00.000Z`,
+    projectId: 'p1',
+    project: 'Shop',
+    environment: 'production',
+    state,
+    previous,
+  });
+
+  it('offers every state an application can be announced in, for now and for before', () => {
+    const all = [
+      'failed',
+      'stopped',
+      'error',
+      'degraded',
+      'late',
+      'healthy',
+      'starting',
+      'stopping',
+    ];
+    for (const id of ['states', 'previousStates']) {
+      const field = fields.find((each) => each.id === id);
+      expect(field?.input).toBe('choice-list');
+      expect(field?.options?.map((option) => option.value)).toEqual(all);
+    }
+  });
+
+  it('wakes for every change when nothing is ticked', () => {
+    expect(matchesTriggerEvent(ID, undefined, change('starting'))).toBe(true);
+  });
+
+  it('wakes only for the states ticked, so a start or a routine recovery costs nothing', () => {
+    const match = normalizeMatch(fields, { states: ['failed', 'stopped', 'error'] });
+    expect(matchesTriggerEvent(ID, match, change('failed'))).toBe(true);
+    expect(matchesTriggerEvent(ID, match, change('stopped'))).toBe(true);
+    expect(matchesTriggerEvent(ID, match, change('error'))).toBe(true);
+    expect(matchesTriggerEvent(ID, match, change('late'))).toBe(false);
+    expect(matchesTriggerEvent(ID, match, change('healthy', 'failed'))).toBe(false);
+    expect(matchesTriggerEvent(ID, match, change('starting'))).toBe(false);
+    expect(describeFilters(fields, match)).toBe(
+      'when the application is failed, stopped or reporting an error'
+    );
+  });
+
+  it('can wake only on a recovery: healthy now, after trouble', () => {
+    const match = normalizeMatch(fields, {
+      states: ['healthy'],
+      previousStates: ['failed', 'stopped', 'late', 'error', 'degraded'],
+    });
+    expect(matchesTriggerEvent(ID, match, change('healthy', 'failed'))).toBe(true);
+    expect(matchesTriggerEvent(ID, match, change('healthy', 'late'))).toBe(true);
+    // Starting to healthy is an ordinary boot; a first check-in has no state before it.
+    expect(matchesTriggerEvent(ID, match, change('healthy', 'starting'))).toBe(false);
+    expect(matchesTriggerEvent(ID, match, change('healthy', ''))).toBe(false);
+    expect(describeFilters(fields, match)).toBe(
+      'when the application is healthy and it was failed, stopped, reporting an error, degraded or potentially failing before'
+    );
+  });
+
+  it('drops a state nobody knows rather than narrowing on it, and says so when saving', () => {
+    expect(normalizeMatch(fields, { states: ['exploded', 'failed'] })).toEqual({
+      states: ['failed'],
+    });
+    expect(normalizeMatch(fields, { states: ['exploded'] })).toEqual({});
+    expect(validateMatch(fields, { states: ['exploded'] })).toEqual([
+      expect.stringContaining('An application state is one of'),
+    ]);
+    expect(validateMatch(fields, { states: ['failed', 'stopped'] })).toEqual([]);
   });
 });

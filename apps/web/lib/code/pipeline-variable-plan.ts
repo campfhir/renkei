@@ -9,7 +9,7 @@
  * (it could not see its value, and replacing or deleting one cannot be
  * undone), and it does not write a value for a name that reads as a
  * secret: a token typed into a tool call is a token in a transcript. The
- * person sets those on the Pipelines page, where a value goes to the host
+ * person sets those on the Variables tab of the project’s Environments page, where a value goes to the host
  * once and is never shown again.
  */
 
@@ -55,7 +55,8 @@ export function planVariableWrite(
     if (existing.get(key)?.secured) {
       plan.refused.push({
         key,
-        reason: 'is secured; only the person changes a secured variable, on the Pipelines page',
+        reason:
+          'is secured; only the person changes a secured variable, on the Variables tab of the project’s Environments page',
       });
       continue;
     }
@@ -63,7 +64,7 @@ export function planVariableWrite(
       plan.refused.push({
         key,
         reason:
-          'reads as a secret, so no value is written from a chat; the person adds it as a secured variable on the Pipelines page',
+          'reads as a secret, so no value is written from a chat; the person adds it as a secured variable on the Variables tab of the project’s Environments page',
       });
       continue;
     }
@@ -81,7 +82,8 @@ export function planVariableWrite(
     } else if (found.secured) {
       plan.refused.push({
         key,
-        reason: 'is secured; only the person removes one, on the Pipelines page',
+        reason:
+          'is secured; only the person removes one, on the Variables tab of the project’s Environments page',
       });
     } else if (key in input.variables) {
       plan.refused.push({ key, reason: 'is both set and removed in one call' });

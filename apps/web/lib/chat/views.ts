@@ -175,6 +175,8 @@ export interface ChatView {
   projectName: string | null;
   /** Which section the project lives under; null outside a project. */
   projectKind: 'chat' | 'code' | null;
+  /** The host of a code project's repository, which names its pipelines: Actions on GitHub, Pipelines on Bitbucket. */
+  projectHost?: 'github' | 'bitbucket' | null;
   /** The branch of a code chat's worktree as the worker last saw it; null when it has none yet. */
   projectBranch: string | null;
   llmModelId: string | null;

@@ -21,8 +21,11 @@ import ThemeScript from '@/components/theme-script';
 import ThemeSync from '@/components/theme-sync';
 import { CodeLineNumbersProvider } from '@/components/code-display-context';
 import { UploadQueueProvider } from '@/components/uploads/upload-queue';
+import { AssistantDockProvider } from '@/components/assistant-dock/assistant-dock';
 import { getVersionInfo } from '@/lib/version-info';
 import { countChangesAwaitingReview } from '@/lib/admin-changes/sources';
+import { getDataStore } from '@renkei/db';
+import { FABRIC } from '@renkei/provider-grants';
 import AppNav from './nav';
 import PreferencesSync from './preferences-sync';
 
@@ -86,18 +89,33 @@ export default async function TenantLayout({ children }: { children: ReactNode }
   // A chat list that cannot be read leaves the menu without chats, as it
   // always has when the database is down.
   // An operator's Changes row counts what waits for them; a count that
-  // cannot be read leaves the row without one.
-  const [identity, prefs, theme, coachMarks, orgSettings, chats, coachMarkProgress, pendingChanges] =
-    await Promise.all([
-      getIdentityDisplay(session.subject),
-      getNotificationPrefs(session.subject, { fresh: true }),
-      getThemePrefs(session.subject, { fresh: true }),
-      getCoachMarkPrefs(session.subject, { fresh: true }),
-      getOrgSettings(),
-      loadChatSidebar(session.subject, { since: chatSidebarActiveSince() }).catch(() => null),
-      listCoachMarkProgress(session.subject),
-      isOperator ? countChangesAwaitingReview().catch(() => null) : null,
-    ]);
+  // cannot be read leaves the row without one. Someone who connected
+  // Microsoft Fabric gets its page in the menu; a grant that cannot be
+  // read leaves the row out.
+  const [
+    identity,
+    prefs,
+    theme,
+    coachMarks,
+    orgSettings,
+    chats,
+    coachMarkProgress,
+    pendingChanges,
+    fabricConnected,
+  ] = await Promise.all([
+    getIdentityDisplay(session.subject),
+    getNotificationPrefs(session.subject, { fresh: true }),
+    getThemePrefs(session.subject, { fresh: true }),
+    getCoachMarkPrefs(session.subject, { fresh: true }),
+    getOrgSettings(),
+    loadChatSidebar(session.subject, { since: chatSidebarActiveSince() }).catch(() => null),
+    listCoachMarkProgress(session.subject),
+    isOperator ? countChangesAwaitingReview().catch(() => null) : null,
+    getDataStore()
+      .providerGrants.listForSubject(session.subject, { provider: FABRIC })
+      .then((grants) => grants.length > 0)
+      .catch(() => false),
+  ]);
   const userName = identity?.displayName ?? identity?.email ?? session.subject;
   const coachMarksEnabled = orgSettings.ok ? orgSettings.val.coachMarksEnabled : true;
 
@@ -127,41 +145,47 @@ export default async function TenantLayout({ children }: { children: ReactNode }
             the queue sits above every page so a navigation inside the app
             leaves them running. */}
         <UploadQueueProvider>
-        <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-black dark:text-gray-100">
-          {/* The person's encryption key, kept connected from this browser
+          <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-black dark:text-gray-100">
+            {/* The person's encryption key, kept connected from this browser
               (docs/delegate-key-design.md); its banners sit above the nav. */}
-          <KeyGuard />
-          {/* The nav frames the page: it owns the <main> so the menu column can
+            <KeyGuard />
+            {/* The nav frames the page: it owns the <main> so the menu column can
               stand beside it on a wide screen. */}
-          {/* The coach marks wrap the nav AND the page: a tour spotlights
+            {/* The coach marks wrap the nav AND the page: a tour spotlights
               both, and walks across pages without unmounting. */}
-          <CoachMarkProvider
-            isOperator={isOperator}
-            enabled={coachMarksEnabled}
-            autoStart={coachMarks.autoStart}
-            progress={coachMarkProgress}
-          >
-            <AppNav
-              userName={userName}
-              userEmail={identity?.email ?? null}
+            <CoachMarkProvider
               isOperator={isOperator}
-              chats={chats}
-              version={version}
-              pendingChanges={pendingChanges}
+              enabled={coachMarksEnabled}
+              autoStart={coachMarks.autoStart}
+              progress={coachMarkProgress}
             >
-              {children}
-            </AppNav>
-          </CoachMarkProvider>
-          <NotificationCorner
-            corner={prefs?.toastCorner ?? 'bottom-right'}
-            toastsEnabled={prefs?.toastsEnabled ?? false}
-          />
-          {/* Renders nothing — it only turns arrivals into OS banners while the
+              {/* A page's assistant floats above everything, in one dock
+                (components/assistant-dock); it draws only while a page
+                has put one in it. */}
+              <AssistantDockProvider>
+                <AppNav
+                  userName={userName}
+                  userEmail={identity?.email ?? null}
+                  isOperator={isOperator}
+                  chats={chats}
+                  version={version}
+                  pendingChanges={pendingChanges}
+                  fabricConnected={fabricConnected}
+                >
+                  {children}
+                </AppNav>
+              </AssistantDockProvider>
+            </CoachMarkProvider>
+            <NotificationCorner
+              corner={prefs?.toastCorner ?? 'bottom-right'}
+              toastsEnabled={prefs?.toastsEnabled ?? false}
+            />
+            {/* Renders nothing — it only turns arrivals into OS banners while the
               tab is in the background, and only for somebody whose browser has
               granted permission. The opt-in it checks lives in this browser's
               localStorage, not here — see desktop-notifications.tsx. */}
-          <DesktopNotifications />
-        </div>
+            <DesktopNotifications />
+          </div>
         </UploadQueueProvider>
       </NotificationCenter>
     </CodeLineNumbersProvider>

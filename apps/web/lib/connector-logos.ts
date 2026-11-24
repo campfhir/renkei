@@ -32,6 +32,7 @@ export const LOGO_FILE: Record<string, string> = {
   // company mark is the honest picture for a directory-level product, the
   // same reasoning the enterprise-directory panel gives for 'microsoft'.
   'entra-developer': 'microsoft',
+  fabric: 'microsoft',
   // The WebEx bot is a second registration of the same product.
   'webex-bot': 'webex',
   // Salesforce Admin is a separate connector/capability key from
@@ -43,6 +44,7 @@ export const LOGO_FILE: Record<string, string> = {
   'batch-jobs': 'renkei',
   logs: 'renkei',
   'user-memory': 'renkei',
+  deployments: 'renkei',
   sandbox: 'renkei',
 };
 

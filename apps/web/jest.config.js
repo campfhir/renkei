@@ -31,6 +31,8 @@ export default {
     '^@renkei/email-sanitizer$': '<rootDir>/../../packages/email-sanitizer/src/index.ts',
     '^@renkei/provider-grants$': '<rootDir>/../../packages/provider-grants/src/index.ts',
     '^@renkei/capability-registry$': '<rootDir>/../../packages/capability-registry/src/index.ts',
+    '^@renkei/connector-fabric$': '<rootDir>/../../packages/connector-fabric/src/index.ts',
+    '^@renkei/connector-fabric/readable$': '<rootDir>/../../packages/connector-fabric/src/readable.ts',
     '^@renkei/connector-webex$': '<rootDir>/../../packages/connector-webex/src/index.ts',
     '^@renkei/connector-fileshares$': '<rootDir>/../../packages/connector-fileshares/src/index.ts',
     '^@renkei/fileshares-client$': '<rootDir>/../../packages/fileshares-client/src/index.ts',
@@ -40,6 +42,7 @@ export default {
       '<rootDir>/../../packages/connector-mistral-ocr/src/index.ts',
     '^@renkei/connector-onbase$': '<rootDir>/../../packages/connector-onbase/src/index.ts',
     '^@renkei/connector-salesforce$': '<rootDir>/../../packages/connector-salesforce/src/index.ts',
+    '^@renkei/ci-blocks$': '<rootDir>/../../packages/ci-blocks/src/index.ts',
     '^@renkei/connector-mcp$': '<rootDir>/../../packages/connector-mcp/src/index.ts',
     '^@renkei/connector-mcp/pure$': '<rootDir>/../../packages/connector-mcp/src/pure.ts',
     '^@renkei/connector-mirth$': '<rootDir>/../../packages/connector-mirth/src/index.ts',
@@ -65,13 +68,15 @@ export default {
     '^@renkei/blob-store$': '<rootDir>/../../packages/blob-store/src/index.ts',
     '^@renkei/voice$': '<rootDir>/../../packages/voice/src/index.ts',
   },
-  // kysely's and marked's published builds are ESM-only, and
+  // kysely's, marked's and jose's published builds are ESM-only, and
   // quickjs-emscripten's CJS build keeps a dynamic import() for its wasm
   // variant (pptxgenjs's, for node:fs); suites importing package barrels
   // that reach any of them need them transformed to CJS rather than
   // ignored — the worker-agents pattern.
-  transformIgnorePatterns: ['/node_modules/(?!.*(kysely|quickjs|pptxgenjs|marked))'],
+  transformIgnorePatterns: ['/node_modules/(?!.*(kysely|quickjs|pptxgenjs|marked|jose))'],
   transform: {
+    // jose's error classes extend Error and must stay classes (jest.esm-transform.cjs).
+    'node_modules/.+/jose/.+\\.js$': '<rootDir>/jest.esm-transform.cjs',
     '^.+\\.(t|j)sx?$': [
       'ts-jest',
       {

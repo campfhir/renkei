@@ -76,6 +76,7 @@ describe('the connectors page sections', () => {
       'github',
       'zoom',
       'entra-developer',
+      'fabric',
       'teams',
       'webex',
       'confluence',
@@ -97,6 +98,7 @@ describe('the connectors page sections', () => {
       'webex',
       'microsoft',
       'entra-developer',
+      'fabric',
       'zoom',
       'github',
       'hyland',
@@ -113,6 +115,15 @@ describe('the connectors page sections', () => {
     expect(
       sections({ shown: new Set(['onedrive', 'teams']), grants: new Set(['microsoft']) }).settled
     ).toEqual(['microsoft']);
+  });
+
+  it('Fabric is its own consent: connecting Microsoft 365 does not settle it', () => {
+    expect(
+      sections({ shown: new Set(['onedrive', 'fabric']), grants: new Set(['microsoft']) })
+    ).toMatchObject({ needsSetup: ['fabric'], settled: ['microsoft'] });
+    expect(sections({ shown: new Set(['fabric']), grants: new Set(['fabric']) }).settled).toEqual([
+      'fabric',
+    ]);
   });
 
   it('the browser secrets card is never something to set up', () => {

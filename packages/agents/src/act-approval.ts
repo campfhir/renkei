@@ -61,6 +61,10 @@ export const ALWAYS_APPROVAL_TOOLS: readonly string[] = [
   'sharepoint_delete_page',
   'sharepoint_share_document',
   'sharepoint_add_user_to_document',
+  // List rows destroyed.
+  'sharepoint_delete_list_item',
+  // A column and every value in it, with no recycle bin.
+  'sharepoint_remove_list_column',
   // Notes destroyed.
   'onenote_delete_page',
   // Work items destroyed.
@@ -94,6 +98,9 @@ export const ALWAYS_APPROVAL_TOOLS: readonly string[] = [
   'entra_remove_app_role_assignment_preview',
   'entra_remove_app_role_preview',
   'entra_update_application_preview',
+  // Fabric: what each environment deploys to, and on whose workspace —
+  // its pipeline. Item changes are pull requests someone merges.
+  'fabric_setup_pipeline_preview',
 ];
 
 const ALWAYS = new Set(ALWAYS_APPROVAL_TOOLS);

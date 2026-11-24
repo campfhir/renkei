@@ -23,6 +23,8 @@ export interface PipelinesProjectContext {
   subject: string;
   /** What the person's connection to the project's host carries; null when not connected. */
   scopes: string[] | null;
+  /** The branch the request named (`?branch=`), which `project.repo.branch` then is; null when none. */
+  branchAsked: string | null;
 }
 
 export async function pipelinesProjectContext(
@@ -59,9 +61,18 @@ export async function pipelinesProjectContext(
     }
   }
   const scopes = await grantScopes(session.subject, host);
+  // A request about one branch names it (`?branch=`): its runs, its
+  // pipeline file. Without one it is about the project's own branch.
+  const asked = request.nextUrl.searchParams.get('branch')?.trim() ?? '';
+  const branch = asked && asked.length <= 200 ? asked : project.repo.branch;
   return {
     ok: true,
-    context: { project: { ...project, repo: project.repo }, subject: session.subject, scopes },
+    context: {
+      project: { ...project, repo: { ...project.repo, branch } },
+      subject: session.subject,
+      scopes,
+      branchAsked: asked && asked.length <= 200 ? asked : null,
+    },
   };
 }
 

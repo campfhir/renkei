@@ -18,8 +18,6 @@ import {
   commitPipelineConfigFile,
   readPipelineConfigFile,
   applyVariableText,
-  parseVariableText,
-  renderVariableText,
   createPipelineVariable,
   deletePipelineVariable,
   readPipelineSetup,
@@ -471,52 +469,7 @@ describe('starting a run', () => {
   });
 });
 
-describe('variables as text', () => {
-  it('parses .env lines, YAML-style lines, and the secret prefix, reporting the rest', () => {
-    const parsed = parseVariableText(
-      [
-        '# comment',
-        'API_BASE_URL=https://api.example.test',
-        'secret NPM_TOKEN=npm_123',
-        'SECURED DEPLOY_KEY="with space"',
-        'REGION: eu-west-1',
-        'export FLAG=1 # trailing',
-        'this is broken',
-        '1BAD=x',
-        'FLAG=2',
-      ].join('\n')
-    );
-    expect(parsed.entries).toEqual([
-      { key: 'API_BASE_URL', value: 'https://api.example.test', secured: false },
-      { key: 'NPM_TOKEN', value: 'npm_123', secured: true },
-      { key: 'DEPLOY_KEY', value: 'with space', secured: true },
-      { key: 'REGION', value: 'eu-west-1', secured: false },
-      { key: 'FLAG', value: '2', secured: false },
-    ]);
-    expect(parsed.problems).toEqual([
-      'line 7: not a NAME=value line',
-      'line 8: not a NAME=value line',
-      'line 9: FLAG is given twice; the last one wins',
-    ]);
-  });
-
-  it('renders a set the way the box shows it, secured ones without a value', () => {
-    expect(
-      renderVariableText([
-        { key: 'API_BASE_URL', value: 'https://api.example.test', secured: false },
-        { key: 'NPM_TOKEN', value: null, secured: true },
-        { key: 'GREETING', value: 'hello world # not a comment', secured: false },
-      ])
-    ).toBe(
-      'API_BASE_URL=https://api.example.test\nsecret NPM_TOKEN=\nGREETING="hello world # not a comment"'
-    );
-    // What renders parses back to the same set.
-    const back = parseVariableText(
-      renderVariableText([{ key: 'G', value: 'a "quoted" \\ value', secured: false }])
-    );
-    expect(back.entries).toEqual([{ key: 'G', value: 'a "quoted" \\ value', secured: false }]);
-  });
-
+describe('a set of variables written as a difference', () => {
   it('applies the difference: creates, replaces, keeps a secured one with no value, deletes', async () => {
     routes = [
       {

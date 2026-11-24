@@ -99,7 +99,9 @@ test('a phone: Download, Add files, the indicator, the tree menu and @ completio
         buffer: index === 2 ? Buffer.alloc(0) : Buffer.from(`# Page ${index + 1}\n`),
       }))
     );
-    await expect(dialog.getByRole('list', { name: 'Files to add' }).getByRole('listitem')).toHaveCount(8);
+    await expect(
+      dialog.getByRole('list', { name: 'Files to add' }).getByRole('listitem')
+    ).toHaveCount(8);
     // The buttons stay on screen under the list.
     const addButton = dialog.getByRole('button', { name: 'Add to repository (8)' });
     await expect(addButton).toBeInViewport();
@@ -145,7 +147,10 @@ test('a phone: Download, Add files, the indicator, the tree menu and @ completio
     await page.unroute('**/files?path=docs%2Fpage-8.md');
 
     // ── The Code tab: the tree with the new folder, a row's menu ──
-    await main.getByRole('tablist', { name: 'Chat or code' }).getByRole('tab', { name: /Code/ }).click();
+    await main
+      .getByRole('tablist', { name: 'Chat or code' })
+      .getByRole('tab', { name: /Code/ })
+      .click();
     const tree = main.getByRole('tree', { name: 'Files' });
     await tree.getByRole('button', { name: 'docs', exact: true }).click();
     await expect(tree.getByRole('button', { name: /^page-8\.md/ })).toBeVisible();
@@ -159,7 +164,10 @@ test('a phone: Download, Add files, the indicator, the tree menu and @ completio
     await expect(menu).toHaveCount(0);
 
     // ── The composer's completions over the box ──
-    await main.getByRole('tablist', { name: 'Chat or code' }).getByRole('tab', { name: /Chat/ }).click();
+    await main
+      .getByRole('tablist', { name: 'Chat or code' })
+      .getByRole('tab', { name: /Chat/ })
+      .click();
     const message = main.getByRole('textbox', { name: 'Message' });
     await message.click();
     await message.pressSequentially('Check @pag');

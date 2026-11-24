@@ -425,6 +425,9 @@ export interface RecordLlmCallInput {
    * editor's ask (apps/web/lib/chat/refine-instructions.ts).
    * `prompt_refine`: a library prompt rewritten or drafted on an editor's
    * ask (apps/web/lib/chat/refine-prompt.ts), one row per model call.
+   * `pipeline_assistant`: the pipeline builder's assistant reading a
+   * repository and proposing (apps/web/lib/ci/assistant-jobs.ts), one row
+   * per model call, attributed to the person who asked.
    */
   purpose:
     | 'run'
@@ -433,7 +436,8 @@ export interface RecordLlmCallInput {
     | 'context_window'
     | 'artifact_digest'
     | 'instructions_refine'
-    | 'prompt_refine';
+    | 'prompt_refine'
+    | 'pipeline_assistant';
   /** Every prompt token the model read, cache-served or not. */
   inputTokens: number;
   outputTokens: number;

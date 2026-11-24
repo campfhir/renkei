@@ -47,6 +47,13 @@ import { chatAgentScenarios } from './chat-agents/scenarios';
 import { artifactScenarios } from './artifacts/scenarios';
 import { codeProjectScenarios } from './code-projects/scenarios';
 import { codeTemplateScenarios } from './code-templates/scenarios';
+import { ciBlockScenarios } from './ci-blocks/scenarios';
+import { ciDeploymentScenarios } from './ci-deployments/scenarios';
+import { ciEnvironmentScenarios } from './ci-environments/scenarios';
+import { ciHealthScenarios } from './ci-health-checkins/scenarios';
+import { ciPipelineScenarios } from './ci-pipelines/scenarios';
+import { ciRepoKeyScenarios } from './ci-repo-keys/scenarios';
+import { ciTargetScenarios } from './ci-targets/scenarios';
 import { chatModelScenarios } from './chat-models/scenarios';
 import { actionableItemScenarios } from './actionable-items/scenarios';
 import { firstRunScenarios } from './first-run/scenarios';
@@ -82,6 +89,8 @@ import { resourceKeyScenarios } from './resource-keys/scenarios';
 import { delegateSigningKeyScenarios } from './delegate-signing-keys/scenarios';
 import { delegateAccessEventScenarios } from './delegate-access-events/scenarios';
 import { delegateGitTicketScenarios } from './delegate-git-tickets/scenarios';
+import { fabricOperationScenarios } from './fabric-operations/scenarios';
+import { ciAssistantJobScenarios } from './ci-assistant-jobs/scenarios';
 import { sandboxInstanceScenarios } from './sandbox-instances/scenarios';
 import { sandboxScenarios } from './sandboxes/scenarios';
 import { sandboxArchiveScenarios } from './sandbox-archives/scenarios';
@@ -142,6 +151,13 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...artifactScenarios,
   ...codeProjectScenarios,
   ...codeTemplateScenarios,
+  ...ciBlockScenarios,
+  ...ciDeploymentScenarios,
+  ...ciEnvironmentScenarios,
+  ...ciHealthScenarios,
+  ...ciPipelineScenarios,
+  ...ciRepoKeyScenarios,
+  ...ciTargetScenarios,
   ...chatModelScenarios,
   ...actionableItemScenarios,
   ...firstRunScenarios,
@@ -180,6 +196,8 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...delegateSigningKeyScenarios,
   ...delegateAccessEventScenarios,
   ...delegateGitTicketScenarios,
+  ...fabricOperationScenarios,
+  ...ciAssistantJobScenarios,
   ...sandboxInstanceScenarios,
   ...sandboxScenarios,
   ...sandboxArchiveScenarios,

@@ -464,6 +464,13 @@ describe('buildSystemPrompt', () => {
     expect(ready).toContain('NPM_TOKEN');
     expect(ready).toContain('code_edit_file');
     expect(ready).toContain('code_delete_file and code_move_file');
+    // Health check-ins: always on offer in a code project, never added unasked.
+    expect(ready).toContain('RENKEI_HEALTH_URL');
+    expect(ready).toContain('Authorization: Bearer $RENKEI_HEALTH_TOKEN');
+    expect(ready).toContain('"starting" | "healthy" | "degraded" | "error" | "stopping"');
+    expect(ready).toContain('always available and entirely optional');
+    expect(ready).toContain('do not add it unasked');
+    expect(ready).toContain('you never see or handle the token');
     expect(ready).toContain('write a script');
     expect(ready).toContain('never ask for a secret');
 
@@ -485,6 +492,15 @@ describe('buildSystemPrompt', () => {
     });
     expect(cloning).toContain('not usable right now (the clone is still running)');
     expect(cloning).not.toContain('code_edit_file');
+    expect(cloning).not.toContain('RENKEI_HEALTH_URL');
+
+    // A chat outside a code project is told nothing of it.
+    const plain = buildSystemPrompt({
+      ...base,
+      project: { name: 'Launch', instructions: null, memoryText: null, files: [] },
+    });
+    expect(plain).not.toContain('RENKEI_HEALTH_URL');
+    expect(buildSystemPrompt({ ...base, project: null })).not.toContain('health check-in');
   });
 
   it('says how to hand the person a file, and which formats it can be', () => {

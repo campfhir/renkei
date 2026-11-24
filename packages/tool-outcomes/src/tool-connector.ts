@@ -54,6 +54,7 @@ const PREFIXES: [string, string][] = [
   ['onenote_', 'onenote'],
   // Entra application provisioning: its own connector and grant, not Outlook's.
   ['entra_', 'entra-developer'],
+  ['fabric_', 'fabric'],
   ['webex_', 'webex'],
   ['zoom_', 'zoom'],
   // Before `onbase_`: the admin tools are a separate connector and grant.
@@ -67,6 +68,7 @@ const PREFIXES: [string, string][] = [
   ['agent_', 'agents'],
   ['log_', 'logs'],
   ['user_memory_', 'user-memory'],
+  ['deployments_', 'deployments'],
   ['sandbox_', 'sandbox'],
   ['batch_', 'batch-jobs'],
 ];

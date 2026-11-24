@@ -1,37 +1,14 @@
-import { notFound, redirect } from 'next/navigation';
-import { GITHUB } from '@renkei/provider-grants';
-import { getSessionFromCookies } from '@/lib/session';
-import { signInUrl } from '@/lib/sign-in-url';
-import { resolveResourceAccess } from '@/lib/chat/access';
-import { getProjectRow } from '@/lib/chat/projects';
-import ActionsPage from '../../_components/actions-page';
+import { redirect } from 'next/navigation';
 
 /**
- * A GitHub code project's Actions — the runs, the switch, the workflow
- * files and the variables — on a page of its own. GitHub only, the way
- * pipelines/page.tsx (its Bitbucket counterpart) is Bitbucket only.
- * Editors change the setup; viewers read it.
+ * A code project's pipelines, runs and variables are on its Environments
+ * page, by branch. Old links land there.
  */
-export default async function CodeProjectActionsPage({
+export default async function MovedToEnvironments({
   params,
 }: {
   params: Promise<{ projectId: string }>;
-}) {
+}): Promise<never> {
   const { projectId } = await params;
-  const session = await getSessionFromCookies();
-  if (!session) redirect(signInUrl(`/code/${projectId}/actions`));
-  const access = await resolveResourceAccess(session.subject, 'chat_project', projectId);
-  if (!access) notFound();
-  const project = await getProjectRow(projectId);
-  if (!project || project.kind !== 'code' || !project.repo) notFound();
-  if (project.repo.provider !== GITHUB) notFound();
-  return (
-    <ActionsPage
-      projectId={projectId}
-      projectName={project.name}
-      repoFullName={project.repo.fullName}
-      branch={project.repo.branch}
-      canEdit={access.role !== 'viewer'}
-    />
-  );
+  redirect(`/code/${projectId}/environments`);
 }

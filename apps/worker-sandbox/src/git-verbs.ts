@@ -624,6 +624,14 @@ export function createGitVerbs(ctx: GitVerbContext): Record<string, WorkspaceVer
       case 'add': {
         const paths = validateSparsePaths(body.paths);
         if (!paths.ok) return sendError(response, 400, 'bad_request', paths.message);
+        // git leaves in place any file whose index entry looks stale ("not up
+        // to date … left despite sparse patterns"), and an entry looks stale
+        // whenever the file's owner or change time moved under it — a checkout
+        // handed to the project's uid after it was cloned, or one brought back
+        // from an archive — though its content is as committed. Refreshing the
+        // index first makes it compare contents, so only files that really
+        // changed stay. It exits non-zero when some did; that is not a failure.
+        await runGit(input, ['update-index', '-q', '--refresh']);
         // `set` chooses the mode; `add` keeps whatever mode is on.
         result = await runGit(input, [
           'sparse-checkout',

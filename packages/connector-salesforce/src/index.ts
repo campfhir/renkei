@@ -33,6 +33,27 @@ export {
   type SalesforceOrg,
 } from './orgs';
 export {
+  APEX_FIND_HITS,
+  APEX_LINE_CHARS,
+  APEX_LIST_DEFAULT,
+  APEX_LIST_MAX,
+  APEX_OBJECT,
+  APEX_WINDOW_CHARS,
+  HIDDEN_BODY,
+  apexListPage,
+  apexListQuery,
+  apexNameSuggestionQuery,
+  apexSourceQuery,
+  findInSource,
+  sourceLines,
+  sourceWindow,
+  triggerEvents,
+  type ApexKind,
+  type ApexListFilter,
+  type SourceHit,
+  type SourceWindow,
+} from './apex';
+export {
   soqlString,
   soqlContains,
   isSoqlIdentifier,

@@ -52,6 +52,12 @@ export const ICONS = {
   /** A ring around a dot — the unread badge, "put it back". */
   unreadDot: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 12h.01',
   folder: 'M3 19V5h6l2 3h10v11z',
+  /** A rocket climbing to the upper right: window, two swept fins, speed lines — Deployments. */
+  deploy:
+    'M18.22 5.78C18.39 8.79 16.8 11.44 14.68 13.56L11.15 17.1L6.9 12.85L10.44 9.32C12.56 7.2 15.21 5.61 18.22 5.78Z' +
+    'M14.33 9.67A1.25 1.25 0 1 0 12.56 11.44A1.25 1.25 0 1 0 14.33 9.67Z' +
+    'M9.73 10.03C7.61 9.32 5.84 10.38 4.08 12.15L6.9 12.85M13.97 14.27C14.68 16.39 13.62 18.16 11.85 19.92L11.15 17.1' +
+    'M9.03 14.97L4.78 19.22M6.2 14.97L4.78 16.39M9.03 17.8L7.61 19.22',
   /** Git, one glyph per verb: for the code tools' calls in a chat. */
   gitClone: 'M4 5h16v14H4zM12 9v6M9 12l3 3 3-3',
   gitCommit: 'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM3 12h6M15 12h6',
@@ -124,6 +130,8 @@ export const ICONS = {
   sliders: 'M4 7h16M4 12h16M4 17h16M15 5v4M9 10v4M13 15v4',
   /** A plug — Connectors. */
   plug: 'M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4',
+  /** A table of rows and a column — Microsoft Fabric's workspaces and lakehouses. */
+  dataTable: 'M4 5h16v14H4zM4 10h16M4 15h16M10 10v9',
   /** Stacked layers — Batch jobs. */
   layers: 'M4 7l8-4 8 4-8 4zM4 12l8 4 8-4M4 17l8 4 8-4',
   /** Bars — My usage. */
