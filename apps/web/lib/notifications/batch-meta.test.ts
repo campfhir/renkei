@@ -77,9 +77,7 @@ describe('parseBatchNotificationMeta', () => {
 
 describe('rendering helpers', () => {
   it('links to the batch page in-app', () => {
-    expect(batchNotificationHref(parseBatchNotificationMeta(meta)!)).toBe(
-      '/batch-jobs/batch-1'
-    );
+    expect(batchNotificationHref(parseBatchNotificationMeta(meta)!)).toBe('/batch-jobs/batch-1');
   });
 
   it('words progress the way the batch pages do', () => {
@@ -105,5 +103,12 @@ describe('rendering helpers', () => {
     );
     expect(notificationSourceLabel({ kind: 'run_finished', agentName: 'Sweeper' })).toBe('Sweeper');
     expect(notificationSourceLabel({ kind: 'act', agentName: null })).toBe('An agent');
+  });
+
+  it('names Deployments for a deployment or an application’s health, which no agent is behind', () => {
+    expect(notificationSourceLabel({ kind: 'deployment_failed', agentName: null })).toBe(
+      'Deployments'
+    );
+    expect(notificationSourceLabel({ kind: 'app_unhealthy', agentName: null })).toBe('Deployments');
   });
 });

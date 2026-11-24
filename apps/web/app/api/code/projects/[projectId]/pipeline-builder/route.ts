@@ -1,9 +1,11 @@
 /**
- * A code project's pipeline builder: GET answers everything the page
- * shows (lib/ci/pipeline-builder.ts — the blocks, the targets, what the
- * host says, and the saved pipeline or one suggested from the repository),
- * read with the person's own grant on the host; PUT saves the pipeline
- * as it stands (editors), without writing anything to the repository.
+ * A branch's pipeline builder (`?branch=`, a branch assigned to one of
+ * the project's environments): GET answers everything the page shows
+ * (lib/ci/pipeline-builder.ts — the blocks, the targets, what the host
+ * says, and the pipeline saved for the branch or one suggested from its
+ * files), read with the person's own grant on the host; PUT saves the
+ * pipeline as it stands (editors), without writing anything to the
+ * repository.
  */
 
 import type { NextRequest } from 'next/server';
@@ -11,8 +13,8 @@ import { NextResponse } from 'next/server';
 import { readPipelineSpec } from '@renkei/ci-blocks';
 import { readJsonBody } from '@/lib/chat/route-support';
 import { recordAuditEvent } from '@/lib/audit-events';
-import { builderPage, savePipeline } from '@/lib/ci/pipeline-builder';
-import { builderContext } from '@/lib/ci/pipeline-builder-access';
+import { builderPage, savePipeline, specForBranch } from '@/lib/ci/pipeline-builder';
+import { branchContext } from '@/lib/ci/pipeline-builder-access';
 import { logger } from '@/lib/logger';
 import { whoIs } from '@/lib/log-actor';
 
@@ -21,10 +23,10 @@ export async function GET(
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const found = await builderContext(request, projectId);
+  const found = await branchContext(request, projectId);
   if (!found.ok) return found.response;
-  const { project, subject, origin, canEdit } = found.context;
-  const page = await builderPage({ subject, origin }, project);
+  const { project, subject, origin, canEdit, environment, production } = found.context;
+  const page = await builderPage({ subject, origin }, project, environment);
   if (page.unread.length > 0) {
     logger.info(
       '{actor} opened the pipeline builder of the project "{project}" ({repository}); some of what the host says could not be read, so those checks were skipped: {unread}',
@@ -41,8 +43,8 @@ export async function GET(
   return NextResponse.json({
     ...page,
     canEdit,
-    // The branch it read: the repository's default when the project follows it.
-    project: { name: project.name, repo: project.repo.fullName, branch: page.facts.branch },
+    production,
+    project: { name: project.name, repo: project.repo.fullName, branch: project.repo.branch },
   });
 }
 
@@ -51,9 +53,9 @@ export async function PUT(
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const found = await builderContext(request, projectId, { write: true });
+  const found = await branchContext(request, projectId, { write: true });
   if (!found.ok) return found.response;
-  const { project, subject } = found.context;
+  const { project, subject, environment, branch } = found.context;
   const body = await readJsonBody(request);
   const spec = readPipelineSpec(body.spec);
   if (!spec.ok) {
@@ -62,7 +64,7 @@ export async function PUT(
       { status: 400 }
     );
   }
-  await savePipeline(project, spec.value, subject);
+  await savePipeline(project, specForBranch(spec.value, environment, branch), subject);
   recordAuditEvent({
     actorSubject: subject,
     action: 'ci.pipeline_saved',
@@ -71,7 +73,7 @@ export async function PUT(
     details: {
       projectId,
       repository: project.repo.fullName,
-      environments: spec.value.environments.map((e) => `${e.name} ← ${e.branch}`),
+      environments: [`${environment} ← ${branch}`],
     },
   });
   return NextResponse.json({ saved: true });

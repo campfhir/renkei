@@ -70,4 +70,45 @@ export {
   type ProjectBlock,
   type Suggestion,
 } from './pipeline';
-export { REPORT_PATH, reportCommand, type ReportStatus, type ReportTo } from './report';
+export {
+  REPORT_PATH,
+  reportCommand,
+  reportSnippet,
+  type ReportStatus,
+  type ReportTo,
+} from './report';
+export {
+  DEFAULT_INTERVAL_SECONDS,
+  HEALTH_STATES,
+  HEALTH_STATUSES,
+  MISSES_TO_FAIL,
+  healthChange,
+  isTroubled,
+  readHealth,
+  type HealthChange,
+  type HealthReading,
+  type HealthSource,
+  type HealthState,
+  type HealthStatus,
+} from './health';
+export {
+  CHANGE_SETTINGS,
+  DEPLOYMENTS_SOURCE,
+  DEPLOYMENT_CHANGED,
+  DEPLOYMENT_STATUSES,
+  HEALTH_CHANGED,
+  changeDetail,
+  changeHeadline,
+  changeId,
+  changeKind,
+  changePath,
+  changeSetting,
+  changeType,
+  changeVariables,
+  readChange,
+  type ChangeSetting,
+  type DeploymentChange,
+  type DeploymentStatus,
+  type DeploymentsChange,
+  type HealthChanged,
+} from './changes';

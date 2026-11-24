@@ -20,7 +20,13 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Locator, Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { connectBitbucket, createCodeProject, prepareCodeHost } from './support/code-host';
+import {
+  connectBitbucket,
+  createCodeProject,
+  prepareCodeHost,
+  assignEnvironments,
+  pipelineTab,
+} from './support/code-host';
 
 const EDGE = 16;
 const CTA = 56;
@@ -61,7 +67,8 @@ test('assistant dock: floats above the page, resizes with an outline, drags to a
     branch: 'main',
   });
 
-  await page.goto(`/deployments/${projectId}/pipeline`);
+  await assignEnvironments(page.request, projectId);
+  await page.goto(pipelineTab(projectId));
   await expect(
     page.getByRole('main').getByRole('region', { name: 'Found in this repository' })
   ).toBeVisible({ timeout: 30_000 });

@@ -1,15 +1,9 @@
 import { redirect } from 'next/navigation';
-import { getSessionFromCookies } from '@/lib/session';
-import { signInUrl } from '@/lib/sign-in-url';
-import DeploymentsPage from './deployments-page';
 
 /**
- * What is running where: every code project whose pipeline Renkei built,
- * each environment's running commit, as the pipelines' deploy steps report
- * it, on Bitbucket and GitHub alike.
+ * Deployments was a section of its own; what a project deploys, and where,
+ * is now on each code project's Environments page. Old links land on Code.
  */
-export default async function Deployments(): Promise<React.ReactNode> {
-  const session = await getSessionFromCookies();
-  if (!session) redirect(signInUrl('/deployments'));
-  return <DeploymentsPage />;
+export default function MovedToCode(): never {
+  redirect('/code');
 }

@@ -54,9 +54,8 @@ import {
 } from '@/lib/fabric/repo';
 import {
   fabricBlockVersions,
-  planFabricPipeline,
-  savedSpec,
-  writeFabricPipeline,
+  planFabricPipelines,
+  writeFabricPipelines,
   type FabricEnvironment,
 } from '@/lib/fabric/pipeline';
 import type { FabricAuth } from './fabric-auth';
@@ -580,7 +579,7 @@ export async function registerProposalTools(
       if (typeof blocks === 'string') return errText(blocks);
       const resolved = await resolveEnvironments(environments);
       if (typeof resolved === 'string') return errText(resolved);
-      const plan = planFabricPipeline(await savedSpec(repo), resolved, blocks, directory || '.');
+      const plan = await planFabricPipelines(repo, resolved, blocks, directory || '.');
       if (typeof plan === 'string') return errText(plan);
       return previewResult({
         kind: 'directory_action',
@@ -591,7 +590,7 @@ export async function registerProposalTools(
         subtitle: `Microsoft Fabric through CI · ${repoLine(repo)}`,
         person: {
           name: repo.project.name,
-          detail: `Pipeline pull request into ${repo.project.repo.branch}`,
+          detail: `A pipeline pull request into ${plan.branches.map((b) => b.branch).join(', ')}`,
         },
         fields: [
           { label: 'Repository', value: repo.project.repo.fullName },
@@ -650,22 +649,23 @@ export async function registerProposalTools(
       const blocks = await fabricBlockVersions();
       if (typeof blocks === 'string') return errText(blocks);
       // Planned again on the pipeline as it is now, so a save made since the preview is kept.
-      const plan = planFabricPipeline(
-        await savedSpec(repo),
-        environments,
-        blocks,
-        directory || '.'
-      );
+      const plan = await planFabricPipelines(repo, environments, blocks, directory || '.');
       if (typeof plan === 'string') return errText(plan);
-      const opened = await writeFabricPipeline(caller(), repo, plan, new Date());
-      if (!opened.ok) {
+      const written = await writeFabricPipelines(caller(), repo, plan, new Date());
+      const pullRequests = written.opened
+        .map(
+          (pr) =>
+            `${pr.updated ? 'Added to' : 'Opened'} the pipeline’s pull request into ${pr.branch}: ${pr.url}`
+        )
+        .join('\n');
+      if (!written.ok) {
         return errText(
-          `Could not open the pipeline’s pull request: ${opened.error}` +
-            (opened.problems?.length ? `\n${opened.problems.join('\n')}` : '')
+          `${pullRequests ? `${pullRequests}\n` : ''}Could not open a pipeline pull request: ${written.error}` +
+            (written.problems?.length ? `\n${written.problems.join('\n')}` : '')
         );
       }
       return textResult(
-        `${opened.updated ? 'Added to' : 'Opened'} the pipeline’s pull request: ${opened.url}\n` +
+        `${pullRequests}\n` +
           `${plan.changes.join('\n')}\n` +
           'Before the first deploy, the repository needs the variables AZURE_TENANT_ID and ' +
           'AZURE_CLIENT_ID, and that app registration a federated credential trusting this ' +

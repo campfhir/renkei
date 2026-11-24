@@ -21,7 +21,7 @@ export interface GitHubAuth {
   fetch(
     requiredScopes: readonly string[],
     pathAndQuery: string,
-    init?: { method?: string; json?: unknown; accept?: string }
+    init?: { method?: string; json?: unknown; accept?: string; withholdBody?: boolean }
   ): Promise<Response>;
 }
 
@@ -43,12 +43,7 @@ export function oauthGitHubAuth(context: MCPToolContext): GitHubAuth {
       }
       const access = await resolveGitHubAccess(context);
       if (typeof access === 'string') return authFailure(access, 401);
-      const result = await githubRequest(
-        { subject: context.subject },
-        access,
-        pathAndQuery,
-        init
-      );
+      const result = await githubRequest({ subject: context.subject }, access, pathAndQuery, init);
       if (!result.ok) return authFailure(result.error, 502);
       return result.response;
     },

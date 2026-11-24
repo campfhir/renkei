@@ -46,6 +46,47 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-24',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Deployment and application-health notifications, tools and agent triggers',
+        detail:
+          "When a pipeline reports a deployment, or a deployed application's health check-ins change (or stop arriving), Renkei now tells the code project's owner and everyone it is shared with. Preferences has a new Deployments card: failed deployments and applications that failed, stopped or report a problem are on by default; successful deployments, an overdue check-in and recoveries are off until you switch them on. Agents can be triggered by these changes, and a trigger ticks exactly which ones wake it — failed deployments only, say, or an application that failed, stopped or reports an error — as well as the environment and project, and chats and agents can read environments, deployments and health with the new deployments_status and deployments_history tools. All of it is for people with a Bitbucket or GitHub connection.",
+      },
+      {
+        kind: 'added',
+        title: 'Health check-ins from a deployed application',
+        detail:
+          "An application can now tell Renkei how it is after it is deployed. On a code project's Environments page, issue a health token for an environment (shown once; it can be saved straight to the host as that environment's secret), and the application POSTs its status — starting, healthy, degraded, error or stopping — with an optional message, version, send time and when to expect the next check-in. The environment then shows it; when a check-in is late it shows as potentially failing, and after three missed in a row as failed. It is optional and the developer's to implement: an environment that never checks in shows nothing. Code chats know the interface and build it in when asked.",
+      },
+      {
+        kind: 'added',
+        title: 'Bulk edit pipeline variables as text',
+        detail:
+          "Each variable set on a project's Environments page has a Bulk edit box: the set as .env text, to add or change many at once. A line adds a variable or replaces its value; secrets are not listed, since their values cannot be shown, and are replaced by writing their line; a commented line, “# NAME=…”, removes that variable. Applying fills the rows to look over and lock; nothing is sent until Save.",
+      },
+      {
+        kind: 'added',
+        title: 'Pipelines written outside Renkei open as they are',
+        detail:
+          'When a branch already has a pipeline that was not built in Renkei — a bitbucket-pipelines.yml or GitHub workflows from another editor — its Pipeline tab now opens on that file instead of on a suggestion that would replace it. You can read it, edit it and commit to the branch, or ask the assistant, which reads the repository and proposes the file edited for you to review and commit. Building it from blocks instead is one explicit choice, and says what it does to the file. “Get the report step” gives a few lines to copy into a hand-written pipeline so its environment shows what it deployed, with no secret involved.',
+      },
+      {
+        kind: 'added',
+        title: 'Variables and secrets from a .env file',
+        detail:
+          "The Variables tab of a project's Environments page edits the repository's and each environment's pipeline variables as rows. Upload or paste a .env file: it is read in your browser, each row can be locked as a secret before anything is sent, and Save sends them straight to Bitbucket or GitHub — never to a model. GitHub secrets can now be set from Renkei (sealed to the repository's key), and the “secret NAME=” text syntax is gone.",
+      },
+      {
+        kind: 'changed',
+        title: 'Environments: pipelines, runs and variables by branch',
+        detail:
+          "A code project's pipelines moved from the Deployments section to its own Environments page (the Pipelines link on a Bitbucket project, Actions on a GitHub one). Name the environments you deploy to, assign each the branches of the repository that deploy it — production takes exactly one — then pick an environment and a branch to see that branch's pipeline, its runs and its variables. A pipeline is now built per branch, and its pull request goes against that branch, because the pipeline file lives there. Pipelines built before this are split into one per environment branch; the Deployments item is gone from the menu, and promoting between environments from Renkei with it.",
+      },
+    ],
+  },
+  {
     date: '2026-11-20',
     entries: [
       {

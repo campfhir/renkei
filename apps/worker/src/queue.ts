@@ -36,7 +36,9 @@ export type { ClaimedMessage as ClaimedEvent, Disposition } from '@renkei/queue'
  * the batch-jobs worker publishes its `domain:batch` lifecycle events
  * (batch-jobs/lifecycle.ts) onto this queue for THIS worker to dispatch to
  * agents, and a fixated instance that never lists 'batch' leaves them
- * unclaimed.
+ * unclaimed. Likewise 'deployments': the web app and the deployment-health
+ * sweep enqueue deployment and health changes on that source
+ * (deployments/changes.ts), and nothing else tells people about them.
  */
 function eventSourcesFromEnv(): readonly string[] | undefined {
   const raw = process.env.WORKER_EVENT_SOURCES;

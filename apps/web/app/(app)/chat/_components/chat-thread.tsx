@@ -1069,11 +1069,12 @@ export default function ChatThread({
   }
   if (codeProjectId) {
     overflow.push({ label: 'Environment', icon: ICONS.chip, onSelect: codeTools.openEnvironment });
-    // Its pipeline, runs and variables live under Deployments; a new tab keeps the chat.
+    // Its environments, with each branch's pipeline, runs and variables; a new tab keeps the chat.
     overflow.push({
-      label: 'Deployments',
+      // Named as the host names them: Actions on GitHub, Pipelines on Bitbucket.
+      label: chat.projectHost === 'github' ? 'Actions' : 'Pipelines',
       icon: ICONS.deploy,
-      onSelect: () => window.open(`/deployments/${codeProjectId}/runs`, '_blank', 'noopener'),
+      onSelect: () => window.open(`/code/${codeProjectId}/environments`, '_blank', 'noopener'),
     });
     if (isOwner)
       overflow.push({ label: 'Add files', icon: ICONS.upload, onSelect: codeTools.openFiles });

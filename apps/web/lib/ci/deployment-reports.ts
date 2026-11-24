@@ -9,11 +9,12 @@
  */
 
 import { getDataStore, type CiDeploymentStatus } from '@renkei/db';
-import { readPipelineSpec } from '@renkei/ci-blocks';
 import { isRecord } from '@renkei/guards';
 import { getProjectRow } from '@/lib/chat/projects';
+import { projectEnvironments } from './environments';
 import { reportTo } from './pipeline-builder';
 import { verifyPipelineToken, type KeysFor, type PipelineIdentity } from './oidc';
+import { raiseChange } from './deployment-changes';
 
 export interface ReportBody {
   environment: string;
@@ -106,30 +107,57 @@ export async function recordDeploymentReport(input: {
   if (!read.ok) return { ok: false, status: 400, error: read.error };
   const body = read.body;
 
-  const pipelines = await getDataStore().ciPipelines.findByRepoKey(identity.host, identity.repoKey);
-  const pipeline = pipelines.find((p) => p.writtenText !== null) ?? pipelines[0];
-  const project = pipeline ? await getProjectRow(pipeline.projectId) : null;
-  if (!pipeline || !project?.repo) {
+  // The projects this repository reports for: those whose builder wrote a
+  // pipeline for it (the written ones first), then those a person took the
+  // report step for, for a pipeline written by hand (report-step.ts).
+  const store = getDataStore();
+  const pipelines = await store.ciPipelines.findByRepoKey(identity.host, identity.repoKey);
+  const candidates = [
+    ...new Set([
+      ...pipelines.filter((p) => p.writtenText !== null).map((p) => p.projectId),
+      ...pipelines.map((p) => p.projectId),
+      ...(await store.ciRepoKeys.projectsFor(identity.host, identity.repoKey)),
+    ]),
+  ];
+  // Among them, the first that has the environment reported; else the first, to say so.
+  let project: Awaited<ReturnType<typeof getProjectRow>> = null;
+  let known: { name: string } | undefined;
+  for (const projectId of candidates) {
+    const row = await getProjectRow(projectId);
+    if (!row?.repo) continue;
+    const environment = (await projectEnvironments(row.id)).find(
+      (e) => e.name.toLowerCase() === body.environment.toLowerCase()
+    );
+    if (environment || !project) {
+      project = row;
+      known = environment;
+    }
+    if (environment) break;
+  }
+  if (!project?.repo) {
     return {
       ok: false,
       status: 404,
-      error: 'No code project in Renkei built the pipeline for this repository.',
+      error:
+        'No code project in Renkei reports for this repository: build its pipeline in Renkei, or take the report step from the project’s Pipeline tab.',
     };
   }
-  const spec = readPipelineSpec(pipeline.spec);
-  const known = spec.ok
-    ? spec.value.environments.find((e) => e.name.toLowerCase() === body.environment.toLowerCase())
-    : undefined;
   if (!known) {
     return {
       ok: false,
       status: 400,
-      error: `The pipeline Renkei built for ${project.repo.fullName} has no environment ${body.environment}.`,
+      error: `The project Renkei keeps for ${project.repo.fullName} has no environment ${body.environment}.`,
     };
   }
   const run = identity.host === 'github' ? (identity.run ?? body.run) : body.run;
   const commit = identity.host === 'github' ? (identity.sha ?? body.commit) : body.commit;
-  await getDataStore().ciDeployments.record({
+  const runId = `${identity.host}:${run ?? `at-${input.now.getTime()}`}`;
+  // What this run last reported for the environment: the same status said
+  // again (a step retried its report) is not a change.
+  const before = (await store.ciDeployments.latest([project.id])).find(
+    (d) => d.environment === known.name && d.runId === runId
+  );
+  const deploymentId = await store.ciDeployments.record({
     projectId: project.id,
     environment: known.name,
     status: body.status,
@@ -137,12 +165,28 @@ export async function recordDeploymentReport(input: {
     branch: identity.branch ?? body.branch,
     target: body.target,
     // Without a run, each report is its own row, at its own instant.
-    runId: `${identity.host}:${run ?? `at-${input.now.getTime()}`}`,
+    runId,
     runUrl: runUrl(identity, project.repo.fullName, run),
     detail: body.detail,
     actor: identity.host === 'github' ? identity.actor : null,
     at: input.now,
   });
+  // A start reported after the end does not undo it, and is not a change.
+  const undone = before !== undefined && before.status !== 'started' && body.status === 'started';
+  if (before?.status !== body.status && !undone) {
+    await raiseChange({
+      kind: 'deployment',
+      projectId: project.id,
+      environment: known.name,
+      status: body.status,
+      deploymentId,
+      commit: commit.toLowerCase(),
+      branch: identity.branch ?? body.branch,
+      runUrl: runUrl(identity, project.repo.fullName, run),
+      detail: body.detail,
+      at: input.now.toISOString(),
+    });
+  }
   return {
     ok: true,
     projectId: project.id,

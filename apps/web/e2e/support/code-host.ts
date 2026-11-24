@@ -271,3 +271,41 @@ export async function stageCodeProject(
   }
   return { projectId, chatIds };
 }
+
+export interface StagedEnvironment {
+  name: string;
+  production?: boolean;
+  branches: string[];
+}
+
+/**
+ * The project's environments and the branches assigned to them, as its
+ * Environments page saves them. With none given: production, deploying
+ * from main.
+ */
+export async function assignEnvironments(
+  request: APIRequestContext,
+  projectId: string,
+  environments: StagedEnvironment[] = [{ name: 'production', production: true, branches: ['main'] }]
+): Promise<void> {
+  await ok(
+    await request.put(`/api/code/projects/${projectId}/environments`, {
+      data: {
+        environments: environments.map((environment) => ({
+          production: false,
+          ...environment,
+        })),
+      },
+    }),
+    'PUT /api/code/projects/:id/environments'
+  );
+}
+
+/** A branch's pipeline tab on the project's Environments page. */
+export function pipelineTab(
+  projectId: string,
+  environment = 'production',
+  branch = 'main'
+): string {
+  return `/code/${projectId}/environments?env=${encodeURIComponent(environment)}&branch=${encodeURIComponent(branch)}`;
+}

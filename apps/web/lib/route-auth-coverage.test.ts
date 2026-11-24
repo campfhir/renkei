@@ -46,8 +46,8 @@ const SESSION_GUARDS = [
   'pipelinesProjectContext',
   // lib/ci/pipeline-builder-access.ts: codeProjectContext plus the host and, for a write, the editor role.
   'builderContext',
-  // app/(app)/deployments/[projectId]/app-project.ts: getSessionFromCookies plus the project's access, for an app's tabs.
-  'appProject',
+  // lib/ci/pipeline-builder-access.ts: builderContext for one branch's pipeline, the branch assigned to an environment.
+  'branchContext',
 ];
 
 /**
@@ -74,6 +74,10 @@ const NON_SESSION_AUTH: Record<string, string> = {
     'the x-renkei-seed-token header matches RENKEI_MEMORY_SEED_TOKEN; it is the memory UI ' +
     "suite's sign-in, and on Postgres it never answers",
   'api/upload/[slotId]/route.ts': 'opaque per-slot bearer, single-use claim, expiring',
+  'api/health/check-in/route.ts':
+    'an application’s health check-in: the bearer token issued for one environment of one code ' +
+    'project (lib/ci/health.ts), kept only as a SHA-256 hash; all it can do is record that ' +
+    'environment’s status',
   'api/deployments/report/route.ts':
     "a pipeline step's OpenID Connect token, verified against GitHub Actions' or Bitbucket " +
     "Pipelines' published keys (lib/ci/oidc.ts); it names the repository, and only a project " +
@@ -130,10 +134,12 @@ const PUBLIC: Record<string, string> = {
 const REDIRECT_ONLY: Record<string, string> = {
   '(app)/home/page.tsx': 'redirects to /',
   '(app)/admin/grants/page.tsx': 'redirects to /admin/access',
-  '(app)/code/[projectId]/pipelines/page.tsx': 'redirects to /deployments/[projectId]/runs',
-  '(app)/code/[projectId]/actions/page.tsx': 'redirects to /deployments/[projectId]/runs',
-  '(app)/code/[projectId]/pipeline-builder/page.tsx':
-    'redirects to /deployments/[projectId]/pipeline',
+  '(app)/code/[projectId]/pipelines/page.tsx': 'redirects to /code/[projectId]/environments',
+  '(app)/code/[projectId]/actions/page.tsx': 'redirects to /code/[projectId]/environments',
+  '(app)/code/[projectId]/pipeline-builder/page.tsx': 'redirects to /code/[projectId]/environments',
+  '(app)/deployments/page.tsx': 'redirects to /code',
+  '(app)/deployments/[projectId]/[[...rest]]/page.tsx':
+    'redirects to /code/[projectId]/environments',
 };
 
 /**

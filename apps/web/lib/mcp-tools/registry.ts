@@ -46,6 +46,7 @@ import { registerCardTools, CARDS_CONNECTOR } from '@/lib/mcp-tools/cards';
 import { registerAgentTools, AGENTS_CONNECTOR } from '@/lib/mcp-tools/agents';
 import { registerLogTools, LOGS_CONNECTOR } from '@/lib/mcp-tools/logs';
 import { registerUserMemoryTools, USER_MEMORY_CONNECTOR } from '@/lib/mcp-tools/user-memory';
+import { registerDeploymentsTools, DEPLOYMENTS_CONNECTOR } from '@/lib/mcp-tools/deployments';
 import { registerUploadStatusTool } from '@/lib/mcp-tools/upload-slots';
 import { registerResolveDateTool } from '@/lib/mcp-tools/resolve-date';
 import { registerWebexUserTools, WEBEX_USER_MCP_CONNECTOR } from '@/lib/mcp-tools/webex';
@@ -510,6 +511,11 @@ export function provisionedConnectorsFor(availability: ConnectorAvailability): s
     // Same for user memory: chat_user_memories is a plain Renkei table,
     // self-scoped from the caller's subject — no external grant either.
     USER_MEMORY_CONNECTOR,
+    // Deployments read Renkei's own rows, but are part of working on a
+    // repository: for someone with a Bitbucket or GitHub connection only.
+    ...(availability.bitbucketAvailable || availability.githubAvailable
+      ? [DEPLOYMENTS_CONNECTOR]
+      : []),
     ...(availability.knowledgeAvailable ? [KNOWLEDGE_CONNECTOR] : []),
     ...(availability.webexAvailable ? [WEBEX_USER_MCP_CONNECTOR] : []),
     ...(availability.microsoftAvailable ? [OUTLOOK_MCP_CONNECTOR] : []),
@@ -553,6 +559,7 @@ export const REGISTERED_CONNECTOR_KEYS: readonly string[] = [
   BATCH_JOBS_MCP_CONNECTOR,
   LOGS_CONNECTOR,
   USER_MEMORY_CONNECTOR,
+  DEPLOYMENTS_CONNECTOR,
   KNOWLEDGE_CONNECTOR,
   WEBEX_USER_MCP_CONNECTOR,
   OUTLOOK_MCP_CONNECTOR,
@@ -862,6 +869,14 @@ export async function registerRenkeiTools(
       withCapabilityGate(server, projection, FABRIC_MCP_CONNECTOR),
       context,
       oauthFabricAuth(context)
+    );
+  }
+  if (bitbucketAvailable || githubAvailable) {
+    // How the caller's code projects stand — deployments reported, health
+    // check-ins — from Renkei's own rows, for someone with a code host.
+    registerDeploymentsTools(
+      withCapabilityGate(server, projection, DEPLOYMENTS_CONNECTOR),
+      context
     );
   }
   if (bitbucketAvailable) {

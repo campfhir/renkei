@@ -24,7 +24,13 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { APIRequestContext, Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { connectBitbucket, createCodeProject, prepareCodeHost } from './support/code-host';
+import {
+  connectBitbucket,
+  createCodeProject,
+  prepareCodeHost,
+  assignEnvironments,
+  pipelineTab,
+} from './support/code-host';
 import { addStubModel, scripted } from './support/stub-model';
 
 test.use({ roles: ['renkei-user', 'renkei-operator'] });
@@ -101,12 +107,14 @@ test('pipeline assistant: tailor a block to the source, apply it, make it reusab
     });
     expect(onModel.ok(), await onModel.text()).toBe(true);
     const check = { block: testKey, version: 1, inputs: {} };
-    const staged = await page.request.put(`/api/code/projects/${projectId}/pipeline-builder`, {
-      data: { spec: { checks: [check], environments: [] } },
-    });
+    await assignEnvironments(page.request, projectId);
+    const staged = await page.request.put(
+      `/api/code/projects/${projectId}/pipeline-builder?branch=main`,
+      { data: { spec: { checks: [check], environments: [] } } }
+    );
     expect(staged.ok(), await staged.text()).toBe(true);
 
-    await page.goto(`/deployments/${projectId}/pipeline`);
+    await page.goto(pipelineTab(projectId));
     const main = page.getByRole('main');
     // The assistant floats in the dock, collapsed until its button is pressed.
     const cta = page.getByRole('button', { name: 'Open the Pipeline assistant' });
@@ -148,7 +156,8 @@ test('pipeline assistant: tailor a block to the source, apply it, make it reusab
             input: {
               summary: 'Adds a pnpm build after the tests.',
               checks: [check, { block: ownKey, version: 1, inputs: {} }],
-              environments: [],
+              // This branch's pipeline alone: the one environment it deploys.
+              environments: [{ name: 'production', branch: 'main', steps: [] }],
               blocks: [ownBlock],
             },
           },
@@ -158,7 +167,9 @@ test('pipeline assistant: tailor a block to the source, apply it, make it reusab
     ]);
     await panel.getByLabel('Ask the assistant').fill(question);
     const asked = page.waitForResponse(
-      (r) => r.url().endsWith('/pipeline-builder/assistant') && r.request().method() === 'POST'
+      (r) =>
+        r.url().includes('/pipeline-builder/assistant?branch=main') &&
+        r.request().method() === 'POST'
     );
     await panel.getByRole('button', { name: 'Ask' }).click();
     const answer = await asked;
@@ -167,10 +178,17 @@ test('pipeline assistant: tailor a block to the source, apply it, make it reusab
     const { jobId } = await answer.json();
     expect(typeof jobId).toBe('string');
     // The pipeline on screen went with the question.
-    expect(answer.request().postDataJSON().spec).toEqual({ checks: [check], environments: [] });
+    // The pipeline on screen is this branch's: its checks and the one environment it deploys.
+    expect(answer.request().postDataJSON().spec).toEqual({
+      checks: [check],
+      environments: [{ name: 'production', branch: 'main', steps: [] }],
+    });
 
+    // The answer is worked out in the background and followed: a dev server compiles
+    // the job's route the first time it is asked for.
     await expect(panel).toContainText(
-      'The README builds with pnpm, so I wrote a build block for it.'
+      'The README builds with pnpm, so I wrote a build block for it.',
+      { timeout: 30_000 }
     );
     await panel.getByText('Read 2 paths').click();
     await expect(panel).toContainText('README.md');
@@ -198,7 +216,7 @@ test('pipeline assistant: tailor a block to the source, apply it, make it reusab
     await expect(panel).toBeHidden();
     // Save keeps it with the project; a reload shows it saved.
     const saved = page.waitForResponse(
-      (r) => r.url().endsWith('/pipeline-builder') && r.request().method() === 'PUT'
+      (r) => r.url().includes('/pipeline-builder?branch=main') && r.request().method() === 'PUT'
     );
     await main.getByRole('button', { name: 'Save without opening one' }).click();
     expect((await saved).request().postDataJSON().spec.blocks[0].key).toBe(ownKey);
@@ -264,53 +282,6 @@ test('pipeline assistant: tailor a block to the source, apply it, make it reusab
     expect(overflow).toBeLessThanOrEqual(0);
   } finally {
     for (const id of blockIds) await page.request.delete(`/api/admin/ci-blocks/${id}`);
-    if (modelId) await page.request.delete(`/api/admin/llm-models/${modelId}`);
-  }
-});
-
-test('pipeline assistant: a project that follows the default branch gets a pipeline that reads, and an answer', async ({
-  page,
-  request,
-  person: _person,
-}, testInfo) => {
-  test.setTimeout(120_000);
-  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
-  let modelId: string | null = null;
-  await prepareCodeHost(request);
-  await connectBitbucket(page);
-  try {
-    // No branch named: the project follows the repository's (main).
-    const projectId = await createCodeProject(page.request, {
-      name: `Default branch (${tag})`,
-      repository: `acme/pipeline-demo-follow-${tag}`,
-    });
-    modelId = await addStubModel(page.request, tag);
-    const onModel = await page.request.patch(`/api/chat/projects/${projectId}`, {
-      data: { llmModelId: modelId },
-    });
-    expect(onModel.ok(), await onModel.text()).toBe(true);
-
-    await page.goto(`/deployments/${projectId}/pipeline`);
-    const main = page.getByRole('main');
-    // The suggested production deploys from the repository's default branch.
-    await expect(main.getByRole('textbox', { name: 'Branch that deploys production' })).toHaveValue(
-      'main',
-      { timeout: 30_000 }
-    );
-
-    await page.getByRole('button', { name: 'Open the Pipeline assistant' }).click();
-    const panel = page.getByRole('dialog', { name: 'Pipeline assistant' });
-    await panel
-      .getByLabel('Ask the assistant')
-      .fill(scripted('Test, lint and build it.', [{ text: 'It already deploys from main.' }]));
-    const asked = page.waitForResponse(
-      (r) => r.url().endsWith('/pipeline-builder/assistant') && r.request().method() === 'POST'
-    );
-    await panel.getByRole('button', { name: 'Ask' }).click();
-    expect((await asked).status()).toBe(202);
-    await expect(panel).toContainText('It already deploys from main.');
-    await expect(panel.getByRole('alert')).toHaveCount(0);
-  } finally {
     if (modelId) await page.request.delete(`/api/admin/llm-models/${modelId}`);
   }
 });

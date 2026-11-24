@@ -70,6 +70,9 @@ importers:
       '@monaco-editor/react':
         specifier: ^4.7.0
         version: 4.7.0(monaco-editor@0.57.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@noble/hashes':
+        specifier: 1.8.0
+        version: 1.8.0
       '@renkei/agent-llm':
         specifier: workspace:*
         version: link:../../packages/agent-llm
@@ -265,6 +268,9 @@ importers:
       ssh2-sftp-client:
         specifier: ^12.1.1
         version: 12.1.1
+      tweetnacl:
+        specifier: 0.14.5
+        version: 0.14.5
       yaml:
         specifier: ^2.9.1
         version: 2.9.1
@@ -326,6 +332,9 @@ importers:
       '@renkei/batch-jobs-store':
         specifier: workspace:*
         version: link:../../packages/batch-jobs-store
+      '@renkei/ci-blocks':
+        specifier: workspace:*
+        version: link:../../packages/ci-blocks
       '@renkei/connector-atlassian':
         specifier: workspace:*
         version: link:../../packages/connector-atlassian

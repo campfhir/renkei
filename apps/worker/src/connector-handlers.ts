@@ -17,6 +17,8 @@ import {
   createGitHubPrPipelineHandler,
   createBitbucketPrPipelineHandler,
 } from './handlers/pr-pipeline-events';
+import { DEPLOYMENTS_SOURCE, DEPLOYMENT_CHANGED, HEALTH_CHANGED } from '@renkei/ci-blocks';
+import { createDeploymentsChangeHandler } from './deployments/changes';
 import { createDomainDispatchHandler } from './handlers/domain-dispatch';
 import { createAgentRunFailedHandler } from './handlers/agent-run-failed';
 import { createMailBulkJobHandler } from './handlers/mail-bulk-jobs';
@@ -66,8 +68,14 @@ export function registerConnectorHandlers(): void {
   // one process regardless of who published.
   registerHandler('domain', 'job.started', dispatch);
   registerHandler('domain', 'job.completed', dispatch);
+  // A deployment reported, or a deployed application's health changed
+  // (enqueued by the web app, and by the deployment-health sweep when an
+  // application goes quiet): tell the project's people and wake their agents.
+  const deployments = createDeploymentsChangeHandler();
+  registerHandler(DEPLOYMENTS_SOURCE, DEPLOYMENT_CHANGED, deployments);
+  registerHandler(DEPLOYMENTS_SOURCE, HEALTH_CHANGED, deployments);
   logger.info(
-    'registered the WebEx, Microsoft, Zoom, code-host, mail-job, agent-notification and domain-dispatch handlers',
+    'registered the WebEx, Microsoft, Zoom, code-host, mail-job, agent-notification, deployment-change and domain-dispatch handlers',
     { component: 'worker/loop' }
   );
 }

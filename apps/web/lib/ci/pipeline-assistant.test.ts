@@ -9,11 +9,14 @@
 
 import type { BlockDefinition, PipelineBlock } from '@renkei/ci-blocks';
 import {
+  MAX_PIPELINE_FILE_CHARS,
   MAX_ROUNDS,
   UNFINISHED,
   cleanPath,
   gaveUp,
   readConversation,
+  readFileProposal,
+  readPipelineProposal,
   runPipelineAssistant,
   type AssistantDeps,
   type AssistantInput,
@@ -49,12 +52,16 @@ const ownBuild = {
   },
 };
 
+/** The pipeline is one branch's: its one environment, as every proposal must hold it. */
+const ENV = [{ name: 'production', branch: 'main', steps: [] }];
+
 const input = (overrides: Partial<AssistantInput> = {}): AssistantInput => ({
   conversation: [{ role: 'user', text: 'Tailor the pipeline to this repository.' }],
-  spec: { checks: [{ block: 'node-test', version: 1, inputs: {} }], environments: [] },
+  spec: { checks: [{ block: 'node-test', version: 1, inputs: {} }], environments: ENV },
   host: 'bitbucket',
   repo: 'acme/billing',
   branch: 'main',
+  environment: 'production',
   blocks,
   targets: [],
   operator: false,
@@ -131,7 +138,7 @@ it('reads the repository, then proposes the pipeline with a block of the project
       { block: 'node-test', version: 1, inputs: {} },
       { block: 'build-billing', version: 1, inputs: {} },
     ],
-    environments: [],
+    environments: ENV,
     blocks: [ownBuild],
   };
   const complete = model([
@@ -146,7 +153,7 @@ it('reads the repository, then proposes the pipeline with a block of the project
     reply: 'Apply it to build with pnpm.',
     proposal: {
       summary: 'Builds with pnpm, as the repository does.',
-      spec: { checks: proposal.checks, environments: [], blocks: [ownBuild] },
+      spec: { checks: proposal.checks, environments: ENV, blocks: [ownBuild] },
       unfinished: [],
     },
     buildingBlock: null,
@@ -177,7 +184,7 @@ it('sends a proposal that does not read back with what is wrong, and takes the c
           input: {
             summary: 'x',
             checks: [{ block: 'nope', version: 1, inputs: {} }],
-            environments: [],
+            environments: ENV,
             blocks: [{ ...ownBuild, key: 'unused' }],
           },
         },
@@ -190,7 +197,7 @@ it('sends a proposal that does not read back with what is wrong, and takes the c
           input: {
             summary: 'Fixed.',
             checks: [{ block: 'node-test', version: 1 }],
-            environments: [],
+            environments: ENV,
           },
         },
       ],
@@ -213,7 +220,7 @@ it('sends a proposal cut off at the output limit back to be sent again, instead 
   const whole = {
     summary: 'Passes the variables to the runners.',
     checks: [{ block: 'node-test', version: 1, inputs: {} }],
-    environments: [],
+    environments: ENV,
   };
   const complete = model([
     {
@@ -245,7 +252,7 @@ it('keeps going as long as it takes, reading until its budget is spent, then ans
     })),
     {
       calls: [
-        { name: 'propose_pipeline', input: { summary: 'Done.', checks: [], environments: [] } },
+        { name: 'propose_pipeline', input: { summary: 'Done.', checks: [], environments: ENV } },
       ],
     },
     { text: 'Apply it.' },
@@ -267,7 +274,7 @@ it('gives up after three proposals that do not read, saying what was wrong with 
     calls: [
       {
         name: 'propose_pipeline',
-        input: { summary: 'x', checks: [{ block: `nope-${n}`, version: 1 }], environments: [] },
+        input: { summary: 'x', checks: [{ block: `nope-${n}`, version: 1 }], environments: ENV },
       },
     ],
   });
@@ -288,7 +295,7 @@ it('gives up after three proposals that do not read, saying what was wrong with 
 it('counts a proposal cut off at the reply limit as a failed one, and keeps one that read', async () => {
   const good = {
     name: 'propose_pipeline',
-    input: { summary: 'Good.', checks: [], environments: [] },
+    input: { summary: 'Good.', checks: [], environments: ENV },
   };
   const cut = { calls: [{ name: 'propose_pipeline', input: {} }], stop: 'max_tokens' as const };
   const complete = model([{ calls: [good] }, cut, cut, cut, { text: 'never asked' }]);
@@ -425,4 +432,247 @@ it('reads a conversation as sent: trimmed, starting and ending on the person', (
     ])
   ).toEqual({ error: 'Say what you would like the assistant to do.' });
   expect(readConversation('nope')).toEqual({ error: 'Send the conversation.' });
+});
+
+describe('the pipeline is one branch’s', () => {
+  const about = { host: 'bitbucket' as const, blocks, targets: [] };
+  const checks = [{ block: 'node-test', version: 1, inputs: {} }];
+  const refused = {
+    problems: [
+      'This pipeline is the branch main’s alone: "environments" must hold exactly one entry, named production with branch main.',
+    ],
+  };
+
+  it('a proposal holds exactly its environment, on its branch', () => {
+    const at = { ...about, environment: 'production', branch: 'main' };
+    expect(readPipelineProposal({ summary: 'x', checks, environments: ENV }, at)).toMatchObject({
+      summary: 'x',
+      spec: { environments: ENV },
+    });
+    // The environment's name is the project's, whatever its case.
+    expect(
+      readPipelineProposal(
+        { summary: 'x', checks, environments: [{ ...ENV[0], name: 'Production' }] },
+        at
+      )
+    ).toMatchObject({ summary: 'x' });
+  });
+
+  it('one that names another environment, another branch, more than one or none is sent back', () => {
+    const at = { ...about, environment: 'production', branch: 'main' };
+    const dev = { name: 'dev', branch: 'develop', steps: [] };
+    for (const environments of [[], [dev], [{ ...ENV[0], branch: 'release' }], [...ENV, dev]]) {
+      expect(readPipelineProposal({ summary: 'x', checks, environments }, at)).toEqual(refused);
+    }
+  });
+
+  it('is told so, with the branch it reads and the environment it deploys', async () => {
+    const complete = model([{ text: 'Nothing to change.' }]);
+    await runPipelineAssistant(input({ branch: 'develop', environment: 'dev' }), deps(complete));
+    const system: string = complete.mock.calls[0][0].system;
+    expect(system).toContain(
+      'the CI/CD pipeline of the branch develop of the repository acme/billing (on Bitbucket)'
+    );
+    expect(system).toContain('{ "name": "dev", "branch": "develop", "steps": [...] }');
+  });
+
+  it('a proposal for another branch comes back to the model with why', async () => {
+    const complete = model([
+      {
+        calls: [
+          {
+            name: 'propose_pipeline',
+            input: {
+              summary: 'x',
+              checks,
+              environments: [...ENV, { name: 'dev', branch: 'develop', steps: [] }],
+            },
+          },
+        ],
+      },
+      {
+        calls: [
+          { name: 'propose_pipeline', input: { summary: 'One.', checks, environments: ENV } },
+        ],
+      },
+      { text: 'Done.' },
+    ]);
+    const reply = await runPipelineAssistant(input(), deps(complete));
+    expect(results(complete)[0]?.content).toContain(refused.problems[0]);
+    expect(results(complete)[0]?.isError).toBe(true);
+    expect(reply).toMatchObject({ proposal: { summary: 'One.' } });
+  });
+
+  it('read without a branch (the older callers), a proposal is taken as it stands', () => {
+    expect(readPipelineProposal({ summary: 'x', checks, environments: [] }, about)).toMatchObject({
+      summary: 'x',
+    });
+  });
+});
+
+describe('a pipeline written by hand: the file is the pipeline', () => {
+  const CI = 'name: CI\non: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n';
+  const EDITED = 'name: CI\non: [push, pull_request]\njobs:\n  test:\n    runs-on: ubuntu-latest';
+  const onFile = (overrides: Partial<AssistantInput> = {}) =>
+    input({ host: 'github', file: { name: 'ci.yml', text: CI }, ...overrides });
+  const toolNames = (complete: jest.Mock) =>
+    complete.mock.calls[0][0].tools.map((t: { name: string }) => t.name);
+
+  it('is offered the repository to read and the file to propose, and nothing of blocks', async () => {
+    const complete = model([{ text: 'It runs on every push.' }]);
+    const reply = await runPipelineAssistant(onFile({ operator: true }), deps(complete));
+    expect(toolNames(complete)).toEqual(['list_files', 'read_file', 'propose_file']);
+    const system: string = complete.mock.calls[0][0].system;
+    expect(system).toContain('written by hand, ci.yml');
+    expect(system).toContain(CI);
+    expect(system).toContain('branch main');
+    expect(system).toContain('environment "production"');
+    expect(system).not.toContain('propose_pipeline');
+    expect(system).not.toContain('The organization’s blocks');
+    // A question about the file is answered in words, with nothing proposed.
+    expect(reply).toEqual({
+      reply: 'It runs on every push.',
+      proposal: null,
+      buildingBlock: null,
+      file: null,
+      read: [],
+    });
+  });
+
+  it('reads the repository, then proposes the whole file for the person to look over', async () => {
+    const complete = model([
+      { calls: [{ name: 'read_file', input: { path: 'package.json' } }] },
+      {
+        calls: [
+          {
+            name: 'propose_file',
+            input: { summary: ' Runs on pull requests too. ', text: EDITED },
+          },
+        ],
+      },
+      { text: 'It now runs on pull requests as well.' },
+    ]);
+    const reply = await runPipelineAssistant(onFile(), deps(complete));
+    expect(reply).toEqual({
+      reply: 'It now runs on pull requests as well.',
+      proposal: null,
+      buildingBlock: null,
+      // The file it was asked about, whole, ending in a newline.
+      file: { summary: 'Runs on pull requests too.', name: 'ci.yml', text: `${EDITED}\n` },
+      read: ['package.json'],
+    });
+    const told = complete.mock.calls[2][0].messages.at(-1).content[0];
+    expect(told.content).toBe('Proposed. The person reviews it in the editor and commits it.');
+  });
+
+  it('a file that is not usable goes back with why, and the corrected one is taken', async () => {
+    const complete = model([
+      {
+        calls: [
+          { name: 'propose_file', input: { summary: 'x', text: 'jobs:\n  test: [unclosed' } },
+        ],
+      },
+      { calls: [{ name: 'propose_file', input: { summary: 'Fixed.', text: EDITED } }] },
+      { text: 'Done.' },
+    ]);
+    const reply = await runPipelineAssistant(onFile(), deps(complete));
+    // The conversation is one list the turn adds to: the first results are its third entry.
+    const refused = complete.mock.calls[1][0].messages[2].content[0];
+    expect(refused.isError).toBe(true);
+    expect(refused.content).toMatch(/^The file cannot be used yet:\n- It is not valid YAML: /);
+    expect(refused.content).toContain('Call propose_file again with the whole corrected file.');
+    expect(reply).toMatchObject({ reply: 'Done.', file: { summary: 'Fixed.' } });
+  });
+
+  it('gives up after three files that are not usable, with nothing proposed', async () => {
+    const bad = { calls: [{ name: 'propose_file', input: { summary: 'x', text: '   ' } }] };
+    const complete = model([bad, bad, bad, { text: 'never asked' }]);
+    const reply = await runPipelineAssistant(onFile(), deps(complete));
+    expect(complete).toHaveBeenCalledTimes(3);
+    expect(reply).toMatchObject({
+      file: null,
+      reply: gaveUp(['Send the whole file in "text"; it was empty.'], false),
+    });
+  });
+
+  it('keeps a file that was usable when later ones are not', async () => {
+    const good = { calls: [{ name: 'propose_file', input: { summary: 'Good.', text: EDITED } }] };
+    const bad = { calls: [{ name: 'propose_file', input: { summary: 'x', text: '- a\n- list' } }] };
+    const complete = model([good, bad, bad, bad, { text: 'never asked' }]);
+    const reply = await runPipelineAssistant(onFile(), deps(complete));
+    expect(reply).toMatchObject({
+      file: { summary: 'Good.', name: 'ci.yml' },
+      reply: gaveUp(
+        ['A pipeline file is a YAML mapping at its top level; send the whole file.'],
+        true
+      ),
+    });
+  });
+
+  it('cannot propose a pipeline of blocks there', async () => {
+    const complete = model([
+      {
+        calls: [
+          { name: 'propose_pipeline', input: { summary: 'x', checks: [], environments: ENV } },
+        ],
+      },
+      { text: 'I will edit the file instead.' },
+    ]);
+    const reply = await runPipelineAssistant(onFile(), deps(complete));
+    const told = complete.mock.calls[1][0].messages.at(-1).content[0];
+    expect(told).toMatchObject({ isError: true, content: 'There is no tool propose_pipeline.' });
+    expect(reply).toMatchObject({ proposal: null, file: null });
+  });
+
+  it('a proposed file is read whole: empty, not YAML, not a mapping or too long is refused with why', () => {
+    const file = { name: 'bitbucket-pipelines.yml' };
+    expect(readFileProposal({ summary: 'x', text: ' \n' }, file)).toEqual({
+      problems: ['Send the whole file in "text"; it was empty.'],
+    });
+    expect(readFileProposal({ summary: 'x' }, file)).toEqual({
+      problems: ['Send the whole file in "text"; it was empty.'],
+    });
+    expect(readFileProposal('not a call', file)).toEqual({
+      problems: ['Send the whole file in "text"; it was empty.'],
+    });
+    const invalid = readFileProposal(
+      { summary: 'x', text: 'pipelines:\n  default: [unclosed' },
+      file
+    );
+    expect('problems' in invalid && invalid.problems[0]).toMatch(/^It is not valid YAML: /);
+    expect(readFileProposal({ summary: 'x', text: 'just words' }, file)).toEqual({
+      problems: ['A pipeline file is a YAML mapping at its top level; send the whole file.'],
+    });
+    expect(
+      readFileProposal({ summary: 'x', text: `a: ${'x'.repeat(MAX_PIPELINE_FILE_CHARS)}` }, file)
+    ).toEqual({ problems: [`The file is over ${MAX_PIPELINE_FILE_CHARS} characters.`] });
+  });
+
+  it('a usable one is named for the file asked about, ends in a newline and has a summary', () => {
+    expect(
+      readFileProposal({ text: 'pipelines:\n  default: []' }, { name: 'bitbucket-pipelines.yml' })
+    ).toEqual({
+      summary: 'An edited file.',
+      name: 'bitbucket-pipelines.yml',
+      text: 'pipelines:\n  default: []\n',
+    });
+    // One that ends in a newline already is left as it is.
+    expect(readFileProposal({ summary: 'Kept.', text: 'a: 1\n' }, { name: 'ci.yml' })).toEqual({
+      summary: 'Kept.',
+      name: 'ci.yml',
+      text: 'a: 1\n',
+    });
+  });
+
+  it('a conversation about blocks answers with no file at all, and cannot propose one', async () => {
+    const complete = model([
+      { calls: [{ name: 'propose_file', input: { summary: 'x', text: EDITED } }] },
+      { text: 'Here is the pipeline.' },
+    ]);
+    const reply = await runPipelineAssistant(input(), deps(complete));
+    expect(toolNames(complete)).not.toContain('propose_file');
+    expect(reply).not.toHaveProperty('file');
+    const told = complete.mock.calls[1][0].messages.at(-1).content[0];
+    expect(told).toMatchObject({ isError: true, content: 'There is no tool propose_file.' });
+  });
 });

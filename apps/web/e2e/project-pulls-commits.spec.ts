@@ -8,7 +8,7 @@
  * real GitHub API entirely out of the loop — the server-side call never
  * happens once the browser's own request is intercepted.
  *
- * A GitHub project. Its runs and variables are under Deployments
+ * A GitHub project. Its pipelines, runs and variables are on its Environments page
  * (code-actions.spec.ts); the project screen only links there.
  *
  * The project is the test's own person's, who connects GitHub through the
@@ -195,10 +195,10 @@ test.describe('project pulls and commits', () => {
     });
     await expect(commits.getByText('aaaaaaaaaaaa')).toBeVisible();
 
-    // Runs and variables live under Deployments now: a link, no card.
+    // Pipelines, runs and variables live on its Environments page: a link, no card.
     await expect(
-      main.getByTestId('code-repo-strip').getByRole('link', { name: 'Deployments', exact: true })
-    ).toHaveAttribute('href', `/deployments/${ids.projectId}`);
+      main.getByTestId('code-repo-strip').getByRole('link', { name: 'Actions', exact: true })
+    ).toHaveAttribute('href', `/code/${ids.projectId}/environments`);
     await expect(main.getByRole('heading', { level: 2, name: 'Actions', exact: true })).toHaveCount(
       0
     );

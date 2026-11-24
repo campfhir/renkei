@@ -5,9 +5,10 @@
  * Tools — their own buttons on a wide screen, items of the overflow menu
  * on a narrow one: **Environment** — the project's variables, to look
  * at, replace by pasting a `.env`, or prune, without leaving the chat;
- * and, in the overflow menu, **Deployments** (chat-thread.tsx) — the
- * project's runs and variables under Deployments, in a new tab, where a
- * person sees the workflow a chat drafted and the variables it set;
+ * and, in the overflow menu, **Pipelines** (**Actions** on GitHub)
+ * (chat-thread.tsx) — the project's Environments page, in a new tab,
+ * where a person sees, by branch, the workflow a chat drafted and the
+ * variables it set;
  * **Add files**, which puts files a person picks or drops into the
  * checkout, untracked, for the chat's tools to read, use and commit —
  * or among the project's artifacts instead (add-files-modal.tsx);

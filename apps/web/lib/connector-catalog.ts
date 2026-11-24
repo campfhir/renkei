@@ -628,6 +628,24 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     togglable: true,
   },
   {
+    capabilityKey: 'deployments',
+    // No connector_configs row: these read Renkei's own record of what
+    // pipelines reported and applications checked in with. Offered only to
+    // someone with a Bitbucket or GitHub connection (mcp-tools/registry.ts).
+    configKey: 'deployments',
+    label: 'Deployments',
+    summary:
+      'Read-only: the environments of a person’s code projects, the deployments their ' +
+      'pipelines reported and the health their deployed applications check in with. ' +
+      'For people with a Bitbucket or GitHub connection.',
+    toolPrefix: 'deployments_*',
+    category: 'renkei',
+    keywords: ['deploy', 'environments', 'health', 'monitoring', 'pipelines', 'status', 'uptime'],
+    grantProviders: [],
+    userConnectable: false,
+    togglable: true,
+  },
+  {
     capabilityKey: 'user-memory',
     // No connector_configs row: this reads chat_user_memories, Renkei's own
     // table — the key exists so the identifier stays consistent.

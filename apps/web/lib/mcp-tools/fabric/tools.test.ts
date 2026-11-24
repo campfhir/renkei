@@ -55,20 +55,18 @@ jest.mock('@/lib/fabric/repo', () => ({
 jest.mock('@/lib/fabric/pipeline', () => ({
   ...jest.requireActual('@/lib/fabric/pipeline'),
   fabricBlockVersions: jest.fn(async () => ({ validate: 1, deploy: 1 })),
-  savedSpec: jest.fn(async () => ({
-    checks: [],
-    environments: [{ name: 'dev', branch: 'develop', steps: [] }],
-  })),
-  writeFabricPipeline: jest.fn(async (_c: unknown, _r: unknown, plan: unknown) => {
-    pipelineWrites.push(plan);
-    return {
-      ok: true,
-      url: 'https://github.com/acme/sales/pull/8',
-      branch: 'renkei/pipeline',
-      updated: false,
-      text: '',
-    };
-  }),
+  writeFabricPipelines: jest.fn(
+    async (_c: unknown, _r: unknown, plans: { branches: unknown[] }) => {
+      pipelineWrites.push(...plans.branches);
+      return {
+        ok: true,
+        opened: [
+          { branch: 'develop', url: 'https://github.com/acme/sales/pull/8', updated: false },
+          { branch: 'main', url: 'https://github.com/acme/sales/pull/9', updated: false },
+        ],
+      };
+    }
+  ),
 }));
 
 import type { McpServer } from '@modelcontextprotocol/server';
@@ -453,6 +451,15 @@ describe('changes are pull requests', () => {
   });
 
   it('workspaces go through the pipeline: an environment’s workspace and capacity become its deploy step', async () => {
+    // The project's environments: dev deploys from develop; production has no branch yet.
+    await getDataStore().ciEnvironments.replace(
+      '99999999-9999-4999-8999-999999999999',
+      [
+        { name: 'production', production: true, branches: [] },
+        { name: 'dev', production: false, branches: ['develop'] },
+      ],
+      'ann'
+    );
     fabric['GET /capacities'] = [
       {
         status: 200,
@@ -477,35 +484,45 @@ describe('changes are pull requests', () => {
     });
     const confirmArgs = preview.structuredContent?.confirmArgs as Record<string, unknown>;
     const result = await call('fabric_setup_pipeline_confirm', confirmArgs);
+    // A pipeline file lives on its branch: one pull request for each environment's.
     expect(text(result)).toMatch(
-      /^Opened the pipeline’s pull request: https:\/\/github.com\/acme\/sales\/pull\/8/
+      /^Opened the pipeline’s pull request into develop: https:\/\/github.com\/acme\/sales\/pull\/8\nOpened the pipeline’s pull request into main: https:\/\/github.com\/acme\/sales\/pull\/9/
     );
-    const plan = pipelineWrites[0] as {
-      spec: { checks: unknown[]; environments: { name: string; steps: unknown[] }[] };
-    };
-    expect(plan.spec.checks).toEqual([
-      { block: 'fabric-validate', version: 1, inputs: { items_directory: 'fabric' } },
+    const plans = pipelineWrites as {
+      environment: string;
+      branch: string;
+      spec: {
+        checks: unknown[];
+        environments: { name: string; branch: string; steps: unknown[] }[];
+      };
+    }[];
+    expect(plans.map((plan) => [plan.environment, plan.branch])).toEqual([
+      ['dev', 'develop'],
+      ['production', 'main'],
     ]);
-    expect(plan.spec.environments.map((e) => [e.name, e.steps])).toEqual([
+    for (const plan of plans) {
+      expect(plan.spec.checks).toEqual([
+        { block: 'fabric-validate', version: 1, inputs: { items_directory: 'fabric' } },
+      ]);
+      // Each branch's pipeline holds the one environment it deploys.
+      expect(plan.spec.environments.map((e) => [e.name, e.branch])).toEqual([
+        [plan.environment, plan.branch],
+      ]);
+    }
+    expect(plans.map((plan) => plan.spec.environments[0]?.steps)).toEqual([
       [
-        'dev',
-        [
-          {
-            block: 'fabric-deploy',
-            version: 1,
-            inputs: { workspace_name: 'Sales (dev)', items_directory: 'fabric', capacity_id: CAP },
-          },
-        ],
+        {
+          block: 'fabric-deploy',
+          version: 1,
+          inputs: { workspace_name: 'Sales (dev)', items_directory: 'fabric', capacity_id: CAP },
+        },
       ],
       [
-        'production',
-        [
-          {
-            block: 'fabric-deploy',
-            version: 1,
-            inputs: { workspace_name: 'Sales', items_directory: 'fabric', workspace_id: WS },
-          },
-        ],
+        {
+          block: 'fabric-deploy',
+          version: 1,
+          inputs: { workspace_name: 'Sales', items_directory: 'fabric', workspace_id: WS },
+        },
       ],
     ]);
     // Workspaces were only read: nothing was created or renamed in Fabric.

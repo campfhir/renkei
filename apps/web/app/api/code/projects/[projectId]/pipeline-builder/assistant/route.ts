@@ -13,7 +13,12 @@
  * building block for every project; the page saves that through the
  * catalogue's own route (POST /api/admin/ci-blocks), as a draft.
  *
+ * A branch whose pipeline was written by hand sends its file instead of a
+ * pipeline of blocks; the assistant then edits that file, as text, and
+ * proposes it whole for the person to review and commit.
+ *
  *   POST { conversation: [{ role, text }], spec } → 202 { jobId }
+ *   POST { conversation, file: { name, text } }    → 202 { jobId }
  */
 
 import type { NextRequest } from 'next/server';
@@ -35,26 +40,43 @@ import {
   listSource as listGithubSource,
   readSourceFile as readGithubFile,
 } from '@/lib/code/github-browse';
-import { readConversation } from '@/lib/ci/pipeline-assistant';
+import { MAX_PIPELINE_FILE_CHARS, readConversation } from '@/lib/ci/pipeline-assistant';
 import { meteredComplete, runAssistantJob, startAssistantJob } from '@/lib/ci/assistant-jobs';
-import { builderBlocks, builderTargets, withBranch } from '@/lib/ci/pipeline-builder';
-import { builderContext } from '@/lib/ci/pipeline-builder-access';
+import { builderBlocks, builderTargets } from '@/lib/ci/pipeline-builder';
+import { branchContext } from '@/lib/ci/pipeline-builder-access';
+
+/** The pipeline file a question is about, as sent: a plain file name and its text. */
+function readAssistantFile(value: unknown): { name: string; text: string } | null {
+  if (!isRecord(value)) return null;
+  const name = typeof value.name === 'string' ? value.name.trim() : '';
+  const text = typeof value.text === 'string' ? value.text : null;
+  if (!/^[A-Za-z0-9._-]{1,120}$/.test(name) || text === null) return null;
+  if (text.length > MAX_PIPELINE_FILE_CHARS) return null;
+  return { name, text };
+}
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const found = await builderContext(request, projectId, { write: true });
+  const found = await branchContext(request, projectId, { write: true });
   if (!found.ok) return found.response;
-  const { subject, origin, host } = found.context;
+  const { subject, origin, host, environment } = found.context;
   const body = await readJsonBody(request);
   const conversation = readConversation(body.conversation);
   if ('error' in conversation) return jsonError(400, 'conversation', conversation.error);
-  if (!isRecord(body.spec)) return jsonError(400, 'spec', 'Send the pipeline in the builder.');
+  // A pipeline written by hand: the conversation is about its file, as text.
+  const file = readAssistantFile(body.file);
+  if (body.file !== undefined && !file) {
+    return jsonError(400, 'file', 'Send the pipeline file open in the editor, by name.');
+  }
+  if (!file && !isRecord(body.spec)) {
+    return jsonError(400, 'spec', 'Send the pipeline in the builder.');
+  }
   // A pipeline that does not read yet is when help is wanted most: the
   // assistant gets it as it stands, with what is wrong, and must fix it.
-  const spec = readPipelineSpec(body.spec);
+  const spec = readPipelineSpec(file ? { checks: [], environments: [] } : body.spec);
 
   const resolved = await resolveAgentLlm(
     await preferredChatModelId(subject, found.context.project.id)
@@ -69,18 +91,17 @@ export async function POST(
   const llm = resolved.val;
   const operator = (await checkAccess([ROLE_OPERATOR])) !== null;
   const caller = { subject, origin };
-  const following = found.context.project;
+  const project = found.context.project;
   const jobId = randomUUID();
-  await startAssistantJob(jobId, subject, following.id, new Date());
+  await startAssistantJob(jobId, subject, project.id, new Date());
 
   // The answer is worked out after this response: the page asks for the
   // job (…/assistant/[jobId]) rather than holding this request open.
   after(() =>
     runAssistantJob(
       jobId,
-      { subject, project: following.name, repository: following.repo.fullName },
+      { subject, project: project.name, repository: project.repo.fullName },
       async () => {
-        const project = await withBranch(caller, following);
         const { fullName, branch } = project.repo;
         const [blocks, targets] = await Promise.all([
           builderBlocks(spec.ok ? spec.value : null),
@@ -91,9 +112,11 @@ export async function POST(
             conversation,
             spec: spec.ok ? spec.value : body.spec,
             specProblems: spec.ok ? [] : spec.errors,
+            ...(file ? { file } : {}),
             host,
             repo: fullName,
             branch,
+            environment,
             blocks,
             targets,
             operator,

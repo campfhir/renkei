@@ -64,4 +64,4 @@ connection no longer asks for `Workspace.ReadWrite.All`.
 The first two commit item folders to a fresh `renkei/fabric/…` branch and open a pull request into
 the first environment's branch (usually `develop`); the third saves the pipeline and opens the
 pipeline builder's own pull request, so the builder page shows the same spec. Nothing in Renkei
-calls a Fabric write API any more; a deploy shows on the Deployments page through the step's report.
+calls a Fabric write API any more; a deploy shows on the code project's Environments page through the step's report.

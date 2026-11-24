@@ -44,6 +44,7 @@ import {
   type PipelineSpec,
 } from '@renkei/ci-blocks';
 import { isRecord } from '@renkei/guards';
+import { isMap, parseDocument } from 'yaml';
 import type { Result } from '@campfhir/safe-functions/types';
 
 export const MAX_CONVERSATION_TURNS = 20;
@@ -89,10 +90,20 @@ export interface BuildingBlockProposal {
   from: string | null;
 }
 
+/** A pipeline file written by hand, as the assistant would have it: the whole file. */
+export interface FileProposal {
+  summary: string;
+  /** The file it is for, as the page named it. */
+  name: string;
+  text: string;
+}
+
 export interface AssistantReply {
   reply: string;
   proposal: PipelineProposal | null;
   buildingBlock: BuildingBlockProposal | null;
+  /** The edited file, when the conversation is about one written by hand. */
+  file?: FileProposal | null;
   /** The repository paths it read or listed, in order, for the page to show. */
   read: string[];
 }
@@ -119,12 +130,22 @@ export interface AssistantInput {
   specProblems?: string[];
   host: Host;
   repo: string;
+  /** The branch whose pipeline this is: its file lives there, and it is read from there. */
   branch: string;
+  /** The environment the branch is assigned to: what merges to it deploy. */
+  environment: string;
   /** The organization's published blocks (every version the builder knows). */
   blocks: (PipelineBlock & { description: string | null })[];
   targets: CheckTarget[];
   /** Offers the tool that makes a building block for every project. */
   operator: boolean;
+  /**
+   * The pipeline file open in the page's editor, when the branch's pipeline
+   * was written by hand: the conversation is then about that file, as text,
+   * and the assistant proposes the whole file edited instead of a pipeline
+   * of blocks.
+   */
+  file?: { name: string; text: string };
 }
 
 /** A conversation as sent: the last turns, each trimmed, ending on the person's. */
@@ -173,14 +194,72 @@ function catalogue(blocks: AssistantInput['blocks']): string {
     .join('\n');
 }
 
+/** A proposed file's size, and the file's as the model reads it. */
+export const MAX_PIPELINE_FILE_CHARS = 60_000;
+
+/** The prompt for a pipeline written by hand: the file is the pipeline, and the answer is the file. */
+function filePrompt(input: AssistantInput, file: { name: string; text: string }): string {
+  const hostName = HOST_LABEL[input.host];
+  const product = input.host === 'github' ? 'GitHub Actions workflow' : 'Bitbucket Pipelines file';
+  return [
+    `You help a person change the CI/CD pipeline of the branch ${input.branch} of the repository ${input.repo} (on ${hostName}). The branch is assigned to the project's environment "${input.environment}": merges to it are what deploy ${input.environment}.`,
+    `Its pipeline is a ${product} written by hand, ${file.name}, open in the page's editor. It was not built from Renkei's building blocks and you do not turn it into them: you edit the file as it is, in ${hostName}'s own syntax, keeping what works and the author's style.`,
+    '',
+    'Work from the actual source: list and read the files that say how the project builds, tests and runs (package manifests, lockfiles, Dockerfiles, Makefiles, compose files, scripts, other CI files) before changing anything. Do not guess commands the repository does not support.',
+    '',
+    'Change the file only with propose_file, sending the whole file as it should be — every line, not a fragment or a diff. The person reviews it in the editor and commits it themselves; nothing reaches the repository until they do.',
+    'Rules:',
+    '- Valid YAML, in the syntax this host runs. Do not invent keys.',
+    '- Never write a secret value into the file. Read secrets and variables by name, as the host provides them, and say which ones the person must set (on the Variables tab of this page).',
+    `- Keep the file about this branch: what runs on pull requests into ${input.branch}, and what deploys ${input.environment} on a merge to it.`,
+    '- A deploy should fail loudly when it did not work.',
+    '',
+    `The file in the editor now (${file.name}):\n${file.text.slice(0, MAX_PIPELINE_FILE_CHARS) || '(empty)'}`,
+    '',
+    'Your goal is to fulfil the person’s request in this turn: read what you need, then propose the file that does what they asked. Do not stop to announce a next step; when you would say you will do something next, do it now with a tool call. End your turn only when the request is met, or when you need something only the person can tell you. A question about the file is answered in words, with no proposal.',
+    `A proposal that is not usable comes back with what is wrong; after ${MAX_FAILED_PROPOSALS} that are not, the turn ends with nothing proposed.`,
+    'Keep replies short: say what you read, what you changed and why, and anything the person must still do.',
+  ].join('\n');
+}
+
+/** A propose_file call read whole, or what to tell the model. */
+export function readFileProposal(
+  raw: unknown,
+  file: { name: string }
+): FileProposal | { problems: string[] } {
+  const call = isRecord(raw) ? raw : {};
+  const text = typeof call.text === 'string' ? call.text : '';
+  if (!text.trim()) return { problems: ['Send the whole file in "text"; it was empty.'] };
+  if (text.length > MAX_PIPELINE_FILE_CHARS) {
+    return { problems: [`The file is over ${MAX_PIPELINE_FILE_CHARS} characters.`] };
+  }
+  const parsed = parseDocument(text);
+  if (parsed.errors.length > 0) {
+    return {
+      problems: parsed.errors.slice(0, 5).map((error) => `It is not valid YAML: ${error.message}`),
+    };
+  }
+  if (!isMap(parsed.contents)) {
+    return {
+      problems: ['A pipeline file is a YAML mapping at its top level; send the whole file.'],
+    };
+  }
+  const summary =
+    typeof call.summary === 'string' && call.summary.trim()
+      ? call.summary.trim().slice(0, 1000)
+      : 'An edited file.';
+  return { summary, name: file.name, text: text.endsWith('\n') ? text : `${text}\n` };
+}
+
 function systemPrompt(input: AssistantInput): string {
+  if (input.file) return filePrompt(input, input.file);
   const hostName = HOST_LABEL[input.host];
   const targets = input.targets
     .map((t) => `${t.name}${t.labels[input.host].length === 0 ? ` (no ${hostName} labels)` : ''}`)
     .join(', ');
   return [
-    `You help a person tailor the CI/CD pipeline of the repository ${input.repo} (on ${hostName}, branch ${input.branch || 'its default'}) in Renkei's pipeline builder.`,
-    `The builder writes ${PIPELINE_FILE[input.host]} from a pipeline made of building blocks: steps run on every pull request ("checks", nothing deploys), then environments, each a branch whose merges deploy it. Renkei never deploys; merging starts ${hostName}'s pipeline.`,
+    `You help a person tailor the CI/CD pipeline of the branch ${input.branch} of the repository ${input.repo} (on ${hostName}) in Renkei's pipeline builder. The branch is assigned to the project's environment "${input.environment}".`,
+    `The builder writes ${PIPELINE_FILE[input.host]} onto that branch from a pipeline made of building blocks: steps run on every pull request ("checks", nothing deploys), then the steps that deploy ${input.environment} when something merges to ${input.branch}. A pipeline file lives on its branch, so this pipeline is about this branch alone: "environments" always holds exactly one entry, { "name": "${input.environment}", "branch": "${input.branch}", "steps": [...] }. Other environments and branches have pipelines of their own; never add them here. Renkei never deploys; merging starts ${hostName}'s pipeline.`,
     '',
     'Work from the actual source: list and read the files that say how the project builds, tests and runs (package manifests, lockfiles, Dockerfiles, Makefiles, compose files, existing CI files, scripts) before proposing anything. Do not guess commands the repository does not support.',
     '',
@@ -215,12 +294,32 @@ function systemPrompt(input: AssistantInput): string {
   ].join('\n');
 }
 
+/** The tools for a pipeline written by hand: reading the repository, and proposing the file. */
+function fileTools(): LlmToolDef[] {
+  return [
+    ...tools(false).filter((tool) => tool.name === 'list_files' || tool.name === 'read_file'),
+    {
+      name: 'propose_file',
+      description:
+        'Propose the whole pipeline file as it should be. The person reviews it in the editor and commits it.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          summary: { type: 'string', description: 'One or two sentences: what changes and why.' },
+          text: { type: 'string', description: 'The whole file, every line.' },
+        },
+        required: ['summary', 'text'],
+      },
+    },
+  ];
+}
+
 function tools(operator: boolean): LlmToolDef[] {
   const definition = { type: 'object', description: 'A block definition, as described.' };
   const list: LlmToolDef[] = [
     {
       name: 'list_files',
-      description: 'List one directory of the repository on the project’s branch.',
+      description: 'List one directory of the repository on the pipeline’s branch.',
       inputSchema: {
         type: 'object',
         properties: { path: { type: 'string', description: 'Relative; empty for the top level.' } },
@@ -228,7 +327,7 @@ function tools(operator: boolean): LlmToolDef[] {
     },
     {
       name: 'read_file',
-      description: 'Read one text file of the repository on the project’s branch.',
+      description: 'Read one text file of the repository on the pipeline’s branch.',
       inputSchema: {
         type: 'object',
         properties: { path: { type: 'string' } },
@@ -299,7 +398,8 @@ type ToolOutcome = { content: string; isError?: boolean };
 /** A propose_pipeline call read whole, or what to tell the model. */
 export function readPipelineProposal(
   raw: unknown,
-  input: Pick<AssistantInput, 'host' | 'blocks' | 'targets'>
+  input: Pick<AssistantInput, 'host' | 'blocks' | 'targets'> &
+    Partial<Pick<AssistantInput, 'environment' | 'branch'>>
 ): PipelineProposal | { problems: string[] } {
   const call = isRecord(raw) ? raw : {};
   const read = readPipelineSpec({
@@ -309,6 +409,21 @@ export function readPipelineProposal(
   });
   if (!read.ok) return { problems: read.errors };
   const spec = read.value;
+  if (input.environment !== undefined && input.branch !== undefined) {
+    const [only, ...others] = spec.environments;
+    if (
+      !only ||
+      others.length > 0 ||
+      only.branch !== input.branch ||
+      only.name.toLowerCase() !== input.environment.toLowerCase()
+    ) {
+      return {
+        problems: [
+          `This pipeline is the branch ${input.branch}’s alone: "environments" must hold exactly one entry, named ${input.environment} with branch ${input.branch}.`,
+        ],
+      };
+    }
+  }
   const organization = (key: string, version: number) =>
     input.blocks.find((b) => b.key === key && b.version === version) ?? null;
   const blockAt = blockOfStep(spec, organization);
@@ -425,6 +540,7 @@ export async function runPipelineAssistant(
   let reads = 0;
   let proposal: PipelineProposal | null = null;
   let buildingBlock: BuildingBlockProposal | null = null;
+  let file: FileProposal | null = null;
   const said: string[] = [];
   const organizationKeys = [...new Set(input.blocks.map((b) => b.key))];
 
@@ -474,7 +590,20 @@ export async function runPipelineAssistant(
         content: `${file.text.slice(0, MAX_FILE_CHARS)}${cut ? '\n… (the rest is cut)' : ''}`,
       };
     }
-    if (name === 'propose_pipeline') {
+    if (name === 'propose_file' && input.file) {
+      await deps.onStep?.('Checking the file it proposes');
+      const outcome = readFileProposal(raw, input.file);
+      if ('problems' in outcome) {
+        failures.push(outcome.problems);
+        return {
+          content: `The file cannot be used yet:\n${outcome.problems.map((p) => `- ${p}`).join('\n')}\nCall propose_file again with the whole corrected file.`,
+          isError: true,
+        };
+      }
+      file = outcome;
+      return { content: 'Proposed. The person reviews it in the editor and commits it.' };
+    }
+    if (name === 'propose_pipeline' && !input.file) {
       await deps.onStep?.('Checking the pipeline it proposes');
       const outcome = readPipelineProposal(raw, input);
       if ('problems' in outcome) {
@@ -521,7 +650,7 @@ export async function runPipelineAssistant(
     const completion = await deps.complete({
       system: systemPrompt(input),
       messages,
-      tools: tools(input.operator),
+      tools: input.file ? fileTools() : tools(input.operator),
       maxTokens: Math.min(MAX_OUTPUT_TOKENS, deps.maxOutputTokens),
       timeoutMs: TIMEOUT_MS,
       promptCache: true,
@@ -565,18 +694,24 @@ export async function runPipelineAssistant(
       });
     }
     if (failures.length >= MAX_FAILED_PROPOSALS) {
-      const kept = proposal !== null || buildingBlock !== null;
-      return { reply: gaveUp(failures[failures.length - 1], kept), proposal, buildingBlock, read };
+      const kept = proposal !== null || buildingBlock !== null || file !== null;
+      return {
+        reply: gaveUp(failures[failures.length - 1], kept),
+        proposal,
+        buildingBlock,
+        ...(input.file ? { file } : {}),
+        read,
+      };
     }
     messages.push({ role: 'user', content: results });
   }
 
-  const proposed = proposal !== null || buildingBlock !== null;
+  const proposed = proposal !== null || buildingBlock !== null || file !== null;
   const last = said[said.length - 1];
   const reply = finished
     ? (last ?? (proposed ? 'Here is what I propose.' : UNFINISHED))
     : proposed
       ? `${last ?? 'Here is what I propose.'}\n\n${UNFINISHED_AFTER_PROPOSING}`
       : UNFINISHED;
-  return { reply, proposal, buildingBlock, read };
+  return { reply, proposal, buildingBlock, ...(input.file ? { file } : {}), read };
 }

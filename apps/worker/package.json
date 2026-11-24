@@ -17,6 +17,7 @@
     "@campfhir/bored-logs": "^0.7.1",
     "@renkei/agents": "workspace:*",
     "@renkei/batch-jobs-store": "workspace:*",
+    "@renkei/ci-blocks": "workspace:*",
     "@renkei/connector-atlassian": "workspace:*",
     "@renkei/connector-config": "workspace:*",
     "@renkei/connector-microsoft": "workspace:*",

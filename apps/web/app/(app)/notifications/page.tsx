@@ -68,8 +68,8 @@ export default async function NotificationsPage(): Promise<React.ReactNode> {
       <AutoRefresh />
       <h1 className="mb-1 text-xl font-bold">Notifications</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
-        What your agents and batch jobs did — the things that changed something, not every step they
-        took.{' '}
+        What your agents and batch jobs did, and what happened to your deployments — the things that
+        changed something, not every step they took.{' '}
         <CoachTarget name="notifications-preferences-link" as="span">
           <Link href={`/preferences`} className="text-blue-600 hover:underline dark:text-blue-400">
             Choose what appears here

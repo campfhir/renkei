@@ -1,18 +1,23 @@
 /**
- * A code project's pipeline builder (the page at /code/[projectId]/pipeline-builder):
- * the organization's published blocks, its targets with the runners each
- * host reports, what the repository's host says (its variables, deployment
- * environments, branches, top-level files and the pipeline file already on
- * the project's branch), the pipeline saved for the project or one
- * suggested from those files, and opening the pull request that carries
- * the file. @renkei/ci-blocks renders the file and checks it; the page
- * runs the same checks as the person edits.
+ * A branch's pipeline builder (the Pipeline tab of a code project's
+ * Environments page). A pipeline file lives on a branch, so there is one
+ * pipeline per branch: the pull-request checks, and the steps that deploy
+ * the environment the branch is assigned to (lib/ci/environments.ts).
+ * Every function here takes the project *on that branch* (`onBranch`).
  *
- * Renkei never deploys and never commits to the project's branch here: the
- * file goes on a `renkei/pipeline` branch and into a pull request against
- * the project's branch, with the person's own grant on the host, so the
- * repository's branch rules and reviews apply. While that pull request is
- * open, opening it again adds a commit to it rather than starting another.
+ * The page's data: the organization's published blocks, its targets with
+ * the runners each host reports, what the repository's host says (its
+ * variables, deployment environments, branches, the branch's top-level
+ * files and the pipeline file already on it), the pipeline saved for the
+ * branch or one suggested from those files, and opening the pull request
+ * that carries the file. @renkei/ci-blocks renders the file and checks
+ * it; the page runs the same checks as the person edits.
+ *
+ * Renkei never deploys and never commits to the branch here: the file
+ * goes on a `renkei/pipeline` branch and into a pull request against the
+ * branch, with the person's own grant on the host, so the repository's
+ * branch rules and reviews apply. While that pull request is open,
+ * opening it again adds a commit to it rather than starting another.
  */
 
 import { getDataStore } from '@renkei/db';
@@ -26,6 +31,7 @@ import {
   renderPipeline,
   suggestPipeline,
   type CheckTarget,
+  type PipelineEnvironment,
   type Host,
   type HostFacts,
   type PipelineBlock,
@@ -34,11 +40,7 @@ import {
 } from '@renkei/ci-blocks';
 import { ATLASSIAN_BITBUCKET, GITHUB } from '@renkei/provider-grants';
 import type { ProjectRow } from '@/lib/chat/projects';
-import {
-  bitbucketAuthOf,
-  branchToRead as bitbucketBranch,
-  listSource as listBitbucketSource,
-} from '@/lib/code/bitbucket-browse';
+import { bitbucketAuthOf, listSource as listBitbucketSource } from '@/lib/code/bitbucket-browse';
 import {
   listVariables,
   readEnvironments as readBitbucketEnvironments,
@@ -46,11 +48,7 @@ import {
   repoBase,
   variablesPath,
 } from '@/lib/code/bitbucket-pipelines';
-import {
-  branchToRead as githubBranch,
-  githubAuthOf,
-  listSource as listGithubSource,
-} from '@/lib/code/github-browse';
+import { githubAuthOf, listSource as listGithubSource } from '@/lib/code/github-browse';
 import {
   commitWorkflowFile,
   ownerRepoOf,
@@ -78,6 +76,8 @@ export interface BuilderBlock extends PipelineBlock {
 export interface BuilderPage {
   host: Host;
   file: string;
+  /** The environment the branch is assigned to: what its merges deploy. */
+  environment: string;
   spec: PipelineSpec;
   /** True when nothing is saved yet and the spec was suggested from the repository. */
   suggested: boolean;
@@ -92,6 +92,12 @@ export interface BuilderPage {
   pullRequestUrl: string | null;
   /** Where each deploy step reports; null when Renkei's own address is unknown. */
   report: ReportTo | null;
+  /**
+   * The pipeline files on the branch that the builder did not write — a
+   * `bitbucket-pipelines.yml` made elsewhere, GitHub workflows — by name.
+   * A branch that has some and no pipeline saved here opens on them.
+   */
+  handwritten: string[];
 }
 
 /** Where a pipeline's deploy steps report: this Renkei's report endpoint, and its address as the audience. */
@@ -100,6 +106,32 @@ export function reportTo(origin: string): ReportTo | null {
   return /^https?:\/\/[^/\s]+$/.test(base)
     ? { url: `${base}${REPORT_PATH}`, audience: base }
     : null;
+}
+
+/** The project as it is on one branch: what every builder call is about. */
+export function onBranch(project: CodeRepoProject, branch: string): CodeRepoProject {
+  return { ...project, repo: { ...project.repo, branch } };
+}
+
+/**
+ * A pipeline as one branch holds it: the checks, and one environment —
+ * the one the branch is assigned to — deployed by merges to the branch.
+ * The steps are those the spec had for the branch (else for the
+ * environment's name), so a stored pipeline follows its branch when the
+ * environment is renamed or the branch moves to another.
+ */
+export function specForBranch(
+  spec: PipelineSpec,
+  environment: string,
+  branch: string
+): PipelineSpec {
+  const steps =
+    (
+      spec.environments.find((e) => e.branch === branch) ??
+      spec.environments.find((e) => e.name.toLowerCase() === environment.toLowerCase())
+    )?.steps ?? [];
+  const only: PipelineEnvironment = { name: environment, branch, steps };
+  return { ...spec, environments: [only] };
 }
 
 export function hostOf(provider: string): Host | null {
@@ -156,6 +188,8 @@ interface HostRead {
   files: string[];
   unread: string[];
   branches: HostBranch[];
+  /** The pipeline files on the branch, by name: Bitbucket's one, GitHub's workflows. */
+  pipelineFiles: string[];
 }
 
 interface Caller {
@@ -202,6 +236,7 @@ async function readBitbucket(
     files: source.ok ? source.entries.filter((e) => e.kind === 'file').map((e) => e.path) : [],
     unread,
     branches: branches.ok ? branches.branches : [],
+    pipelineFiles: file.ok && file.text !== null ? [PIPELINE_FILE.bitbucket] : [],
   };
 }
 
@@ -249,6 +284,7 @@ async function readGithub(
     files: source.ok ? source.entries.filter((e) => e.kind === 'file').map((e) => e.path) : [],
     unread,
     branches: branches.ok ? branches.branches : [],
+    pipelineFiles: (s?.workflows ?? []).map((workflow) => workflow.name),
   };
 }
 
@@ -264,35 +300,29 @@ function readHost(
 }
 
 /**
- * The project with its branch named: a project that follows the
- * repository's default branch stores none, but production deploys from a
- * named branch and the pull request needs one to go against. Unchanged
- * when the host cannot say.
+ * The branch's pipeline files the builder did not write: every one but
+ * the builder's own file while that is still as it last wrote it.
  */
-export async function withBranch(
-  caller: Caller,
-  project: CodeRepoProject
-): Promise<CodeRepoProject> {
-  if (project.repo.branch) return project;
-  const host = hostOf(project.repo.provider);
-  const branch =
-    host === 'github'
-      ? await githubBranch(githubAuthOf(caller), project.repo.fullName, '')
-      : host === 'bitbucket'
-        ? await bitbucketBranch(bitbucketAuthOf(caller), project.repo.fullName, '')
-        : null;
-  return branch ? { ...project, repo: { ...project.repo, branch } } : project;
+export function handwrittenFiles(
+  host: Host,
+  onBranch: string[],
+  facts: Pick<HostFacts, 'existingFile' | 'lastWritten'>
+): string[] {
+  const own = host === 'github' ? WORKFLOW_NAME : PIPELINE_FILE.bitbucket;
+  const asWritten = facts.lastWritten !== null && facts.existingFile === facts.lastWritten;
+  return onBranch.filter((name) => !(name === own && asWritten));
 }
 
 // ——— the page ———
 
 export async function builderPage(
   caller: Caller,
-  following: CodeRepoProject
+  project: CodeRepoProject,
+  environment: string
 ): Promise<BuilderPage> {
-  const project = await withBranch(caller, following);
   const host = hostOf(project.repo.provider) ?? 'bitbucket';
-  const saved = await getDataStore().ciPipelines.get(project.id);
+  const { branch } = project.repo;
+  const saved = await getDataStore().ciPipelines.get(project.id, branch);
   const read = saved && saved.host === host ? readPipelineSpec(saved.spec) : null;
   const savedSpec = read?.ok ? read.value : null;
   const [blocks, targets, hostRead] = await Promise.all([
@@ -314,7 +344,8 @@ export async function builderPage(
   return {
     host,
     file: PIPELINE_FILE[host],
-    spec: savedSpec ?? suggestion.spec,
+    environment,
+    spec: specForBranch(savedSpec ?? suggestion.spec, environment, branch),
     suggested: savedSpec === null,
     found: suggestion.found,
     blocks,
@@ -323,6 +354,7 @@ export async function builderPage(
     unread: hostRead.unread,
     pullRequestUrl: saved?.pullRequestUrl ?? null,
     report: reportTo(caller.origin),
+    handwritten: handwrittenFiles(host, hostRead.pipelineFiles, hostRead.facts),
   };
 }
 
@@ -332,7 +364,11 @@ export async function savePipeline(
   subject: string
 ): Promise<void> {
   const host = hostOf(project.repo.provider) ?? 'bitbucket';
-  await getDataStore().ciPipelines.save(project.id, { host, spec, updatedBy: subject });
+  await getDataStore().ciPipelines.save(project.id, project.repo.branch, {
+    host,
+    spec,
+    updatedBy: subject,
+  });
   // GitHub's tokens name the repository as owner/name; Bitbucket's by a UUID
   // only Bitbucket knows, read when the pull request opens (openBitbucket).
   if (host === 'github') {
@@ -347,8 +383,7 @@ export function pullRequestText(
   spec: PipelineSpec,
   blockName: (key: string) => string,
   host: Host,
-  replaces: boolean,
-  created: { branches: string[]; from: string } = { branches: [], from: '' }
+  replaces: boolean
 ): { title: string; description: string } {
   const row = (steps: PipelineSpec['checks']) =>
     steps.length > 0
@@ -362,13 +397,7 @@ export function pullRequestText(
       (e) => `- **${e.name}**, on merge to \`${e.branch}\`: ${row(e.steps)}`
     ),
     '',
-    `Once merged, ${HOST_LABEL[host]} runs it: merging to an environment’s branch deploys that environment.`,
-    ...(created.branches.length > 0
-      ? [
-          '',
-          `${created.branches.map((b) => `\`${b}\``).join(', ')} did not exist, so Renkei made ${created.branches.length === 1 ? 'it' : 'them'} from \`${created.from}\`. ${created.branches.length === 1 ? 'It gets' : 'They get'} this pipeline once it is merged into \`${created.from}\` and promoted.`,
-        ]
-      : []),
+    `Once merged, ${HOST_LABEL[host]} runs it: the file lives on this branch, so a merge to it is what deploys.`,
   ];
   return {
     title: `${replaces ? 'Update' : 'Add'} the pipeline built from blocks`,
@@ -377,68 +406,8 @@ export function pullRequestText(
 }
 
 export type OpenOutcome =
-  | {
-      ok: true;
-      url: string;
-      branch: string;
-      updated: boolean;
-      text: string;
-      /** Environment branches the host lacked, made from the project's branch. */
-      created?: string[];
-    }
+  | { ok: true; url: string; branch: string; updated: boolean; text: string }
   | { ok: false; status: number; error: string; problems?: string[] };
-
-/**
- * Make each environment branch the host does not have, from `sha` (the
- * project's branch head): a pipeline that deploys `dev` from `develop`
- * should not wait on someone to create `develop`. What is made, and the
- * first refusal, in the host's words; nothing else is tried after one.
- */
-export async function createMissingBranches(
-  caller: Caller,
-  project: CodeRepoProject,
-  spec: PipelineSpec,
-  existing: string[],
-  sha: string
-): Promise<{ created: string[]; error: string | null }> {
-  const host = hostOf(project.repo.provider);
-  const missing = [
-    ...new Set(spec.environments.map((e) => e.branch).filter((b) => !existing.includes(b))),
-  ];
-  const created: string[] = [];
-  for (const branch of missing) {
-    if (host === 'github') {
-      const target = ownerRepoOf(project.repo.fullName);
-      if (!target) return { created, error: 'The repository name is not usable.' };
-      const made = await ghJson(
-        githubAuthOf(caller),
-        ['repository:write'],
-        `/repos/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}/git/refs`,
-        { method: 'POST', json: { ref: `refs/heads/${branch}`, sha } }
-      );
-      if (!made.ok) return { created, error: `GitHub refused the branch ${branch}: ${made.error}` };
-    } else if (host === 'bitbucket') {
-      const base = repoBase(project.repo.fullName);
-      if (!base) return { created, error: 'The repository name is not usable.' };
-      const made = await bitbucketAuthOf(caller).fetch(
-        ['repository:write'],
-        `${base}/refs/branches`,
-        {
-          method: 'POST',
-          json: { name: branch, target: { hash: sha } },
-        }
-      );
-      if (!made.ok) {
-        return {
-          created,
-          error: `Bitbucket refused the branch ${branch}: ${await describeBitbucketFailure(made)}`,
-        };
-      }
-    }
-    created.push(branch);
-  }
-  return { created, error: null };
-}
 
 /** A branch name not taken yet: renkei/pipeline, else with the minute it was made. */
 export function freshBranch(taken: string[], now: Date): string {
@@ -597,19 +566,19 @@ async function openGithub(write: HostWrite): Promise<OpenOutcome> {
 }
 
 /**
- * Save the pipeline, render it, and put the file in a pull request against
- * the project's branch — a new one, or a commit on the builder's own while
- * it is open. Nothing is written when the file cannot be rendered.
+ * Save the branch's pipeline, render it, and put the file in a pull
+ * request against the branch — a new one, or a commit on the builder's own
+ * while it is open. Nothing is written when the file cannot be rendered.
  */
 export async function openPipelinePullRequest(
   caller: Caller,
-  following: CodeRepoProject,
+  project: CodeRepoProject,
   spec: PipelineSpec,
   now: Date
 ): Promise<OpenOutcome> {
-  const project = await withBranch(caller, following);
   const host = hostOf(project.repo.provider);
   if (!host) return { ok: false, status: 409, error: 'The repository is on neither host.' };
+  const base = project.repo.branch;
   const [blocks, targets] = await Promise.all([builderBlocks(spec), builderTargets()]);
   const rendered = renderPipeline(spec, {
     host,
@@ -626,9 +595,8 @@ export async function openPipelinePullRequest(
     };
   }
   await savePipeline(project, spec, caller.subject);
-  const saved = await getDataStore().ciPipelines.get(project.id);
+  const saved = await getDataStore().ciPipelines.get(project.id, base);
   const read = await readHost(host, caller, project, saved?.writtenText ?? null);
-  const base = project.repo.branch;
   const baseSha = read.branches.find((b) => b.name === base)?.headSha ?? '';
   if (!baseSha) {
     return {
@@ -637,27 +605,9 @@ export async function openPipelinePullRequest(
       error: `${HOST_LABEL[host]} did not list the branch ${base}, so there is nothing to open the pull request against.`,
     };
   }
-  // The environments' branches the host lacks are made from the project's branch.
-  const made = await createMissingBranches(
-    caller,
-    project,
-    spec,
-    read.branches.map((b) => b.name),
-    baseSha
-  );
-  if (made.error) {
-    return {
-      ok: false,
-      status: 502,
-      error: `${made.error}${made.created.length > 0 ? ` (made ${made.created.join(', ')} first)` : ''}; no pull request was opened.`,
-    };
-  }
   const nameOf = (key: string) =>
     spec.blocks?.find((b) => b.key === key)?.name ?? blocks.find((b) => b.key === key)?.name ?? key;
-  const text = pullRequestText(spec, nameOf, host, read.facts.existingFile !== null, {
-    branches: made.created,
-    from: base,
-  });
+  const text = pullRequestText(spec, nameOf, host, read.facts.existingFile !== null);
   const write: HostWrite = {
     caller,
     project,
@@ -672,11 +622,10 @@ export async function openPipelinePullRequest(
   };
   const outcome = host === 'github' ? await openGithub(write) : await openBitbucket(write);
   if (outcome.ok) {
-    await getDataStore().ciPipelines.markWritten(project.id, {
+    await getDataStore().ciPipelines.markWritten(project.id, base, {
       text: outcome.text,
       pullRequestUrl: outcome.url,
     });
-    return { ...outcome, created: made.created };
   }
   return outcome;
 }

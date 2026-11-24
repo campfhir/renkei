@@ -1,14 +1,16 @@
 /**
- * Fabric workspaces through CI: the code project's pipeline gets the
- * "Fabric: check items" block among its checks and a "Fabric: deploy
- * items to a workspace" step in each environment, whose inputs name the
- * environment's workspace (made if it does not exist, or an existing one
- * renamed to it) and capacity. The pipeline builder's own pull request
- * carries the change (openPipelinePullRequest); merging it, then merging
- * to an environment's branch, is what creates or changes the workspace.
+ * Fabric workspaces through CI: the pipeline on each environment's branch
+ * gets the "Fabric: check items" block among its checks and a "Fabric:
+ * deploy items to a workspace" step for that environment, whose inputs
+ * name its workspace (made if it does not exist, or an existing one
+ * renamed to it) and capacity. A pipeline file lives on its branch, so
+ * each branch gets the pipeline builder's own pull request
+ * (openPipelinePullRequest); merging it is what creates or changes the
+ * workspace on the next merge to that branch.
  *
- * Pure planning (`planFabricPipeline`) is apart from the call that writes,
- * so what a preview shows is exactly what the confirm sends.
+ * Planning (`planFabricPipeline` for one pipeline, `planFabricPipelines`
+ * for the project's branches) is apart from the call that writes, so what
+ * a preview shows is what the confirm sends.
  */
 
 import { getDataStore } from '@renkei/db';
@@ -18,7 +20,19 @@ import {
   type PipelineSpec,
   type PipelineStep,
 } from '@renkei/ci-blocks';
-import { openPipelinePullRequest, type OpenOutcome } from '@/lib/ci/pipeline-builder';
+import {
+  environmentProblems,
+  withBranch,
+  withEnvironment,
+  type ProjectEnvironment,
+} from '@/lib/ci/environment-rules';
+import { projectEnvironments, saveEnvironments } from '@/lib/ci/environments';
+import {
+  onBranch,
+  openPipelinePullRequest,
+  specForBranch,
+  type OpenOutcome,
+} from '@/lib/ci/pipeline-builder';
 import type { Caller, RepoProject } from './repo';
 
 export const VALIDATE_BLOCK = 'fabric-validate';
@@ -143,19 +157,114 @@ export async function fabricBlockVersions(): Promise<
   return { validate: validate.latestVersion, deploy: deploy.latestVersion };
 }
 
-/** The project's saved pipeline spec, or null before one is saved. */
-export async function savedSpec(repo: RepoProject): Promise<PipelineSpec | null> {
-  const saved = await getDataStore().ciPipelines.get(repo.project.id);
-  const read = saved ? readPipelineSpec(saved.spec) : null;
-  return read?.ok ? read.value : null;
+/** One branch's pipeline with Fabric's blocks in it, for the environment the branch deploys. */
+export interface FabricBranchPlan {
+  environment: string;
+  branch: string;
+  spec: PipelineSpec;
 }
 
-/** Save the planned spec and open (or add to) the pipeline builder's pull request. */
-export function writeFabricPipeline(
+export interface FabricPipelinePlans {
+  branches: FabricBranchPlan[];
+  /** The project's environments as they will be: a branch newly assigned, an environment added. */
+  environments: ProjectEnvironment[];
+  /** One line per change, for the card. */
+  changes: string[];
+}
+
+/**
+ * A pipeline file lives on a branch, so Fabric is set up branch by branch:
+ * each named environment's branch — the one given, else the first assigned
+ * to it — gets the check among its pipeline's checks and the deploy step
+ * for that environment's workspace. An environment the project does not
+ * have, or a branch not assigned to it yet, is added to the project's
+ * environments. A string says why it cannot be.
+ */
+export async function planFabricPipelines(
+  repo: RepoProject,
+  environments: FabricEnvironment[],
+  blocks: { validate: number; deploy: number },
+  itemsDirectory: string
+): Promise<FabricPipelinePlans | string> {
+  if (environments.length === 0) return 'Name at least one environment and its workspace.';
+  let list = await projectEnvironments(repo.project.id);
+  const changes: string[] = [];
+  const branches: FabricBranchPlan[] = [];
+  for (const env of environments) {
+    let found = list.find((e) => e.name.toLowerCase() === env.name.toLowerCase());
+    const branch = env.branch?.trim() || found?.branches[0];
+    if (!branch) {
+      return found
+        ? `The project’s environment “${found.name}” has no branch assigned; give the branch whose merges deploy it.`
+        : `The project has no environment “${env.name}”; give the branch whose merges deploy it.`;
+    }
+    if (!found) {
+      list = withEnvironment(list, env.name);
+      found = list[list.length - 1]!;
+      changes.push(`New environment “${found.name}”.`);
+    }
+    if (!found.branches.includes(branch)) {
+      list = withBranch(list, found.name, branch);
+      changes.push(`${branch} is assigned to ${found.name}: merges to it deploy ${found.name}.`);
+    }
+    const saved = await getDataStore().ciPipelines.get(repo.project.id, branch);
+    const read = saved ? readPipelineSpec(saved.spec) : null;
+    const current = specForBranch(
+      read?.ok ? read.value : { checks: [], environments: [] },
+      found.name,
+      branch
+    );
+    const plan = planFabricPipeline(
+      current,
+      [{ ...env, name: found.name, branch }],
+      blocks,
+      itemsDirectory
+    );
+    if (typeof plan === 'string') return plan;
+    branches.push({ environment: found.name, branch, spec: plan.spec });
+    changes.push(...plan.changes.map((line) => line.replace(/^Checks:/, `${branch}:`)));
+  }
+  const problems = environmentProblems(list);
+  if (problems.length > 0) return problems.join(' ');
+  return { branches, environments: list, changes };
+}
+
+export type FabricWriteOutcome =
+  | { ok: true; opened: { branch: string; url: string; updated: boolean }[] }
+  | {
+      ok: false;
+      error: string;
+      problems?: string[];
+      /** Pull requests opened before the one that failed. */
+      opened: { branch: string; url: string; updated: boolean }[];
+    };
+
+/** Save the environments as planned, then open (or add to) each branch's pipeline pull request. */
+export async function writeFabricPipelines(
   caller: Caller,
   repo: RepoProject,
-  plan: FabricPipelinePlan,
+  plans: FabricPipelinePlans,
   now: Date
-): Promise<OpenOutcome> {
-  return openPipelinePullRequest(caller, repo.project, plan.spec, now);
+): Promise<FabricWriteOutcome> {
+  const saved = await saveEnvironments(repo.host, caller, repo.project, plans.environments);
+  if (!saved.ok) return { ok: false, error: saved.problems.join(' '), opened: [] };
+  const opened: { branch: string; url: string; updated: boolean }[] = [];
+  for (const plan of plans.branches) {
+    const outcome: OpenOutcome = await openPipelinePullRequest(
+      caller,
+      onBranch(repo.project, plan.branch),
+      plan.spec,
+      now
+    );
+    if (!outcome.ok) {
+      return {
+        ok: false,
+        error: `${plan.branch}: ${outcome.error}`,
+        ...(outcome.problems ? { problems: outcome.problems } : {}),
+        opened,
+      };
+    }
+    opened.push({ branch: plan.branch, url: outcome.url, updated: outcome.updated });
+  }
+  return { ok: true, opened };
 }

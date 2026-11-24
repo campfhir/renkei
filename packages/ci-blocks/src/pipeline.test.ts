@@ -273,10 +273,14 @@ describe('before it runs', () => {
       ['fail', 'DEPLOY_NOTIFY_URL is not set for dev.', 'variables'],
       [
         'fail',
-        'Bitbucket has no deployment environment named dev: add it in the repository’s Deployments settings, or use one it has (Production).',
+        'Bitbucket has no deployment environment named dev yet (it has Production): make it from the Variables tab, or in the repository’s Deployments settings.',
         null,
       ],
-      ['warn', 'develop does not exist yet: the pull request makes it from main, and dev deploys once this pipeline reaches it.', null],
+      [
+        'warn',
+        'The repository has no branch develop: push it, or assign dev a branch it has, on the Environments page.',
+        null,
+      ],
     ]);
   });
 

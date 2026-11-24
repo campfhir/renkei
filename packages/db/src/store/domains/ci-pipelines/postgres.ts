@@ -5,19 +5,21 @@ import type { CiPipelineStore } from './types';
 
 export function postgresCiPipelines(db: () => Kysely<DB>): CiPipelineStore {
   return {
-    async get(projectId) {
+    async get(projectId, branch) {
       const row = await db()
         .selectFrom('ci_pipelines')
         .selectAll()
         .where('project_id', '=', projectId)
+        .where('branch', '=', branch)
         .executeTakeFirst();
       return row ? ciPipelineFromRow(row) : null;
     },
-    async list() {
+    async listForProject(projectId) {
       const rows = await db()
         .selectFrom('ci_pipelines')
         .selectAll()
-        .orderBy('project_id')
+        .where('project_id', '=', projectId)
+        .orderBy('branch')
         .execute();
       return rows.map(ciPipelineFromRow);
     },
@@ -29,6 +31,7 @@ export function postgresCiPipelines(db: () => Kysely<DB>): CiPipelineStore {
         .where('repo_key', '=', repoKey)
         .orderBy('updated_at', 'desc')
         .orderBy('project_id')
+        .orderBy('branch')
         .execute();
       return rows.map(ciPipelineFromRow);
     },
@@ -40,13 +43,19 @@ export function postgresCiPipelines(db: () => Kysely<DB>): CiPipelineStore {
         .executeTakeFirst();
       return Number(result.numUpdatedRows ?? 0) > 0;
     },
-    async save(projectId, input) {
+    async save(projectId, branch, input) {
       const spec = JSON.stringify(input.spec ?? null);
       await db()
         .insertInto('ci_pipelines')
-        .values({ project_id: projectId, host: input.host, spec, updated_by: input.updatedBy })
+        .values({
+          project_id: projectId,
+          branch,
+          host: input.host,
+          spec,
+          updated_by: input.updatedBy,
+        })
         .onConflict((oc) =>
-          oc.column('project_id').doUpdateSet({
+          oc.columns(['project_id', 'branch']).doUpdateSet({
             host: input.host,
             spec,
             updated_by: input.updatedBy,
@@ -55,7 +64,7 @@ export function postgresCiPipelines(db: () => Kysely<DB>): CiPipelineStore {
         )
         .execute();
     },
-    async markWritten(projectId, input) {
+    async markWritten(projectId, branch, input) {
       const result = await db()
         .updateTable('ci_pipelines')
         .set({
@@ -64,6 +73,7 @@ export function postgresCiPipelines(db: () => Kysely<DB>): CiPipelineStore {
           pull_request_url: input.pullRequestUrl,
         })
         .where('project_id', '=', projectId)
+        .where('branch', '=', branch)
         .executeTakeFirst();
       return Number(result.numUpdatedRows ?? 0) > 0;
     },

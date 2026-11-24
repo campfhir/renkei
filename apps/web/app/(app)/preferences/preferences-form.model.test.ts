@@ -301,6 +301,39 @@ describe('each card saves on its own', () => {
     });
   });
 
+  it('deployments start on for what needs someone: a failed deploy, a failed, stopped or unhealthy application', () => {
+    const { prefs } = run([]);
+    expect(
+      [prefs.deploymentFailed, prefs.appFailed, prefs.appStopped, prefs.appUnhealthy].map(
+        (delivery) => delivery.app
+      )
+    ).toEqual([true, true, true, true]);
+    expect(
+      [prefs.deploymentSucceeded, prefs.appLate, prefs.appRecovered].map((delivery) => delivery.app)
+    ).toEqual([false, false, false]);
+  });
+
+  it('a deployment setting saves with the Deployments card, and only that card', () => {
+    const state = run([
+      { type: 'deliveryChannel', event: 'appLate', channel: 'app', on: true },
+      { type: 'deliveryChannel', event: 'deploymentFailed', channel: 'email', on: true },
+    ]);
+    expect(groupDirty(state, 'deployments')).toBe(true);
+    expect(groupDirty(state, 'batch')).toBe(false);
+    const sent = groupSaveRequest(state, 'deployments').notifications;
+    expect(sent.appLate).toEqual({ app: true, email: false, webex: false });
+    expect(sent.deploymentFailed).toEqual({ app: true, email: true, webex: false });
+    expect(Object.keys(sent).sort()).toEqual([
+      'appFailed',
+      'appLate',
+      'appRecovered',
+      'appStopped',
+      'appUnhealthy',
+      'deploymentFailed',
+      'deploymentSucceeded',
+    ]);
+  });
+
   it('sends the same patch however often it is pressed', () => {
     const state = run([{ type: 'toastsEnabled', on: false }]);
     const sent = groupSaveRequest(state, 'popups');

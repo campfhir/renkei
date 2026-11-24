@@ -93,6 +93,8 @@ export async function bitbucketRequest(
     json?: unknown;
     form?: URLSearchParams;
     accept?: string;
+    /** The body carries a variable's value: a failure is logged without it. */
+    withholdBody?: boolean;
   }
 ): Promise<{ ok: true; response: Response } | { ok: false; error: string }> {
   const jsonBody = init?.json !== undefined ? JSON.stringify(init.json) : undefined;
@@ -159,8 +161,18 @@ export async function bitbucketRequest(
       // credential-less requests with an anonymous 404 that reads like a
       // wrong URL, and this is the field that tells them apart.
       grantKey: access.auth.grantKey,
-      requestBody: jsonBody === undefined ? undefined : secure(truncateForLog(jsonBody)),
-      responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
+      // A call that carries a variable's value says so: neither it nor the
+      // host's answer to it (which may quote it) is written down, wrapped or not.
+      requestBody: init?.withholdBody
+        ? 'withheld: it carries a variable’s value'
+        : jsonBody === undefined
+          ? undefined
+          : secure(truncateForLog(jsonBody)),
+      responseBody: init?.withholdBody
+        ? 'withheld: it carries a variable’s value'
+        : responseBody
+          ? secure(truncateForLog(responseBody))
+          : undefined,
     });
   }
   return { ok: true, response };
@@ -213,7 +225,7 @@ export async function bbJson(
   auth: BitbucketAuth,
   requiredScopes: readonly string[],
   pathAndQuery: string,
-  init?: { method?: string; json?: unknown; form?: URLSearchParams }
+  init?: { method?: string; json?: unknown; form?: URLSearchParams; withholdBody?: boolean }
 ): Promise<{ ok: true; body: Record<string, unknown> } | { ok: false; error: string }> {
   const response = await auth.fetch(requiredScopes, pathAndQuery, init);
   if (!response.ok) return { ok: false, error: await describeBitbucketFailure(response) };
