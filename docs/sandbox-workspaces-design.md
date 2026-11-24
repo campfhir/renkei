@@ -378,8 +378,10 @@ project's pipelines hang from its branches, on its **Environments** page
   failed deployment and an application that failed, stopped or reports a
   problem are on by default; a successful deployment, an overdue
   check-in and a recovery are off), and wakes their agents that listen
-  (the trigger catalog's `deployments/*` events, with filters on status
-  or state, environment and project). A chat or an agent reads how the
+  (the trigger catalog's `deployments/*` events; a trigger ticks which
+  statuses or states wake it — and, for health, which state it left — and
+  can keep to an environment and a project by name, all checked before a
+  run is started, so a change it does not care about costs nothing). A chat or an agent reads how the
   projects stand with `deployments_status` and `deployments_history`
   (`apps/web/lib/mcp-tools/deployments`): read-only, Renkei's own rows,
   registered only for someone with a code host connection. A change

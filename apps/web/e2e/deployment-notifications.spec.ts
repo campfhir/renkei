@@ -30,6 +30,7 @@ import {
   prepareCodeHost,
 } from './support/code-host';
 import { createAgent } from './support/agents';
+import { createPerson, signIn } from './support/person';
 import { addStubModel } from './support/stub-model';
 
 test.use({ roles: ['renkei-user', 'renkei-operator'] });
@@ -50,6 +51,7 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
 
 test('deployment notifications: the settings, a failing application in the feed, and the agent it wakes', async ({
   page,
+  browser,
   request,
   person: _person,
 }, testInfo) => {
@@ -59,14 +61,21 @@ test('deployment notifications: the settings, a failing application in the feed,
   const projectName = `Health alerts (${tag})`;
   let modelId: string | null = null;
 
-  // Without a code host connected, Preferences has nothing about deployments.
-  await page.goto('/preferences');
-  const main = page.getByRole('main');
-  await expect(main.getByRole('heading', { name: 'Batch jobs' })).toBeVisible({ timeout: 30_000 });
-  await expect(main.getByRole('region', { name: 'Deployments' })).toHaveCount(0);
-  // The page reads this browser's notification switch once mounted; let it finish.
-  await page.waitForLoadState('networkidle');
+  // Someone without a code host connected has nothing about deployments in Preferences.
+  const other = await createPerson(request, { displayName: `No code host ${tag}` });
+  const otherContext = await browser.newContext({ reducedMotion: 'reduce' });
+  await signIn(otherContext, other);
+  const otherPage = await otherContext.newPage();
+  await otherPage.goto('/preferences');
+  await expect(
+    otherPage.getByRole('main').getByRole('heading', { name: 'Batch jobs' })
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    otherPage.getByRole('main').getByRole('region', { name: 'Deployments' })
+  ).toHaveCount(0);
+  await otherContext.close();
 
+  const main = page.getByRole('main');
   await prepareCodeHost(request);
   await connectBitbucket(page);
   try {
@@ -93,6 +102,37 @@ test('deployment notifications: the settings, a failing application in the feed,
         },
       ],
     });
+
+    // The trigger says which changes are worth waking for: it was made for
+    // an error alone, and the builder adds failed and stopped beside it.
+    await page.goto(`/agents/${agentId}/edit`);
+    await page
+      .getByRole('button', { name: /A deployed application’s health changes/ })
+      .filter({ visible: true })
+      .first()
+      .click();
+    const filters = page.getByRole('group', { name: 'Only when the application is' });
+    await expect(filters.getByLabel('Error')).toBeChecked({ timeout: 30_000 });
+    await expect(filters.getByLabel('Healthy')).not.toBeChecked();
+    await filters.getByLabel('Failed').check();
+    await filters.getByLabel('Stopped').check();
+    await expect(
+      page.getByText('when the application is failed, stopped or reporting an error').first()
+    ).toBeVisible();
+    await filters.scrollIntoViewIfNeeded();
+    await shot(page, testInfo, 'deployment-notifications-00-trigger-filters');
+    const agentSaved = page.waitForRequest(
+      (r) => r.url().endsWith(`/api/agents/${agentId}`) && r.method() !== 'GET'
+    );
+    await page.getByRole('button', { name: 'Update', exact: true }).click();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    expect((await agentSaved).postDataJSON().triggers[0].draft).toMatchObject({
+      kind: 'event',
+      eventId: 'deployments/health.changed',
+      match: { states: ['failed', 'stopped', 'error'] },
+    });
+    // Saving writes a fresh summary first, then lands on the agent's page.
+    await expect(page).toHaveURL(new RegExp(`/agents/${agentId}(\\?.*)?$`), { timeout: 60_000 });
 
     // Connected: the card is there, failures on, the quiet ones off.
     await page.goto('/preferences');
@@ -167,13 +207,16 @@ test('deployment notifications: the settings, a failing application in the feed,
     await expect(page.getByRole('main').getByText('Deployments').first()).toBeVisible();
     await shot(page, testInfo, 'deployment-notifications-02-feed');
 
-    // The agent that listens for an error was woken by it, once, and ran to the end.
+    // The agent was woken by the error — and by nothing else: the two
+    // healthy check-ins, which its filter turns away, started no run.
     await expect(async () => {
       await page.goto(`/agents/${agentId}`);
       await expect(page.getByText('Succeeded', { exact: true }).first()).toBeVisible({
         timeout: 3_000,
       });
     }).toPass({ timeout: 60_000 });
+    const recent = page.locator('details', { hasText: 'Recent runs' }).filter({ visible: true });
+    await expect(recent.getByText(/^(Succeeded|Queued|Running|Failed)$/)).toHaveCount(1);
     await shot(page, testInfo, 'deployment-notifications-03-agent-run');
 
     // The notification opens the environment it is about.
