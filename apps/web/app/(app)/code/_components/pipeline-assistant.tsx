@@ -21,6 +21,7 @@ import type { PipelineSpec } from '@renkei/ci-blocks';
 import {
   MAX_QUESTION_CHARS,
   canAsk,
+  fileCard,
   proposalCard,
   type AssistantAction,
   type AssistantMessage,
@@ -39,6 +40,7 @@ export default function PipelineAssistant({
   spec,
   blockName,
   operator,
+  file = null,
   onAsk,
   onApply,
   onSaveBlock,
@@ -49,6 +51,8 @@ export default function PipelineAssistant({
   spec: PipelineSpec | null;
   blockName: (key: string) => string;
   operator: boolean;
+  /** The pipeline file written by hand that the conversation is about, when the tab is on one. */
+  file?: string | null;
   onAsk: (text: string) => void;
   onApply: (message: AssistantMessage) => void;
   onSaveBlock: (message: AssistantMessage) => void;
@@ -65,7 +69,7 @@ export default function PipelineAssistant({
     <div className="flex h-full flex-col gap-3 p-3">
       <div className="flex items-baseline gap-2">
         <p className="text-xs font-semibold text-gray-600 dark:text-gray-400">
-          Tailor the pipeline to this repository
+          {file ? `Change ${file}` : 'Tailor the pipeline to this repository'}
         </p>
         {count > 0 ? (
           <button
@@ -80,12 +84,22 @@ export default function PipelineAssistant({
       </div>
       {count === 0 ? (
         <p className="min-h-0 flex-1 overflow-y-auto text-xs text-gray-500">
-          It reads this repository’s source and fits the blocks to it, writing blocks of this
-          project’s own where the organization’s don’t fit.
-          {operator
-            ? ' As an operator, you can also have it turn one into a building block every project can use.'
-            : ''}{' '}
-          You review what it proposes before it reaches the builder.
+          {file ? (
+            <>
+              It reads this repository’s source and edits {file} as it is, in the host’s own syntax.
+              What it proposes goes into the editor for you to look over; nothing is committed until
+              you commit it.
+            </>
+          ) : (
+            <>
+              It reads this repository’s source and fits the blocks to it, writing blocks of this
+              project’s own where the organization’s don’t fit.
+              {operator
+                ? ' As an operator, you can also have it turn one into a building block every project can use.'
+                : ''}{' '}
+              You review what it proposes before it reaches the builder.
+            </>
+          )}
         </p>
       ) : null}
 
@@ -149,7 +163,11 @@ export default function PipelineAssistant({
           rows={3}
           value={state.draft}
           maxLength={MAX_QUESTION_CHARS}
-          placeholder="e.g. Build and test it the way the repository does, and deploy to our servers"
+          placeholder={
+            file
+              ? 'e.g. Cache the dependencies, and run the tests before the deploy'
+              : 'e.g. Build and test it the way the repository does, and deploy to our servers'
+          }
           onChange={(e) => dispatch({ type: 'draft', text: e.target.value })}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && canAsk(state)) {
@@ -183,6 +201,7 @@ function Answer({
   onSaveBlock: (message: AssistantMessage) => void;
 }) {
   const card = proposalCard(state, message, spec, blockName);
+  const edited = fileCard(state, message);
   const block = message.buildingBlock;
   const savedId = state.saved[message.id];
   const blockError = state.blockErrors[message.id];
@@ -202,6 +221,27 @@ function Answer({
         </details>
       ) : null}
 
+      {edited ? (
+        <div
+          role="group"
+          aria-label="Proposed file"
+          className="space-y-2 rounded-md border border-blue-200 bg-blue-50/50 p-3 dark:border-blue-900 dark:bg-blue-950/40"
+        >
+          <p className="text-xs font-semibold">
+            Proposed <span className="font-mono">{edited.name}</span>{' '}
+            <span className="font-normal text-gray-500">({edited.size})</span>
+          </p>
+          <p className="text-xs">{edited.summary}</p>
+          <button
+            type="button"
+            disabled={edited.applied}
+            onClick={() => onApply(message)}
+            className={`${secondaryButtonClass} w-full disabled:opacity-60`}
+          >
+            {edited.applied ? 'In the editor' : 'Put it in the editor'}
+          </button>
+        </div>
+      ) : null}
       {card ? (
         <div
           role="group"

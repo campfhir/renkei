@@ -793,6 +793,14 @@ export interface CiPipelines {
   written_text: string | null;
 }
 
+export interface CiRepoKeys {
+  created_at: Generated<Timestamp>;
+  host: string;
+  project_id: string;
+  repo_key: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface CiTargets {
   created_at: Generated<Timestamp>;
   created_by: string | null;
@@ -1924,6 +1932,7 @@ export interface DB {
   ci_deployments: CiDeployments;
   ci_environments: CiEnvironments;
   ci_pipelines: CiPipelines;
+  ci_repo_keys: CiRepoKeys;
   ci_targets: CiTargets;
   coach_mark_progress: CoachMarkProgress;
   code_language_gaps: CodeLanguageGaps;

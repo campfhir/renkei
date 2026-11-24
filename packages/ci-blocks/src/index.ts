@@ -70,4 +70,10 @@ export {
   type ProjectBlock,
   type Suggestion,
 } from './pipeline';
-export { REPORT_PATH, reportCommand, type ReportStatus, type ReportTo } from './report';
+export {
+  REPORT_PATH,
+  reportCommand,
+  reportSnippet,
+  type ReportStatus,
+  type ReportTo,
+} from './report';

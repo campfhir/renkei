@@ -6,6 +6,7 @@ import { parse } from 'yaml';
 import {
   renderPipeline,
   reportCommand,
+  reportSnippet,
   type BlockDefinition,
   type PipelineContext,
   type PipelineSpec,
@@ -181,5 +182,40 @@ describe('every deploy reports to Renkei', () => {
       stdio: ['ignore', 'pipe', 'ignore'],
     }).toString();
     expect(out).toContain('still-deploying');
+  });
+});
+
+describe('the report for a pipeline written by hand', () => {
+  it('Bitbucket: a step that asks for a token, says it started, and says how it went whatever came of it', () => {
+    const parsed = parse(reportSnippet('bitbucket', to, 'dev'));
+    const step = parsed[0].step;
+    expect(step.deployment).toBe('dev');
+    expect(step.oidc).toBe(true);
+    expect(step.script[0]).toContain('\\"environment\\":\\"dev\\",\\"status\\":\\"started\\"');
+    expect(step.script[0]).toContain('$BITBUCKET_STEP_OIDC_TOKEN');
+    expect(step.script[1]).toBe('echo "your deploy commands go here"');
+    expect(step['after-script'][0]).toContain('$BITBUCKET_EXIT_CODE');
+    expect(step['after-script'][0]).toContain('\\"status\\":\\"$renkei_status\\"');
+  });
+
+  it('GitHub: a job allowed an id token, with a report before the deploy and one that always runs after', () => {
+    const job = parse(reportSnippet('github', to, 'production')).deploy;
+    expect(job.environment).toBe('production');
+    expect(job.permissions).toEqual({ contents: 'read', 'id-token': 'write' });
+    expect(job.steps.map((s: { name: string }) => s.name)).toEqual([
+      'Tell Renkei the deploy started',
+      'Deploy',
+      'Tell Renkei how the deploy went',
+    ]);
+    expect(job.steps[0].run).toContain('audience=https%3A%2F%2Frenkei.example.com');
+    expect(job.steps[2].if).toBe('always()');
+    expect(job.steps[2].env).toEqual({ RENKEI_JOB_STATUS: '${{ job.status }}' });
+    expect(job.steps[2].run).toContain('\\"status\\":\\"$renkei_status\\"');
+  });
+
+  it('carries no secret: the host signs it', () => {
+    for (const host of ['bitbucket', 'github'] as const) {
+      expect(reportSnippet(host, to, 'dev')).not.toMatch(/secret|password|api[_-]?key/i);
+    }
   });
 });

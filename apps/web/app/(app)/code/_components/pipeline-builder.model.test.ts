@@ -5,10 +5,12 @@ import {
   canOpenPullRequest,
   canSave,
   checks,
+  existingFiles,
   fileStatus,
   fileText,
   initialBuilder,
   isDirty,
+  opensOnExisting,
   ownBlocks,
   partCards,
   pullRequestNote,
@@ -603,5 +605,69 @@ describe('the assistant’s pipeline, with blocks of the project’s own', () =>
       target: 'onprem-workers',
     });
     expect(ownBlocks(again)[0].usedIn).toEqual(['production']);
+  });
+});
+
+describe('a branch whose pipeline was written elsewhere', () => {
+  const handwritten: BuilderData = { ...data, handwritten: ['ci.yml', 'deploy.yml'] };
+
+  it('opens on that file, not on a suggestion one pull request from replacing it', () => {
+    expect(opensOnExisting(handwritten)).toBe(true);
+    const opened = run([{ type: 'loaded', data: handwritten }]);
+    expect(opened.mode).toBe('existing');
+    expect(existingFiles(opened)).toEqual(['ci.yml', 'deploy.yml']);
+  });
+
+  it('opens on the builder once a pipeline is saved for the branch here', () => {
+    const saved: BuilderData = { ...handwritten, suggested: false };
+    expect(opensOnExisting(saved)).toBe(false);
+    const opened = run([{ type: 'loaded', data: saved }]);
+    expect(opened.mode).toBe('builder');
+    // The files are still named, for the way back to them.
+    expect(existingFiles(opened)).toEqual(['ci.yml', 'deploy.yml']);
+  });
+
+  it('a branch with no pipeline of its own opens on the builder', () => {
+    expect(initialBuilder.mode).toBeNull();
+    expect(opensOnExisting(data)).toBe(false);
+    expect(opensOnExisting({ ...data, handwritten: [] })).toBe(false);
+    expect(loaded.mode).toBe('builder');
+    expect(existingFiles(loaded)).toEqual([]);
+    expect(existingFiles(initialBuilder)).toEqual([]);
+  });
+
+  it('building from blocks is asked for, and the file is a step back', () => {
+    const opened = run([{ type: 'loaded', data: handwritten }]);
+    const building = run([{ type: 'mode', mode: 'builder' }], opened);
+    expect(building.mode).toBe('builder');
+    // The suggestion is there to work on; nothing was saved or sent by looking.
+    expect(building.spec).toEqual(handwritten.spec);
+    expect(building.saved).toBeNull();
+    expect(run([{ type: 'mode', mode: 'existing' }], building).mode).toBe('existing');
+  });
+
+  it('a later read does not move the person from where they chose to be', () => {
+    const building = run([
+      { type: 'loaded', data: handwritten },
+      { type: 'mode', mode: 'builder' },
+    ]);
+    expect(run([{ type: 'loaded', data: handwritten }], building).mode).toBe('builder');
+    // Nor does one that comes back saved move someone looking at the file.
+    const onFile = run([{ type: 'loaded', data: handwritten }]);
+    expect(run([{ type: 'loaded', data: { ...handwritten, suggested: false } }], onFile).mode).toBe(
+      'existing'
+    );
+  });
+
+  it('switching closes whatever was open in the rows', () => {
+    const picking = run([
+      { type: 'loaded', data: handwritten },
+      { type: 'mode', mode: 'builder' },
+      { type: 'openPicker', part: null },
+    ]);
+    expect(picking.picking).toEqual({ part: null });
+    const back = run([{ type: 'mode', mode: 'existing' }], picking);
+    expect(back.picking).toBeNull();
+    expect(back.selected).toBeNull();
   });
 });

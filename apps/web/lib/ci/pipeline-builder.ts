@@ -92,6 +92,12 @@ export interface BuilderPage {
   pullRequestUrl: string | null;
   /** Where each deploy step reports; null when Renkei's own address is unknown. */
   report: ReportTo | null;
+  /**
+   * The pipeline files on the branch that the builder did not write — a
+   * `bitbucket-pipelines.yml` made elsewhere, GitHub workflows — by name.
+   * A branch that has some and no pipeline saved here opens on them.
+   */
+  handwritten: string[];
 }
 
 /** Where a pipeline's deploy steps report: this Renkei's report endpoint, and its address as the audience. */
@@ -182,6 +188,8 @@ interface HostRead {
   files: string[];
   unread: string[];
   branches: HostBranch[];
+  /** The pipeline files on the branch, by name: Bitbucket's one, GitHub's workflows. */
+  pipelineFiles: string[];
 }
 
 interface Caller {
@@ -228,6 +236,7 @@ async function readBitbucket(
     files: source.ok ? source.entries.filter((e) => e.kind === 'file').map((e) => e.path) : [],
     unread,
     branches: branches.ok ? branches.branches : [],
+    pipelineFiles: file.ok && file.text !== null ? [PIPELINE_FILE.bitbucket] : [],
   };
 }
 
@@ -275,6 +284,7 @@ async function readGithub(
     files: source.ok ? source.entries.filter((e) => e.kind === 'file').map((e) => e.path) : [],
     unread,
     branches: branches.ok ? branches.branches : [],
+    pipelineFiles: (s?.workflows ?? []).map((workflow) => workflow.name),
   };
 }
 
@@ -287,6 +297,20 @@ function readHost(
   return host === 'github'
     ? readGithub(caller, project, lastWritten)
     : readBitbucket(caller, project, lastWritten);
+}
+
+/**
+ * The branch's pipeline files the builder did not write: every one but
+ * the builder's own file while that is still as it last wrote it.
+ */
+export function handwrittenFiles(
+  host: Host,
+  onBranch: string[],
+  facts: Pick<HostFacts, 'existingFile' | 'lastWritten'>
+): string[] {
+  const own = host === 'github' ? WORKFLOW_NAME : PIPELINE_FILE.bitbucket;
+  const asWritten = facts.lastWritten !== null && facts.existingFile === facts.lastWritten;
+  return onBranch.filter((name) => !(name === own && asWritten));
 }
 
 // ——— the page ———
@@ -330,6 +354,7 @@ export async function builderPage(
     unread: hostRead.unread,
     pullRequestUrl: saved?.pullRequestUrl ?? null,
     report: reportTo(caller.origin),
+    handwritten: handwrittenFiles(host, hostRead.pipelineFiles, hostRead.facts),
   };
 }
 

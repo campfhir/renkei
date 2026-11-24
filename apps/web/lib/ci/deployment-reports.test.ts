@@ -309,6 +309,118 @@ describe('a Bitbucket step’s report', () => {
   });
 });
 
+describe('a pipeline written by hand', () => {
+  const claims = {
+    iss: GITHUB_ISSUER,
+    aud: ORIGIN,
+    repository: 'acme/handmade',
+    ref: 'refs/heads/develop',
+    sha: 'f04b6e9aa1',
+    run_id: '77',
+    run_attempt: '1',
+    actor: 'jordan',
+  };
+
+  /** A code project with its environments and no pipeline built here. */
+  async function handmade(name: string, environments: string[]): Promise<string> {
+    const store = getDataStore();
+    const id = await store.chatProjects.create({
+      ownerSubject: 'auth0|ada',
+      name,
+      description: null,
+      toolConfig: null,
+      repo: { provider: GITHUB, fullName: 'acme/handmade', branch: 'main' },
+    });
+    await store.ciEnvironments.replace(
+      id,
+      environments.map((environment) => ({
+        name: environment,
+        production: environment === 'production',
+        branches: [],
+      })),
+      'auth0|ada'
+    );
+    return id;
+  }
+
+  it('reports nowhere until the report step is taken for its project, and says how', async () => {
+    const id = await handmade('handmade', ['production', 'dev']);
+    const before = await report(await token(claims), body({ environment: 'dev' }));
+    expect(before).toEqual({
+      ok: false,
+      status: 404,
+      error:
+        'No code project in Renkei reports for this repository: build its pipeline in Renkei, or take the report step from the project’s Pipeline tab.',
+    });
+    expect(await getDataStore().ciDeployments.recent([id], 10)).toEqual([]);
+  });
+
+  it('is taken once the project records how the host names its repository, with no pipeline built here', async () => {
+    const id = await handmade('handmade', ['production', 'dev']);
+    await getDataStore().ciRepoKeys.set(id, 'github', 'acme/handmade');
+    const started = await report(await token(claims), body({ environment: 'Dev' }));
+    expect(started).toMatchObject({
+      ok: true,
+      projectId: id,
+      environment: 'dev',
+      status: 'started',
+      host: 'github',
+    });
+    await report(await token(claims), body({ environment: 'dev', status: 'succeeded' }));
+    const rows = await getDataStore().ciDeployments.recent([id], 10);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      environment: 'dev',
+      status: 'succeeded',
+      commitSha: 'f04b6e9aa1',
+      branch: 'develop',
+      runId: 'github:77.1',
+      actor: 'jordan',
+    });
+    // No pipeline row was made for it along the way.
+    expect(await getDataStore().ciPipelines.listForProject(id)).toEqual([]);
+  });
+
+  it('still refuses an environment the project does not have', async () => {
+    const id = await handmade('handmade', ['production']);
+    await getDataStore().ciRepoKeys.set(id, 'github', 'acme/handmade');
+    expect(await report(await token(claims), body({ environment: 'qa' }))).toEqual({
+      ok: false,
+      status: 400,
+      error: 'The project Renkei keeps for acme/handmade has no environment qa.',
+    });
+  });
+
+  it('a key recorded for another host’s repository of the same name does not take it', async () => {
+    const id = await handmade('handmade', ['production', 'dev']);
+    await getDataStore().ciRepoKeys.set(id, 'bitbucket', 'acme/handmade');
+    expect(await report(await token(claims), body({ environment: 'dev' }))).toMatchObject({
+      ok: false,
+      status: 404,
+    });
+  });
+
+  it('of two projects on the repository, the one that has the environment reported gets it', async () => {
+    const live = await handmade('live', ['production']);
+    const staging = await handmade('staging', ['production', 'staging']);
+    // The one without the environment is the last recorded, so the first asked.
+    await getDataStore().ciRepoKeys.set(staging, 'github', 'acme/handmade');
+    await getDataStore().ciRepoKeys.set(live, 'github', 'acme/handmade');
+    const taken = await report(await token(claims), body({ environment: 'staging' }));
+    expect(taken).toMatchObject({ ok: true, projectId: staging, environment: 'staging' });
+    expect(await getDataStore().ciDeployments.recent([live], 10)).toEqual([]);
+    expect(await getDataStore().ciDeployments.recent([staging], 10)).toHaveLength(1);
+  });
+
+  it('a project whose builder wrote a pipeline for the repository comes before one that only took the step', async () => {
+    const built = await codeProject(GITHUB, 'acme/handmade', 'acme/handmade');
+    const stepOnly = await handmade('step-only', ['production', 'dev']);
+    await getDataStore().ciRepoKeys.set(stepOnly, 'github', 'acme/handmade');
+    const taken = await report(await token(claims), body({ environment: 'dev' }));
+    expect(taken).toMatchObject({ ok: true, projectId: built });
+  });
+});
+
 describe('what a report must carry', () => {
   it('a bearer token', async () => {
     expect(await report(null, body())).toMatchObject({ ok: false, status: 401 });

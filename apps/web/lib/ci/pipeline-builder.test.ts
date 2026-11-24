@@ -27,6 +27,7 @@ import { readPipelineSpec, type PipelineSpec } from '@renkei/ci-blocks';
 import {
   builderPage,
   freshBranch,
+  handwrittenFiles,
   onBranch,
   openPipelinePullRequest,
   pullRequestText,
@@ -473,5 +474,57 @@ describe('the pull request’s words', () => {
     const now = new Date('2026-11-18T10:04:00Z');
     expect(freshBranch(['main'], now)).toBe('renkei/pipeline');
     expect(freshBranch(['main', 'renkei/pipeline'], now)).toBe('renkei/pipeline-202611181004');
+  });
+});
+
+describe('the pipeline files on a branch that the builder did not write', () => {
+  const WRITTEN = '# Built in Renkei\npipelines: {}\n';
+
+  it('Bitbucket: a file made elsewhere is one; the builder’s own, as it last wrote it, is not', () => {
+    const onBranch = ['bitbucket-pipelines.yml'];
+    expect(
+      handwrittenFiles('bitbucket', onBranch, {
+        existingFile: 'image: node:22\n',
+        lastWritten: null,
+      })
+    ).toEqual(['bitbucket-pipelines.yml']);
+    expect(
+      handwrittenFiles('bitbucket', onBranch, { existingFile: WRITTEN, lastWritten: WRITTEN })
+    ).toEqual([]);
+  });
+
+  it('Bitbucket: the builder’s file edited by hand since is one again', () => {
+    expect(
+      handwrittenFiles('bitbucket', ['bitbucket-pipelines.yml'], {
+        existingFile: `${WRITTEN}# and a line by hand\n`,
+        lastWritten: WRITTEN,
+      })
+    ).toEqual(['bitbucket-pipelines.yml']);
+  });
+
+  it('a branch with no pipeline file has none', () => {
+    expect(handwrittenFiles('bitbucket', [], { existingFile: null, lastWritten: null })).toEqual(
+      []
+    );
+    expect(handwrittenFiles('github', [], { existingFile: null, lastWritten: WRITTEN })).toEqual(
+      []
+    );
+  });
+
+  it('GitHub: every workflow but the builder’s pipeline.yml, while that is as it wrote it', () => {
+    const onBranch = ['ci.yml', 'pipeline.yml', 'release.yml'];
+    expect(
+      handwrittenFiles('github', onBranch, { existingFile: WRITTEN, lastWritten: WRITTEN })
+    ).toEqual(['ci.yml', 'release.yml']);
+  });
+
+  it('GitHub: a pipeline.yml the builder never wrote, or one edited since, is listed with the rest', () => {
+    const onBranch = ['ci.yml', 'pipeline.yml'];
+    expect(
+      handwrittenFiles('github', onBranch, { existingFile: 'name: Mine\n', lastWritten: null })
+    ).toEqual(['ci.yml', 'pipeline.yml']);
+    expect(
+      handwrittenFiles('github', onBranch, { existingFile: 'name: Edited\n', lastWritten: WRITTEN })
+    ).toEqual(['ci.yml', 'pipeline.yml']);
   });
 });

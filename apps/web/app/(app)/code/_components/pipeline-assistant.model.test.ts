@@ -1,9 +1,11 @@
 import type { BlockDefinition, PipelineSpec } from '@renkei/ci-blocks';
 import {
+  askFileRequest,
   askRequest,
   assistantReducer,
   buildingBlockRequest,
   canAsk,
+  fileCard,
   initialAssistant,
   proposalCard,
   reuseQuestion,
@@ -267,5 +269,97 @@ describe('a building block for every project (operators)', () => {
 
   it('a new conversation starts empty', () => {
     expect(run([{ type: 'reset' }], answered)).toEqual(initialAssistant);
+  });
+});
+
+describe('a pipeline written by hand: the conversation is about its file', () => {
+  const CI = 'name: CI\non: [push]\njobs: {}\n';
+  const edited = 'name: CI\non: [push, pull_request]\njobs: {}\n';
+  const asked = run([
+    { type: 'draft', text: 'Run it on pull requests too.' },
+    { type: 'asked', id: 'q1', text: 'Run it on pull requests too.' },
+    { type: 'started', job: 'job-1' },
+  ]);
+  const answered = run(
+    [
+      {
+        type: 'answered',
+        id: 'a1',
+        job: 'job-1',
+        answer: answer({
+          reply: 'It now runs on pull requests as well.',
+          proposal: null,
+          file: { summary: 'Adds the pull_request trigger.', name: 'ci.yml', text: edited },
+        }),
+      },
+    ],
+    asked
+  );
+
+  it('an answer’s edited file stays with the answer', () => {
+    expect(answered.messages[1]).toMatchObject({
+      role: 'assistant',
+      text: 'It now runs on pull requests as well.',
+      file: { summary: 'Adds the pull_request trigger.', name: 'ci.yml', text: edited },
+    });
+    // An answer in words alone carries none.
+    const words = run(
+      [{ type: 'answered', id: 'a1', job: 'job-1', answer: answer({ proposal: null }) }],
+      asked
+    );
+    expect(words.messages[1]).not.toHaveProperty('file');
+    expect(fileCard(words, words.messages[1])).toBeNull();
+  });
+
+  it('shows as the file’s name, its size and what changed, until it is put in the editor', () => {
+    expect(fileCard(answered, answered.messages[1])).toEqual({
+      summary: 'Adds the pull_request trigger.',
+      name: 'ci.yml',
+      size: '3 lines',
+      applied: false,
+    });
+    const applied = run([{ type: 'applied', id: 'a1' }], answered);
+    expect(fileCard(applied, applied.messages[1])?.applied).toBe(true);
+    // The person's own turn has no file.
+    expect(fileCard(answered, answered.messages[0])).toBeNull();
+  });
+
+  it('a one-line file reads as one line', () => {
+    const one = run(
+      [
+        {
+          type: 'answered',
+          id: 'a1',
+          job: 'job-1',
+          answer: answer({
+            proposal: null,
+            file: { summary: 'x', name: 'ci.yml', text: 'name: CI\n' },
+          }),
+        },
+      ],
+      asked
+    );
+    expect(fileCard(one, one.messages[1])?.size).toBe('1 line');
+  });
+
+  it('a question sends the conversation and the file as the editor has it, not a pipeline of blocks', () => {
+    const sent = askFileRequest(asked, { name: 'ci.yml', text: CI });
+    expect(sent).toEqual({
+      conversation: [{ role: 'user', text: 'Run it on pull requests too.' }],
+      file: { name: 'ci.yml', text: CI },
+    });
+    expect(sent).not.toHaveProperty('spec');
+  });
+
+  it('the next question says whether the last file was put in the editor', () => {
+    const before = askFileRequest(answered, { name: 'ci.yml', text: CI });
+    expect(before.conversation[1].text).toBe(
+      'It now runs on pull requests as well.\n\n(I proposed an edit to ci.yml: Adds the pull_request trigger. The person has not put it in the editor.)'
+    );
+    const applied = run([{ type: 'applied', id: 'a1' }], answered);
+    const after = askFileRequest(applied, { name: 'ci.yml', text: edited });
+    expect(after.conversation[1].text).toContain('The person put it in the editor.)');
+    // And the file it is asked about is the one now in the editor.
+    expect(after.file.text).toBe(edited);
   });
 });

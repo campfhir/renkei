@@ -315,6 +315,19 @@ project's pipelines hang from its branches, on its **Environments** page
   the steps that deploy the environment the branch is assigned to. One
   pipeline per project and branch (`ci_pipelines`); its pull request goes
   against that branch, and the assistant reads the repository at it.
+- **A pipeline written elsewhere.** A branch that already has a pipeline
+  the builder did not write — a `bitbucket-pipelines.yml` or GitHub
+  workflows from another editor, or from before the project came to
+  Renkei — and nothing saved for it here opens on that file instead
+  (`existing-pipeline.tsx`): the file as it is, an editor that commits to
+  the branch, and the assistant working on the file as text (it proposes
+  the whole file edited; the person reviews and commits it). The builder
+  is one explicit choice away and says what it does to the file: on
+  Bitbucket its pull request replaces it, on GitHub it adds a workflow
+  beside the others. "Get the report step" gives the few lines that let a
+  hand-written pipeline say what it deployed, and records how the host's
+  tokens name the repository (`ci_repo_keys`, migration 192), which is how
+  such a report finds its project.
 - **A branch's Runs.** The host's recent runs of that branch (state, who,
   when, how long — each opening on the host, where the steps and logs
   are), whether the host runs pipelines for the repository at all, and

@@ -27,6 +27,8 @@ export interface AssistantAnswer {
     definition: BlockDefinition;
     from: string | null;
   } | null;
+  /** A pipeline file written by hand, edited: the whole file (the conversation was about one). */
+  file?: { summary: string; name: string; text: string } | null;
   read: string[];
 }
 
@@ -36,6 +38,7 @@ export interface AssistantMessage {
   text: string;
   proposal?: AssistantAnswer['proposal'];
   buildingBlock?: AssistantAnswer['buildingBlock'];
+  file?: AssistantAnswer['file'];
   read?: string[];
 }
 
@@ -129,6 +132,7 @@ export function assistantReducer(state: AssistantState, action: AssistantAction)
             text: action.answer.reply,
             proposal: action.answer.proposal,
             buildingBlock: action.answer.buildingBlock,
+            ...(action.answer.file ? { file: action.answer.file } : {}),
             read: action.answer.read,
           },
         ],
@@ -174,6 +178,27 @@ export function canAsk(state: AssistantState): boolean {
   return !state.busy && state.draft.trim().length > 0;
 }
 
+type Turn = { role: 'user' | 'assistant'; text: string };
+
+/** The conversation in words: each answer's proposal noted with whether the person took it. */
+function conversationOf(state: AssistantState): Turn[] {
+  return state.messages.map((m) => {
+    const taken = state.applied.includes(m.id);
+    const notes = [
+      m.proposal
+        ? `(I proposed: ${m.proposal.summary} The person ${taken ? 'applied it' : 'has not applied it'}.)`
+        : '',
+      m.buildingBlock
+        ? `(I proposed the building block ${m.buildingBlock.key}; ${state.saved[m.id] ? 'it was saved as a draft' : 'it is not saved'}.)`
+        : '',
+      m.file
+        ? `(I proposed an edit to ${m.file.name}: ${m.file.summary} The person ${taken ? 'put it in the editor' : 'has not put it in the editor'}.)`
+        : '',
+    ].filter(Boolean);
+    return { role: m.role, text: [m.text, ...notes].join('\n\n') };
+  });
+}
+
 /**
  * What a question sends: the conversation in words — an answer's proposal
  * noted with whether the person applied it — and the pipeline on screen.
@@ -181,20 +206,39 @@ export function canAsk(state: AssistantState): boolean {
 export function askRequest(
   state: AssistantState,
   spec: PipelineSpec
-): { conversation: { role: 'user' | 'assistant'; text: string }[]; spec: PipelineSpec } {
+): { conversation: Turn[]; spec: PipelineSpec } {
+  return { conversation: conversationOf(state), spec };
+}
+
+/**
+ * What a question about a pipeline written by hand sends: the
+ * conversation, and the file as the editor has it now — edited or not.
+ */
+export function askFileRequest(
+  state: AssistantState,
+  file: { name: string; text: string }
+): { conversation: Turn[]; file: { name: string; text: string } } {
+  return { conversation: conversationOf(state), file };
+}
+
+export interface FileCard {
+  summary: string;
+  name: string;
+  /** "42 lines". */
+  size: string;
+  applied: boolean;
+}
+
+/** An answer's edited file as the panel shows it. */
+export function fileCard(state: AssistantState, message: AssistantMessage): FileCard | null {
+  const file = message.file;
+  if (!file) return null;
+  const lines = file.text.trimEnd().split('\n').length;
   return {
-    conversation: state.messages.map((m) => {
-      const notes = [
-        m.proposal
-          ? `(I proposed: ${m.proposal.summary} The person ${state.applied.includes(m.id) ? 'applied it' : 'has not applied it'}.)`
-          : '',
-        m.buildingBlock
-          ? `(I proposed the building block ${m.buildingBlock.key}; ${state.saved[m.id] ? 'it was saved as a draft' : 'it is not saved'}.)`
-          : '',
-      ].filter(Boolean);
-      return { role: m.role, text: [m.text, ...notes].join('\n\n') };
-    }),
-    spec,
+    summary: file.summary,
+    name: file.name,
+    size: `${lines} line${lines === 1 ? '' : 's'}`,
+    applied: state.applied.includes(message.id),
   };
 }
 

@@ -49,6 +49,8 @@ export interface BuilderData {
   report: ReportTo | null;
   canEdit: boolean;
   project: { name: string; repo: string; branch: string };
+  /** The pipeline files on the branch that the builder did not write, by name. */
+  handwritten?: string[];
 }
 
 /** Which row: null for the pull-request checks, else an environment's name. */
@@ -65,6 +67,12 @@ export interface BuilderState {
   spec: PipelineSpec | null;
   /** As last saved; null while it is only a suggestion. */
   saved: PipelineSpec | null;
+  /**
+   * What the tab shows: the branch's own pipeline file, when it has one
+   * that was not built here and nothing is saved for it here; else the
+   * builder. Null until the first read says which.
+   */
+  mode: 'existing' | 'builder' | null;
   view: 'builder' | 'file';
   /** The step whose inputs are open below its row. */
   selected: StepRef | null;
@@ -82,6 +90,8 @@ export type BuilderAction =
   | { type: 'loaded'; data: BuilderData; notice?: string }
   | { type: 'failed'; error: string; problems?: string[] }
   | { type: 'view'; view: BuilderState['view'] }
+  /** Build from blocks instead of the file on the branch, or go back to that file. */
+  | { type: 'mode'; mode: 'existing' | 'builder' }
   | { type: 'select'; step: StepRef | null }
   | { type: 'openPicker'; part: Part }
   | { type: 'closePicker' }
@@ -104,6 +114,7 @@ export const initialBuilder: BuilderState = {
   data: null,
   spec: null,
   saved: null,
+  mode: null,
   view: 'builder',
   selected: null,
   picking: null,
@@ -188,6 +199,9 @@ export function builderReducer(state: BuilderState, action: BuilderAction): Buil
       return {
         ...state,
         data: action.data,
+        // Decided once, by the first read: a later one (after a save or a
+        // pull request) does not move the person from where they chose to be.
+        mode: state.mode ?? (opensOnExisting(action.data) ? 'existing' : 'builder'),
         spec: keep ? spec : action.data.spec,
         saved:
           action.notice && spec
@@ -205,6 +219,8 @@ export function builderReducer(state: BuilderState, action: BuilderAction): Buil
       return { ...state, busy: null, error: action.error, problems: action.problems ?? [] };
     case 'view':
       return { ...state, view: action.view };
+    case 'mode':
+      return { ...state, mode: action.mode, selected: null, picking: null };
     case 'select':
       return { ...state, selected: action.step, picking: null };
     case 'openPicker':
@@ -312,6 +328,20 @@ export function builderReducer(state: BuilderState, action: BuilderAction): Buil
 }
 
 // ——— what the page derives ———
+
+/**
+ * A branch whose pipeline was written elsewhere, with nothing saved for it
+ * here, opens on that file: the builder would otherwise show a suggestion
+ * as if nothing were there, one pull request from replacing it.
+ */
+export function opensOnExisting(data: BuilderData): boolean {
+  return data.suggested && (data.handwritten?.length ?? 0) > 0;
+}
+
+/** The files on the branch the builder did not write; the builder offers the way back to them. */
+export function existingFiles(state: BuilderState): string[] {
+  return state.data?.handwritten ?? [];
+}
 
 /** What the page says once the pull request is opened or updated. */
 export function pullRequestNotice(updated: boolean): string {

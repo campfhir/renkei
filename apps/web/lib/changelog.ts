@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'added',
+        title: 'Pipelines written outside Renkei open as they are',
+        detail:
+          'When a branch already has a pipeline that was not built in Renkei — a bitbucket-pipelines.yml or GitHub workflows from another editor — its Pipeline tab now opens on that file instead of on a suggestion that would replace it. You can read it, edit it and commit to the branch, or ask the assistant, which reads the repository and proposes the file edited for you to review and commit. Building it from blocks instead is one explicit choice, and says what it does to the file. “Get the report step” gives a few lines to copy into a hand-written pipeline so its environment shows what it deployed, with no secret involved.',
+      },
+      {
+        kind: 'added',
         title: 'Variables and secrets from a .env file',
         detail:
           "The Variables tab of a project's Environments page edits the repository's and each environment's pipeline variables as rows. Upload or paste a .env file: it is read in your browser, each row can be locked as a secret before anything is sent, and Save sends them straight to Bitbucket or GitHub — never to a model. GitHub secrets can now be set from Renkei (sealed to the repository's key), and the “secret NAME=” text syntax is gone.",

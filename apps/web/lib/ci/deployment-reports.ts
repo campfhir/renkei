@@ -106,19 +106,41 @@ export async function recordDeploymentReport(input: {
   if (!read.ok) return { ok: false, status: 400, error: read.error };
   const body = read.body;
 
-  const pipelines = await getDataStore().ciPipelines.findByRepoKey(identity.host, identity.repoKey);
-  const pipeline = pipelines.find((p) => p.writtenText !== null) ?? pipelines[0];
-  const project = pipeline ? await getProjectRow(pipeline.projectId) : null;
-  if (!pipeline || !project?.repo) {
+  // The projects this repository reports for: those whose builder wrote a
+  // pipeline for it (the written ones first), then those a person took the
+  // report step for, for a pipeline written by hand (report-step.ts).
+  const store = getDataStore();
+  const pipelines = await store.ciPipelines.findByRepoKey(identity.host, identity.repoKey);
+  const candidates = [
+    ...new Set([
+      ...pipelines.filter((p) => p.writtenText !== null).map((p) => p.projectId),
+      ...pipelines.map((p) => p.projectId),
+      ...(await store.ciRepoKeys.projectsFor(identity.host, identity.repoKey)),
+    ]),
+  ];
+  // Among them, the first that has the environment reported; else the first, to say so.
+  let project: Awaited<ReturnType<typeof getProjectRow>> = null;
+  let known: { name: string } | undefined;
+  for (const projectId of candidates) {
+    const row = await getProjectRow(projectId);
+    if (!row?.repo) continue;
+    const environment = (await projectEnvironments(row.id)).find(
+      (e) => e.name.toLowerCase() === body.environment.toLowerCase()
+    );
+    if (environment || !project) {
+      project = row;
+      known = environment;
+    }
+    if (environment) break;
+  }
+  if (!project?.repo) {
     return {
       ok: false,
       status: 404,
-      error: 'No code project in Renkei built the pipeline for this repository.',
+      error:
+        'No code project in Renkei reports for this repository: build its pipeline in Renkei, or take the report step from the project’s Pipeline tab.',
     };
   }
-  const known = (await projectEnvironments(project.id)).find(
-    (e) => e.name.toLowerCase() === body.environment.toLowerCase()
-  );
   if (!known) {
     return {
       ok: false,

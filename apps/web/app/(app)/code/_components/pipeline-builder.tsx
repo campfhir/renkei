@@ -23,6 +23,7 @@ import {
   canOpenPullRequest,
   canSave,
   checks,
+  existingFiles,
   variableLinks,
   fileLines,
   fileStatus,
@@ -41,8 +42,11 @@ import {
   type StepCard,
 } from './pipeline-builder.model';
 import { AssistantDockPanel, useAssistantDock } from '@/components/assistant-dock/assistant-dock';
+import ExistingPipeline from './existing-pipeline';
+import { existingReducer, fileOnScreen, initialExisting } from './existing-pipeline.model';
 import PipelineAssistant from './pipeline-assistant';
 import {
+  askFileRequest,
   askRequest,
   assistantReducer,
   buildingBlockRequest,
@@ -110,6 +114,8 @@ export default function PipelineBuilder({
 }) {
   const [state, dispatch] = useReducer(builderReducer, initialBuilder);
   const [assistant, assistantDispatch] = useReducer(assistantReducer, initialAssistant);
+  // The branch's own pipeline file, when it was not built here (existing-pipeline.tsx).
+  const [existing, existingDispatch] = useReducer(existingReducer, initialExisting);
   const nextId = useRef(0);
   const dock = useAssistantDock();
   const url = `/api/code/projects/${projectId}/pipeline-builder`;
@@ -119,9 +125,10 @@ export default function PipelineBuilder({
     async (notice?: string, live: () => boolean = () => true) => {
       const result = await getJson<BuilderData>(`${url}${onBranch}`);
       if (!live()) return;
-      if (result.data)
+      if (result.data) {
         dispatch({ type: 'loaded', data: result.data, ...(notice ? { notice } : {}) });
-      else dispatch({ type: 'failed', error: result.error ?? 'The pipeline could not be read.' });
+        existingDispatch({ type: 'opened', files: result.data.handwritten ?? [] });
+      } else dispatch({ type: 'failed', error: result.error ?? 'The pipeline could not be read.' });
     },
     [url, onBranch]
   );
@@ -170,7 +177,9 @@ export default function PipelineBuilder({
   };
 
   const ask = async (text: string) => {
-    if (!state.spec) return;
+    // On a pipeline written by hand the question is about its file, as the editor has it.
+    const file = state.mode === 'existing' ? fileOnScreen(existing) : null;
+    if (state.mode === 'existing' ? !file : !state.spec) return;
     const id = `m${(nextId.current += 1)}`;
     const asked = assistantReducer(assistant, { type: 'asked', id, text });
     if (asked === assistant) return;
@@ -178,7 +187,7 @@ export default function PipelineBuilder({
     const started = await sendJsonFull<{ jobId?: string; problems?: string[] }>(
       `${url}/assistant${onBranch}`,
       'POST',
-      askRequest(asked, state.spec)
+      file ? askFileRequest(asked, file) : askRequest(asked, state.spec!)
     );
     const job = started.data?.jobId;
     if (started.error || !job) {
@@ -237,6 +246,16 @@ export default function PipelineBuilder({
   };
 
   const apply = (message: AssistantMessage) => {
+    if (message.file) {
+      // The edited file goes into the editor, to be looked over and committed.
+      existingDispatch({
+        type: 'proposalApplied',
+        name: message.file.name,
+        text: message.file.text,
+      });
+      assistantDispatch({ type: 'applied', id: message.id });
+      return;
+    }
     if (!message.proposal) return;
     dispatch({ type: 'applyProposal', spec: message.proposal.spec });
     assistantDispatch({ type: 'applied', id: message.id });
@@ -274,7 +293,58 @@ export default function PipelineBuilder({
           </p>
         ) : null}
 
-        {data ? (
+        {data?.canEdit ? (
+          // The assistant floats above the page, in the app's dock.
+          <AssistantDockPanel id="pipeline-assistant" title="Pipeline assistant">
+            <PipelineAssistant
+              state={assistant}
+              dispatch={(action) => {
+                if (action.type === 'reset') following.current = null;
+                assistantDispatch(action);
+              }}
+              spec={state.spec}
+              blockName={blockName}
+              operator={operator}
+              file={state.mode === 'existing' ? existing.selected : null}
+              onAsk={(text) => void ask(text)}
+              onApply={apply}
+              onSaveBlock={(message) => void saveBlock(message)}
+            />
+          </AssistantDockPanel>
+        ) : null}
+
+        {data && state.mode === 'existing' ? (
+          <ExistingPipeline
+            state={existing}
+            dispatch={existingDispatch}
+            projectId={projectId}
+            host={host}
+            branch={branch}
+            environment={data.environment}
+            canEdit={data.canEdit}
+            onBuild={() => dispatch({ type: 'mode', mode: 'builder' })}
+            onAskAssistant={() => dock.open()}
+          />
+        ) : null}
+
+        {data && state.mode === 'builder' && existingFiles(state).length > 0 ? (
+          <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+            {branch} already has a pipeline that was not built here (
+            <span className="font-mono">{existingFiles(state).join(', ')}</span>).{' '}
+            {host === 'github'
+              ? 'The builder’s workflow is added beside it.'
+              : 'The builder’s pull request replaces it.'}{' '}
+            <button
+              type="button"
+              onClick={() => dispatch({ type: 'mode', mode: 'existing' })}
+              className="font-medium underline"
+            >
+              See the file on the branch
+            </button>
+          </p>
+        ) : null}
+
+        {data && state.mode === 'builder' ? (
           <>
             <section aria-label="Found in this repository" className={`${cardClass} space-y-2`}>
               <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -334,25 +404,6 @@ export default function PipelineBuilder({
                   </ul>
                 ) : null}
               </div>
-            ) : null}
-
-            {data.canEdit ? (
-              // The assistant floats above the page, in the app's dock.
-              <AssistantDockPanel id="pipeline-assistant" title="Pipeline assistant">
-                <PipelineAssistant
-                  state={assistant}
-                  dispatch={(action) => {
-                    if (action.type === 'reset') following.current = null;
-                    assistantDispatch(action);
-                  }}
-                  spec={state.spec}
-                  blockName={blockName}
-                  operator={operator}
-                  onAsk={(text) => void ask(text)}
-                  onApply={apply}
-                  onSaveBlock={(message) => void saveBlock(message)}
-                />
-              </AssistantDockPanel>
             ) : null}
 
             <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">

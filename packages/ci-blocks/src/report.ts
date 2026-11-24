@@ -93,3 +93,61 @@ export const BITBUCKET_OUTCOME =
 /** GitHub: the job's status (`job.status`, passed in as $RENKEI_JOB_STATUS), as a status and a detail. */
 export const GITHUB_OUTCOME =
   'if [ "$RENKEI_JOB_STATUS" = success ]; then renkei_status=succeeded; renkei_detail=; else renkei_status=failed; renkei_detail="$RENKEI_JOB_STATUS"; fi';
+
+const PLACEHOLDER = 'echo "your deploy commands go here"';
+
+/**
+ * The report, for a pipeline written by hand: what to put in the step (or
+ * job) that deploys `environment`, as YAML to copy into the file. The same
+ * three things a pipeline built from blocks carries — the host signs a
+ * token for the step, the step says it started, and whatever comes of it
+ * says how it went — around a line standing in for the deploy itself.
+ */
+export function reportSnippet(host: Host, to: ReportTo, environment: string): string {
+  const started = reportCommand(host, to, environment, null, 'started', '');
+  const ended = reportCommand(host, to, environment, null, '$renkei_status', '$renkei_detail');
+  const block = (text: string, indent: string) =>
+    text
+      .split('\n')
+      .map((line) => `${indent}${line}`)
+      .join('\n');
+  if (host === 'bitbucket') {
+    return [
+      '- step:',
+      `    name: Deploy ${environment}`,
+      `    deployment: ${environment}`,
+      '    # Lets the step prove to Renkei which repository it runs for.',
+      '    oidc: true',
+      '    script:',
+      '      - |',
+      block(started, '        '),
+      `      - ${PLACEHOLDER}`,
+      '    after-script:',
+      '      - |',
+      block(`${BITBUCKET_OUTCOME}\n${ended}`, '        '),
+      '',
+    ].join('\n');
+  }
+  return [
+    'deploy:',
+    '  runs-on: ubuntu-latest',
+    `  environment: ${environment}`,
+    '  # Lets the job prove to Renkei which repository it runs for.',
+    '  permissions:',
+    '    contents: read',
+    '    id-token: write',
+    '  steps:',
+    '    - name: Tell Renkei the deploy started',
+    '      run: |',
+    block(started, '        '),
+    '    - name: Deploy',
+    `      run: ${PLACEHOLDER}`,
+    '    - name: Tell Renkei how the deploy went',
+    '      if: always()',
+    '      env:',
+    '        RENKEI_JOB_STATUS: ${{ job.status }}',
+    '      run: |',
+    block(`${GITHUB_OUTCOME}\n${ended}`, '        '),
+    '',
+  ].join('\n');
+}
