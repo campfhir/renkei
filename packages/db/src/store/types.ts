@@ -89,6 +89,7 @@ export type * from './domains/code-projects';
 export type * from './domains/code-templates';
 export type * from './domains/ci-blocks';
 export type * from './domains/ci-deployments';
+export type * from './domains/ci-environments';
 export type * from './domains/ci-pipelines';
 export type * from './domains/ci-targets';
 export type * from './domains/chat-models';

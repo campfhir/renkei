@@ -713,19 +713,19 @@ export function pipelineChecks(
         const names = facts.environments.map((e) => e.name).join(', ');
         add(
           'fail',
-          `Bitbucket has no deployment environment named ${environment.name}: add it in the repository’s Deployments settings${names ? `, or use one it has (${names})` : ''}.`
+          `Bitbucket has no deployment environment named ${environment.name} yet${names ? ` (it has ${names})` : ''}: make it from the Variables tab, or in the repository’s Deployments settings.`
         );
       } else if (!known) {
         add(
           'warn',
-          `GitHub creates the environment ${environment.name} on its first deploy; set its variables there once it exists.`
+          `GitHub has no environment named ${environment.name} yet: it makes one on the first deploy, and saving a variable for it on the Variables tab makes it now.`
         );
       }
     }
     if (facts.branches && !facts.branches.includes(environment.branch)) {
       add(
         'warn',
-        `${environment.branch} does not exist yet: the pull request makes it from ${facts.branch}, and ${environment.name} deploys once this pipeline reaches it.`
+        `The repository has no branch ${environment.branch}: push it, or assign ${environment.name} a branch it has, on the Environments page.`
       );
     }
   }

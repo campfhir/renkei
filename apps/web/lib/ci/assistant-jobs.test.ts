@@ -32,6 +32,7 @@ const input: AssistantInput = {
   host: 'bitbucket',
   repo: 'acme/billing',
   branch: 'main',
+  environment: 'production',
   blocks: [],
   targets: [],
   operator: false,

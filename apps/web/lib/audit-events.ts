@@ -140,6 +140,8 @@ export type AuditAction =
   | 'code.pipelines.disabled'
   /** A variable set replaced from its text box: which keys were added, changed, removed. */
   | 'code.pipelines.variables.replaced'
+  /** Pipeline variables or secrets saved from a project's Environments page; names only, never a value. */
+  | 'code.variables.saved'
   /** A pipeline run started from a code project's Runs & variables tab under Deployments. */
   | 'code.pipelines.run'
   /** A bitbucket-pipelines.yml committed from the page, from a template or edited. */
@@ -180,6 +182,8 @@ export type AuditAction =
   | 'ci.block_published'
   | 'ci.block_deleted'
   /** A CI target added or changed (Organization → Targets). */
+  /** A code project's environments or their branches changed (its Environments page). */
+  | 'ci.environments_saved'
   | 'ci.pipeline_saved'
   | 'ci.pipeline_pull_request'
   | 'ci.promotion_opened'

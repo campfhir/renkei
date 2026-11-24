@@ -14,6 +14,7 @@ import {
   cleanPath,
   gaveUp,
   readConversation,
+  readPipelineProposal,
   runPipelineAssistant,
   type AssistantDeps,
   type AssistantInput,
@@ -49,12 +50,16 @@ const ownBuild = {
   },
 };
 
+/** The pipeline is one branch's: its one environment, as every proposal must hold it. */
+const ENV = [{ name: 'production', branch: 'main', steps: [] }];
+
 const input = (overrides: Partial<AssistantInput> = {}): AssistantInput => ({
   conversation: [{ role: 'user', text: 'Tailor the pipeline to this repository.' }],
-  spec: { checks: [{ block: 'node-test', version: 1, inputs: {} }], environments: [] },
+  spec: { checks: [{ block: 'node-test', version: 1, inputs: {} }], environments: ENV },
   host: 'bitbucket',
   repo: 'acme/billing',
   branch: 'main',
+  environment: 'production',
   blocks,
   targets: [],
   operator: false,
@@ -131,7 +136,7 @@ it('reads the repository, then proposes the pipeline with a block of the project
       { block: 'node-test', version: 1, inputs: {} },
       { block: 'build-billing', version: 1, inputs: {} },
     ],
-    environments: [],
+    environments: ENV,
     blocks: [ownBuild],
   };
   const complete = model([
@@ -146,7 +151,7 @@ it('reads the repository, then proposes the pipeline with a block of the project
     reply: 'Apply it to build with pnpm.',
     proposal: {
       summary: 'Builds with pnpm, as the repository does.',
-      spec: { checks: proposal.checks, environments: [], blocks: [ownBuild] },
+      spec: { checks: proposal.checks, environments: ENV, blocks: [ownBuild] },
       unfinished: [],
     },
     buildingBlock: null,
@@ -177,7 +182,7 @@ it('sends a proposal that does not read back with what is wrong, and takes the c
           input: {
             summary: 'x',
             checks: [{ block: 'nope', version: 1, inputs: {} }],
-            environments: [],
+            environments: ENV,
             blocks: [{ ...ownBuild, key: 'unused' }],
           },
         },
@@ -190,7 +195,7 @@ it('sends a proposal that does not read back with what is wrong, and takes the c
           input: {
             summary: 'Fixed.',
             checks: [{ block: 'node-test', version: 1 }],
-            environments: [],
+            environments: ENV,
           },
         },
       ],
@@ -213,7 +218,7 @@ it('sends a proposal cut off at the output limit back to be sent again, instead 
   const whole = {
     summary: 'Passes the variables to the runners.',
     checks: [{ block: 'node-test', version: 1, inputs: {} }],
-    environments: [],
+    environments: ENV,
   };
   const complete = model([
     {
@@ -245,7 +250,7 @@ it('keeps going as long as it takes, reading until its budget is spent, then ans
     })),
     {
       calls: [
-        { name: 'propose_pipeline', input: { summary: 'Done.', checks: [], environments: [] } },
+        { name: 'propose_pipeline', input: { summary: 'Done.', checks: [], environments: ENV } },
       ],
     },
     { text: 'Apply it.' },
@@ -267,7 +272,7 @@ it('gives up after three proposals that do not read, saying what was wrong with 
     calls: [
       {
         name: 'propose_pipeline',
-        input: { summary: 'x', checks: [{ block: `nope-${n}`, version: 1 }], environments: [] },
+        input: { summary: 'x', checks: [{ block: `nope-${n}`, version: 1 }], environments: ENV },
       },
     ],
   });
@@ -288,7 +293,7 @@ it('gives up after three proposals that do not read, saying what was wrong with 
 it('counts a proposal cut off at the reply limit as a failed one, and keeps one that read', async () => {
   const good = {
     name: 'propose_pipeline',
-    input: { summary: 'Good.', checks: [], environments: [] },
+    input: { summary: 'Good.', checks: [], environments: ENV },
   };
   const cut = { calls: [{ name: 'propose_pipeline', input: {} }], stop: 'max_tokens' as const };
   const complete = model([{ calls: [good] }, cut, cut, cut, { text: 'never asked' }]);
@@ -425,4 +430,80 @@ it('reads a conversation as sent: trimmed, starting and ending on the person', (
     ])
   ).toEqual({ error: 'Say what you would like the assistant to do.' });
   expect(readConversation('nope')).toEqual({ error: 'Send the conversation.' });
+});
+
+describe('the pipeline is one branch’s', () => {
+  const about = { host: 'bitbucket' as const, blocks, targets: [] };
+  const checks = [{ block: 'node-test', version: 1, inputs: {} }];
+  const refused = {
+    problems: [
+      'This pipeline is the branch main’s alone: "environments" must hold exactly one entry, named production with branch main.',
+    ],
+  };
+
+  it('a proposal holds exactly its environment, on its branch', () => {
+    const at = { ...about, environment: 'production', branch: 'main' };
+    expect(readPipelineProposal({ summary: 'x', checks, environments: ENV }, at)).toMatchObject({
+      summary: 'x',
+      spec: { environments: ENV },
+    });
+    // The environment's name is the project's, whatever its case.
+    expect(
+      readPipelineProposal(
+        { summary: 'x', checks, environments: [{ ...ENV[0], name: 'Production' }] },
+        at
+      )
+    ).toMatchObject({ summary: 'x' });
+  });
+
+  it('one that names another environment, another branch, more than one or none is sent back', () => {
+    const at = { ...about, environment: 'production', branch: 'main' };
+    const dev = { name: 'dev', branch: 'develop', steps: [] };
+    for (const environments of [[], [dev], [{ ...ENV[0], branch: 'release' }], [...ENV, dev]]) {
+      expect(readPipelineProposal({ summary: 'x', checks, environments }, at)).toEqual(refused);
+    }
+  });
+
+  it('is told so, with the branch it reads and the environment it deploys', async () => {
+    const complete = model([{ text: 'Nothing to change.' }]);
+    await runPipelineAssistant(input({ branch: 'develop', environment: 'dev' }), deps(complete));
+    const system: string = complete.mock.calls[0][0].system;
+    expect(system).toContain(
+      'the CI/CD pipeline of the branch develop of the repository acme/billing (on Bitbucket)'
+    );
+    expect(system).toContain('{ "name": "dev", "branch": "develop", "steps": [...] }');
+  });
+
+  it('a proposal for another branch comes back to the model with why', async () => {
+    const complete = model([
+      {
+        calls: [
+          {
+            name: 'propose_pipeline',
+            input: {
+              summary: 'x',
+              checks,
+              environments: [...ENV, { name: 'dev', branch: 'develop', steps: [] }],
+            },
+          },
+        ],
+      },
+      {
+        calls: [
+          { name: 'propose_pipeline', input: { summary: 'One.', checks, environments: ENV } },
+        ],
+      },
+      { text: 'Done.' },
+    ]);
+    const reply = await runPipelineAssistant(input(), deps(complete));
+    expect(results(complete)[0]?.content).toContain(refused.problems[0]);
+    expect(results(complete)[0]?.isError).toBe(true);
+    expect(reply).toMatchObject({ proposal: { summary: 'One.' } });
+  });
+
+  it('read without a branch (the older callers), a proposal is taken as it stands', () => {
+    expect(readPipelineProposal({ summary: 'x', checks, environments: [] }, about)).toMatchObject({
+      summary: 'x',
+    });
+  });
 });

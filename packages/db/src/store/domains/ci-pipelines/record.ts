@@ -5,6 +5,7 @@ import type { CiPipelineRecord } from './types';
 export function ciPipelineFromRow(row: Selectable<CiPipelines>): CiPipelineRecord {
   return {
     projectId: row.project_id,
+    branch: row.branch,
     host: row.host,
     spec: row.spec,
     writtenText: row.written_text,

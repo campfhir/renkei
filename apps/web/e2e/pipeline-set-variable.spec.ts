@@ -1,17 +1,16 @@
 /**
  * "Set it" on a missing variable, end to end in a browser, on a Bitbucket
- * repository: the pipeline builder names a secret its block reads that is
- * not set for production; its "Set for production" opens the Runs &
- * variables page with Production's box open on `secret DEPLOY_TOKEN=`,
- * focused, the cursor after the `=`; typing the value and saving sets it
- * through the real route and the stand-in host; back on the builder it is
- * missing only for pull requests.
+ * repository: a branch's pipeline builder names a secret its block reads
+ * that is not set for production; its "Set for production" opens the
+ * Variables tab with a locked row for DEPLOY_TOKEN in production's set,
+ * the cursor in its value; typing the value and saving sets it through
+ * the real route and the stand-in host; back on the builder it is missing
+ * only for pull requests, whose "Set it" names the repository's set.
  *
  * Where the rules went: which links a check has —
- * pipeline-builder.model.test.ts; which box opens, the line added or
- * found and where the cursor goes — pipelines-page.model.test.ts and
- * lib/code/pipeline-variables-text.test.ts; the check itself —
- * packages/ci-blocks pipeline.test.ts.
+ * pipeline-builder.model.test.ts; the row added and where the cursor goes
+ * — variables-editor.model.test.ts; the check itself — packages/ci-blocks
+ * pipeline.test.ts.
  *
  * The block is organization-wide: it carries this run's tag and goes
  * again through the admin route at the end.
@@ -19,11 +18,17 @@
 
 import { randomUUID } from 'node:crypto';
 import { test, expect } from './fixtures';
-import { connectBitbucket, createCodeProject, prepareCodeHost } from './support/code-host';
+import {
+  assignEnvironments,
+  connectBitbucket,
+  createCodeProject,
+  pipelineTab,
+  prepareCodeHost,
+} from './support/code-host';
 
 test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
-test('pipeline builder: "Set it" opens the variable’s line ready for its value', async ({
+test('pipeline builder: "Set it" opens the variable’s row ready for its value', async ({
   page,
   person: _person,
 }, testInfo) => {
@@ -71,18 +76,22 @@ test('pipeline builder: "Set it" opens the variable’s line ready for its value
       branch: 'main',
     });
     const build = { block: `build-${tag}`, version: 1, inputs: {} };
-    const staged = await page.request.put(`/api/code/projects/${projectId}/pipeline-builder`, {
-      data: {
-        spec: {
-          checks: [build],
-          environments: [{ name: 'production', branch: 'main', steps: [build] }],
+    await assignEnvironments(page.request, projectId);
+    const staged = await page.request.put(
+      `/api/code/projects/${projectId}/pipeline-builder?branch=main`,
+      {
+        data: {
+          spec: {
+            checks: [build],
+            environments: [{ name: 'production', branch: 'main', steps: [build] }],
+          },
         },
-      },
-    });
+      }
+    );
     expect(staged.ok(), await staged.text()).toBe(true);
 
     // The builder says where it is missing, with a "Set" for each place.
-    await page.goto(`/deployments/${projectId}/pipeline`);
+    await page.goto(pipelineTab(projectId));
     const main = page.getByRole('main');
     const checks = main.getByRole('region', { name: 'Before it runs' });
     await expect(checks).toContainText('DEPLOY_TOKEN is not set for pull requests, production.', {
@@ -90,36 +99,31 @@ test('pipeline builder: "Set it" opens the variable’s line ready for its value
     });
     await checks.getByRole('link', { name: 'Set for production' }).click();
 
-    // Production's box, open on the secret's line, the cursor after the `=`.
-    await expect(page).toHaveURL(
-      new RegExp(`/deployments/${projectId}/runs\\?set=DEPLOY_TOKEN&in=production&secret=1$`)
-    );
-    const production = main.getByRole('region', { name: 'Production' });
-    const box = production
-      .getByRole('form', { name: 'Edit Production' })
-      .getByLabel('Production as text');
-    await expect(box).toHaveValue('secret DEPLOY_TOKEN=', { timeout: 30_000 });
-    await expect(box).toBeFocused();
-    expect(
-      await box.evaluate((el: HTMLTextAreaElement) => [el.selectionStart, el.selectionEnd])
-    ).toEqual([20, 20]);
+    // The Variables tab, production's set: a locked row, the cursor in its value.
+    await expect(page).toHaveURL(/tab=variables&set=DEPLOY_TOKEN&scope=environment&secret=1$/);
+    const production = main.getByTestId('variables-environment-production');
+    const value = production.getByLabel('Value of DEPLOY_TOKEN');
+    await expect(value).toBeFocused({ timeout: 30_000 });
+    await expect(
+      production.getByRole('button', { name: 'DEPLOY_TOKEN is a secret' })
+    ).toHaveAttribute('aria-pressed', 'true');
 
     // Just the value typed, then saved.
     await page.keyboard.type('s3cret-value');
-    await expect(box).toHaveValue('secret DEPLOY_TOKEN=s3cret-value');
     await production.getByRole('button', { name: 'Save' }).click();
-    await expect(production.getByRole('status')).toContainText('added DEPLOY_TOKEN');
-    await expect(production).toContainText('DEPLOY_TOKEN');
-    await expect(production).toContainText('Secured');
+    await expect(production.getByRole('status')).toContainText('Saved: added DEPLOY_TOKEN.');
+    // Saved as a secret: its value is not on the page any more.
+    await expect(value).toHaveValue('');
+    await expect(value).toHaveAttribute('placeholder', 'Secret — type to replace');
 
     // Back on the builder, only pull requests still lack it.
-    await page.goto(`/deployments/${projectId}/pipeline`);
+    await page.goto(pipelineTab(projectId));
     await expect(checks).toContainText('DEPLOY_TOKEN is not set for pull requests.', {
       timeout: 30_000,
     });
     await expect(checks.getByRole('link', { name: 'Set it' })).toHaveAttribute(
       'href',
-      `/deployments/${projectId}/runs?set=DEPLOY_TOKEN&secret=1`
+      `/code/${projectId}/environments?env=production&branch=main&tab=variables&set=DEPLOY_TOKEN&scope=repository&secret=1`
     );
   } finally {
     if (blockId) await page.request.delete(`/api/admin/ci-blocks/${blockId}`);

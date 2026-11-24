@@ -37,17 +37,17 @@ import {
 } from '@/lib/code/github-browse';
 import { readConversation } from '@/lib/ci/pipeline-assistant';
 import { meteredComplete, runAssistantJob, startAssistantJob } from '@/lib/ci/assistant-jobs';
-import { builderBlocks, builderTargets, withBranch } from '@/lib/ci/pipeline-builder';
-import { builderContext } from '@/lib/ci/pipeline-builder-access';
+import { builderBlocks, builderTargets } from '@/lib/ci/pipeline-builder';
+import { branchContext } from '@/lib/ci/pipeline-builder-access';
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const found = await builderContext(request, projectId, { write: true });
+  const found = await branchContext(request, projectId, { write: true });
   if (!found.ok) return found.response;
-  const { subject, origin, host } = found.context;
+  const { subject, origin, host, environment } = found.context;
   const body = await readJsonBody(request);
   const conversation = readConversation(body.conversation);
   if ('error' in conversation) return jsonError(400, 'conversation', conversation.error);
@@ -69,18 +69,17 @@ export async function POST(
   const llm = resolved.val;
   const operator = (await checkAccess([ROLE_OPERATOR])) !== null;
   const caller = { subject, origin };
-  const following = found.context.project;
+  const project = found.context.project;
   const jobId = randomUUID();
-  await startAssistantJob(jobId, subject, following.id, new Date());
+  await startAssistantJob(jobId, subject, project.id, new Date());
 
   // The answer is worked out after this response: the page asks for the
   // job (…/assistant/[jobId]) rather than holding this request open.
   after(() =>
     runAssistantJob(
       jobId,
-      { subject, project: following.name, repository: following.repo.fullName },
+      { subject, project: project.name, repository: project.repo.fullName },
       async () => {
-        const project = await withBranch(caller, following);
         const { fullName, branch } = project.repo;
         const [blocks, targets] = await Promise.all([
           builderBlocks(spec.ok ? spec.value : null),
@@ -94,6 +93,7 @@ export async function POST(
             host,
             repo: fullName,
             branch,
+            environment,
             blocks,
             targets,
             operator,

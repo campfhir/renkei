@@ -12,8 +12,9 @@
  * mention of a branch at all; a chat's title bar is where the checkout's
  * current branch lives and switches) and the state of its checkout on
  * the sandbox — none until the first chat clones it, then ready,
- * cloning, or failed with why — with a link to the project's app under
- * Deployments, where its pipeline, runs, variables and deployments are.
+ * cloning, or failed with why — with a link to the project's Environments
+ * page, where each environment's branches are and, by branch, its
+ * pipeline, runs and variables.
  *
  * The rail, most-looked-at first: a card summarizing the project's open pull
  * requests (pulls-summary.tsx / pulls-page.tsx) and its recent commits
@@ -115,12 +116,12 @@ export function CodeRepoStrip({
         <span className="font-mono text-sm">{code.repoFullName}</span>
         {statusPill}
         <span className="ml-auto flex items-center gap-3">
-          {/* Its pipeline, runs, variables and deployments live under Deployments. */}
+          {/* Its environments: each one's branches, and a branch's pipeline, runs and variables. */}
           <Link
-            href={`/deployments/${projectId}`}
+            href={`/code/${projectId}/environments`}
             className="text-xs font-medium whitespace-nowrap text-blue-600 hover:underline dark:text-blue-400"
           >
-            Deployments
+            Pipelines &amp; environments
           </Link>
           {hostUrl ? (
             <ExternalLink

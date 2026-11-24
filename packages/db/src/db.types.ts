@@ -768,7 +768,19 @@ export interface CiDeployments {
   updated_at: Generated<Timestamp>;
 }
 
+export interface CiEnvironments {
+  branches: Generated<Json>;
+  created_at: Generated<Timestamp>;
+  name: string;
+  position: number;
+  production: Generated<boolean>;
+  project_id: string;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+}
+
 export interface CiPipelines {
+  branch: string;
   created_at: Generated<Timestamp>;
   host: string;
   project_id: string;
@@ -1910,6 +1922,7 @@ export interface DB {
   ci_block_versions: CiBlockVersions;
   ci_blocks: CiBlocks;
   ci_deployments: CiDeployments;
+  ci_environments: CiEnvironments;
   ci_pipelines: CiPipelines;
   ci_targets: CiTargets;
   coach_mark_progress: CoachMarkProgress;

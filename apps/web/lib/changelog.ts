@@ -46,6 +46,23 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-24',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Variables and secrets from a .env file',
+        detail:
+          "The Variables tab of a project's Environments page edits the repository's and each environment's pipeline variables as rows. Upload or paste a .env file: it is read in your browser, each row can be locked as a secret before anything is sent, and Save sends them straight to Bitbucket or GitHub — never to a model. GitHub secrets can now be set from Renkei (sealed to the repository's key), and the “secret NAME=” text syntax is gone.",
+      },
+      {
+        kind: 'changed',
+        title: 'Environments: pipelines, runs and variables by branch',
+        detail:
+          "A code project's pipelines moved from the Deployments section to its own Environments page (the “Pipelines & environments” link on the project). Name the environments you deploy to, assign each the branches of the repository that deploy it — production takes exactly one — then pick an environment and a branch to see that branch's pipeline, its runs and its variables. A pipeline is now built per branch, and its pull request goes against that branch, because the pipeline file lives there. Pipelines built before this are split into one per environment branch; the Deployments item is gone from the menu, and promoting between environments from Renkei with it.",
+      },
+    ],
+  },
+  {
     date: '2026-11-20',
     entries: [
       {

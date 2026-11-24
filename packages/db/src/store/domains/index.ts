@@ -50,6 +50,7 @@ import { codeProjects } from './code-projects';
 import { codeTemplates } from './code-templates';
 import { ciBlocks } from './ci-blocks';
 import { ciDeployments } from './ci-deployments';
+import { ciEnvironments } from './ci-environments';
 import { ciPipelines } from './ci-pipelines';
 import { ciTargets } from './ci-targets';
 import { chatModels } from './chat-models';
@@ -146,6 +147,7 @@ export const DOMAINS = {
   codeTemplates,
   ciBlocks,
   ciDeployments,
+  ciEnvironments,
   ciPipelines,
   ciTargets,
   chatModels,

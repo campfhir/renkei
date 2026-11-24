@@ -2,19 +2,14 @@
  * Deployment reports from pipeline steps, with tokens signed here as each
  * host signs them: a GitHub job's token (Renkei as its audience) and a
  * Bitbucket step's (its repository's UUID) land on the code project whose
- * builder wrote that repository's pipeline — a start, then its outcome on
- * the same row — and everything else is refused with nothing recorded: no
- * token, a token another issuer or key signed, one for another audience or
- * repository, an environment the pipeline does not have.
+ * builder wrote one of that repository's pipelines (there is one a
+ * branch) — a start, then its outcome on the same row — and everything
+ * else is refused with nothing recorded: no token, a token another issuer
+ * or key signed, one for another audience or repository, an environment
+ * the project does not have.
  */
 
-import {
-  SignJWT,
-  createLocalJWKSet,
-  exportJWK,
-  generateKeyPair,
-  type JWTPayload,
-} from 'jose';
+import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair, type JWTPayload } from 'jose';
 import { createMemoryDataStore, getDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { ATLASSIAN_BITBUCKET, GITHUB } from '@renkei/provider-grants';
 import { readReportBody, recordDeploymentReport } from './deployment-reports';
@@ -50,16 +45,20 @@ async function token(claims: JWTPayload, key: CryptoKey = signing): Promise<stri
     .sign(key);
 }
 
-const spec = {
+/** A branch's pipeline, as the builder keeps it: the checks and the one environment it deploys. */
+const specFor = (environment: string, branch: string) => ({
   checks: [],
-  environments: [
-    { name: 'dev', branch: 'develop', steps: [] },
-    { name: 'production', branch: 'main', steps: [] },
-  ],
-};
+  environments: [{ name: environment, branch, steps: [] }],
+});
 
+/**
+ * A code project with dev on develop and production on main: its
+ * environments, and a pipeline for each branch — main's in a pull request,
+ * so the host's name for the repository is known.
+ */
 async function codeProject(provider: string, fullName: string, repoKey: string): Promise<string> {
   const store = getDataStore();
+  const host = provider === GITHUB ? 'github' : 'bitbucket';
   const id = await store.chatProjects.create({
     ownerSubject: 'auth0|ada',
     name: fullName.split('/')[1],
@@ -67,13 +66,26 @@ async function codeProject(provider: string, fullName: string, repoKey: string):
     toolConfig: null,
     repo: { provider, fullName, branch: 'main' },
   });
-  await store.ciPipelines.save(id, {
-    host: provider === GITHUB ? 'github' : 'bitbucket',
-    spec,
+  await store.ciEnvironments.replace(
+    id,
+    [
+      { name: 'dev', production: false, branches: ['develop'] },
+      { name: 'production', production: true, branches: ['main'] },
+    ],
+    'auth0|ada'
+  );
+  await store.ciPipelines.save(id, 'main', {
+    host,
+    spec: specFor('production', 'main'),
+    updatedBy: 'auth0|ada',
+  });
+  await store.ciPipelines.save(id, 'develop', {
+    host,
+    spec: specFor('dev', 'develop'),
     updatedBy: 'auth0|ada',
   });
   await store.ciPipelines.setRepoKey(id, repoKey);
-  await store.ciPipelines.markWritten(id, { text: 'pipelines: {}', pullRequestUrl: null });
+  await store.ciPipelines.markWritten(id, 'main', { text: 'pipelines: {}', pullRequestUrl: null });
   return id;
 }
 
@@ -194,7 +206,7 @@ describe('a Bitbucket step’s report', () => {
     });
   });
 
-  it('is refused for a repository no project built a pipeline for, or an environment it does not have', async () => {
+  it('is refused for a repository no project built a pipeline for, or an environment the project does not have', async () => {
     await codeProject(
       ATLASSIAN_BITBUCKET,
       'acme/portal-web',
@@ -206,7 +218,77 @@ describe('a Bitbucket step’s report', () => {
     expect(await report(await token(claims), body({ environment: 'qa' }))).toEqual({
       ok: false,
       status: 400,
-      error: 'The pipeline Renkei built for acme/portal-web has no environment qa.',
+      error: 'The project Renkei keeps for acme/portal-web has no environment qa.',
+    });
+    expect(await getDataStore().ciDeployments.recent([], 10)).toEqual([]);
+  });
+
+  it('is taken for an environment the project has, whichever branch’s pipeline deploys it', async () => {
+    // Only develop has a pipeline here, never put in a pull request: the
+    // report for production still finds the project through that row.
+    const store = getDataStore();
+    const id = await store.chatProjects.create({
+      ownerSubject: 'auth0|ada',
+      name: 'intake',
+      description: null,
+      toolConfig: null,
+      repo: { provider: ATLASSIAN_BITBUCKET, fullName: 'acme/intake', branch: 'main' },
+    });
+    await store.ciEnvironments.replace(
+      id,
+      [
+        { name: 'production', production: true, branches: ['main'] },
+        { name: 'dev', production: false, branches: ['develop', 'feature/intake'] },
+      ],
+      'auth0|ada'
+    );
+    await store.ciPipelines.save(id, 'develop', {
+      host: 'bitbucket',
+      spec: specFor('dev', 'develop'),
+      updatedBy: 'auth0|ada',
+    });
+    await store.ciPipelines.setRepoKey(id, '8f2c1a9e-0000-4000-8000-00000000abcd');
+    expect(await report(await token(claims), body({ status: 'succeeded' }))).toMatchObject({
+      ok: true,
+      projectId: id,
+      environment: 'production',
+    });
+    // A second branch of dev reports to dev, under the project's spelling.
+    expect(
+      await report(
+        await token({ ...claims, branchName: 'feature/intake' }),
+        body({ environment: 'DEV', status: 'succeeded', run: '413' })
+      )
+    ).toMatchObject({ ok: true, projectId: id, environment: 'dev' });
+    const rows = await store.ciDeployments.recent([id], 10);
+    expect(rows.map((r) => [r.environment, r.branch]).sort()).toEqual([
+      ['dev', 'feature/intake'],
+      ['production', 'develop'],
+    ]);
+  });
+
+  it('a project that named no environments has its production one, and only that', async () => {
+    const store = getDataStore();
+    const id = await store.chatProjects.create({
+      ownerSubject: 'auth0|ada',
+      name: 'bare',
+      description: null,
+      toolConfig: null,
+      repo: { provider: ATLASSIAN_BITBUCKET, fullName: 'acme/bare', branch: 'main' },
+    });
+    await store.ciPipelines.save(id, 'main', {
+      host: 'bitbucket',
+      spec: specFor('production', 'main'),
+      updatedBy: 'auth0|ada',
+    });
+    await store.ciPipelines.setRepoKey(id, '8f2c1a9e-0000-4000-8000-00000000abcd');
+    expect(await report(await token(claims), body({ status: 'succeeded' }))).toMatchObject({
+      ok: true,
+      environment: 'production',
+    });
+    expect(await report(await token(claims), body({ environment: 'dev' }))).toMatchObject({
+      ok: false,
+      status: 400,
     });
   });
 

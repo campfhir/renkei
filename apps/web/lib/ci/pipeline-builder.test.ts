@@ -1,11 +1,12 @@
 /**
- * The pipeline builder's service against a scripted host: the page's data
- * (a pipeline suggested from the repository's files, what the host says
+ * The pipeline builder's service against a scripted host, for one branch's
+ * pipeline: the page's data (a pipeline suggested from the branch's files
+ * and held to the one environment the branch deploys, what the host says
  * for the checks), and opening the pull request on each host — a branch
- * from the project's branch, the file committed there, a pull request
- * against it, the file recorded as written — then a second open adding a
- * commit to the same pull request, and a pipeline that cannot be written
- * refused with nothing sent.
+ * from the pipeline's branch, the file committed there, a pull request
+ * against it, the file recorded as written for that branch — then a second
+ * open adding a commit to the same pull request, and a pipeline that
+ * cannot be written refused with nothing sent.
  */
 
 jest.mock('@/lib/code/github-browse', () => ({
@@ -26,8 +27,11 @@ import { readPipelineSpec, type PipelineSpec } from '@renkei/ci-blocks';
 import {
   builderPage,
   freshBranch,
+  onBranch,
   openPipelinePullRequest,
   pullRequestText,
+  savePipeline,
+  specForBranch,
   type CodeRepoProject,
 } from './pipeline-builder';
 
@@ -185,21 +189,26 @@ describe('on GitHub', () => {
     },
   };
 
-  it('suggests a pipeline from the repository’s files, with what the host says for the checks', async () => {
+  it('suggests a pipeline from the branch’s files, for the one environment it deploys, with what the host says for the checks', async () => {
     githubBrowse.githubAuthOf.mockReturnValue(host(answers));
-    const page = await builderPage(caller, project(GITHUB));
+    const page = await builderPage(caller, project(GITHUB), 'production');
     expect(page).toMatchObject({
       host: 'github',
       file: '.github/workflows/pipeline.yml',
+      environment: 'production',
       suggested: true,
       found: ['Go · go.mod'],
       pullRequestUrl: null,
     });
-    expect(page.spec.environments.map((e) => [e.name, e.branch])).toEqual([
-      ['dev', 'develop'],
-      ['production', 'main'],
+    // The suggestion names dev and production; this branch holds only its own.
+    expect(page.spec.environments.map((e) => [e.name, e.branch])).toEqual([['production', 'main']]);
+    expect(page.spec.environments[0]?.steps.map((s) => s.block)).toEqual([
+      'go-test-build',
+      'deploy-systemd',
     ]);
+    expect(readPipelineSpec(page.spec).ok).toBe(true);
     expect(page.facts).toMatchObject({
+      branch: 'main',
       repoVariables: ['HEALTH_URL'],
       environments: [{ name: 'production', variables: [] }],
       branches: ['main', 'develop'],
@@ -208,40 +217,70 @@ describe('on GitHub', () => {
     });
   });
 
-  it('a project that follows the default branch deploys production from it, and opens the pull request against it', async () => {
-    const following = { ...project(GITHUB), repo: { ...project(GITHUB).repo, branch: '' } };
-    const github = host({
-      ...answers,
-      [`GET ${repo}`]: { body: { default_branch: 'trunk' } },
-      [`GET ${repo}/branches`]: {
-        body: [
-          { name: 'trunk', commit: { sha: 'trunk-sha' } },
-          { name: 'develop', commit: { sha: 'dev-sha' } },
-        ],
-      },
-    });
-    githubBrowse.githubAuthOf.mockReturnValue(github);
-    const page = await builderPage(caller, following);
-    expect(page.spec.environments.map((e) => [e.name, e.branch])).toEqual([
-      ['dev', 'develop'],
-      ['production', 'trunk'],
-    ]);
-    expect(page.facts.branch).toBe('trunk');
-    // It reads as a pipeline the builder can save.
-    expect(readPipelineSpec(page.spec).ok).toBe(true);
+  it('a branch assigned to an environment of another name deploys that one', async () => {
+    githubBrowse.githubAuthOf.mockReturnValue(host(answers));
+    const page = await builderPage(caller, onBranch(project(GITHUB), 'develop'), 'staging');
+    expect(page.spec.environments.map((e) => [e.name, e.branch])).toEqual([['staging', 'develop']]);
+    expect(page.facts.branch).toBe('develop');
+  });
 
-    const trunkSpec = {
+  it('a pipeline saved for one branch is that branch’s alone', async () => {
+    githubBrowse.githubAuthOf.mockReturnValue(host(answers));
+    await savePipeline(project(GITHUB), spec, caller.subject);
+    const main = await builderPage(caller, project(GITHUB), 'production');
+    expect(main.suggested).toBe(false);
+    expect(main.spec).toEqual(spec);
+    const develop = await builderPage(caller, onBranch(project(GITHUB), 'develop'), 'dev');
+    expect(develop.suggested).toBe(true);
+    expect(await getDataStore().ciPipelines.get(project(GITHUB).id, 'develop')).toBeNull();
+    expect(
+      (await getDataStore().ciPipelines.listForProject(project(GITHUB).id)).map((p) => p.branch)
+    ).toEqual(['main']);
+  });
+
+  it('the pull request goes against the branch asked for, from its head', async () => {
+    const github = host(answers);
+    githubBrowse.githubAuthOf.mockReturnValue(github);
+    const devSpec: PipelineSpec = {
       ...spec,
-      environments: [{ ...spec.environments[0], branch: 'trunk' }],
+      environments: [{ ...spec.environments[0]!, name: 'dev', branch: 'develop' }],
     };
-    const opened = await openPipelinePullRequest(caller, following, trunkSpec, new Date());
+    const opened = await openPipelinePullRequest(
+      caller,
+      onBranch(project(GITHUB), 'develop'),
+      devSpec,
+      new Date()
+    );
     expect(opened).toMatchObject({ ok: true });
     expect(
       github.calls.find((c) => c.method === 'POST' && c.path.endsWith('/git/refs'))?.json
-    ).toEqual({ ref: 'refs/heads/renkei/pipeline', sha: 'trunk-sha' });
+    ).toEqual({ ref: 'refs/heads/renkei/pipeline', sha: 'dev-sha' });
     expect(
       github.calls.find((c) => c.method === 'POST' && c.path.endsWith('/pulls'))?.json
-    ).toMatchObject({ base: 'trunk' });
+    ).toMatchObject({ base: 'develop' });
+    // Written for develop; main has no pipeline here.
+    const saved = await getDataStore().ciPipelines.get(project(GITHUB).id, 'develop');
+    expect(saved?.pullRequestUrl).toBe('https://github.com/acme/sync-worker/pull/7');
+    expect(saved?.writtenText).toContain('dev-deploy-systemd:');
+    expect(await getDataStore().ciPipelines.get(project(GITHUB).id, 'main')).toBeNull();
+  });
+
+  it('a branch the host does not list has nothing to open the pull request against', async () => {
+    const github = host(answers);
+    githubBrowse.githubAuthOf.mockReturnValue(github);
+    const opened = await openPipelinePullRequest(
+      caller,
+      onBranch(project(GITHUB), 'release'),
+      specForBranch(spec, 'production', 'release'),
+      new Date()
+    );
+    expect(opened).toEqual({
+      ok: false,
+      status: 409,
+      error:
+        'GitHub did not list the branch release, so there is nothing to open the pull request against.',
+    });
+    expect(github.calls.filter((c) => c.method !== 'GET')).toEqual([]);
   });
 
   it('opens a pull request from a new branch, then adds to it while it is open', async () => {
@@ -268,7 +307,7 @@ describe('on GitHub', () => {
       head: 'renkei/pipeline',
       base: 'main',
     });
-    const saved = await getDataStore().ciPipelines.get(project(GITHUB).id);
+    const saved = await getDataStore().ciPipelines.get(project(GITHUB).id, 'main');
     expect(saved?.pullRequestUrl).toBe('https://github.com/acme/sync-worker/pull/7');
     expect(saved?.writtenText).toContain('production-deploy-systemd:');
     expect(saved?.writtenText).toContain('https://renkei.example/api/deployments/report');
@@ -318,13 +357,13 @@ describe('on GitHub', () => {
       ],
     });
     expect(github.calls).toEqual([]);
-    expect(await getDataStore().ciPipelines.get(project(GITHUB).id)).toBeNull();
+    expect(await getDataStore().ciPipelines.get(project(GITHUB).id, 'main')).toBeNull();
   });
 });
 
 describe('on Bitbucket', () => {
   const repo = '/repositories/acme/sync-worker';
-  it('commits the file on a new branch from the project’s branch, and opens the pull request', async () => {
+  it('commits the file on a new branch from the pipeline’s branch, and opens the pull request', async () => {
     const bitbucket = host({
       [`GET ${repo}/refs/branches`]: {
         body: {
@@ -369,71 +408,45 @@ describe('on Bitbucket', () => {
   });
 });
 
-describe('environment branches the host lacks', () => {
-  const withDev: PipelineSpec = {
-    ...spec,
+describe('a pipeline as one branch holds it', () => {
+  const build = { block: 'go-test-build', version: 1, inputs: {} };
+  const deploy = { block: 'deploy-systemd', version: 1, inputs: { service_name: 'x' } };
+  const both: PipelineSpec = {
+    checks: [build],
     environments: [
-      { ...spec.environments[0], name: 'dev', branch: 'develop' },
-      spec.environments[0],
+      { name: 'dev', branch: 'develop', steps: [build] },
+      { name: 'production', branch: 'main', steps: [build, deploy] },
     ],
   };
 
-  it('Bitbucket: makes them from the project’s branch before the pull request, and says so in it', async () => {
-    const repo = '/repositories/acme/sync-worker';
-    const bitbucket = host({
-      [`GET ${repo}/refs/branches`]: {
-        body: { values: [{ name: 'main', target: { hash: 'base-sha' } }] },
-      },
-      [`POST ${repo}/refs/branches`]: { status: 201, body: { name: 'develop' } },
-      [`GET ${repo}/pullrequests`]: { body: { values: [] } },
-      [`POST ${repo}/src`]: { status: 201, body: {} },
-      [`POST ${repo}/pullrequests`]: {
-        status: 201,
-        body: {
-          id: 3,
-          links: { html: { href: 'https://bitbucket.org/acme/sync-worker/pull-requests/3' } },
-        },
-      },
-    });
-    bitbucketBrowse.bitbucketAuthOf.mockReturnValue(bitbucket);
-    const opened = await openPipelinePullRequest(
-      caller,
-      project(ATLASSIAN_BITBUCKET),
-      withDev,
-      new Date()
-    );
-    expect(opened).toMatchObject({ ok: true, created: ['develop'] });
-    const made = bitbucket.calls.filter(
-      (c) => c.method === 'POST' && c.path.endsWith('/refs/branches')
-    );
-    expect(made.map((c) => c.json)).toEqual([{ name: 'develop', target: { hash: 'base-sha' } }]);
-    const pr = bitbucket.calls.find((c) => c.method === 'POST' && c.path.endsWith('/pullrequests'));
-    expect(pr?.json).toMatchObject({
-      description: expect.stringContaining(
-        '`develop` did not exist, so Renkei made it from `main`.'
-      ),
+  it('keeps the checks and the steps the spec had for the branch', () => {
+    expect(specForBranch(both, 'production', 'main')).toEqual({
+      checks: [build],
+      environments: [{ name: 'production', branch: 'main', steps: [build, deploy] }],
     });
   });
 
-  it('GitHub: a refused branch opens no pull request, in GitHub’s words', async () => {
-    const repo = '/repos/acme/sync-worker';
-    const github = host({
-      [`GET ${repo}/branches`]: { body: [{ name: 'main', commit: { sha: 'base-sha' } }] },
-      [`GET ${repo}/contents/`]: { body: [] },
-      [`POST ${repo}/git/refs`]: { status: 403, body: { message: 'Resource not accessible' } },
-    });
-    githubBrowse.githubAuthOf.mockReturnValue(github);
-    const opened = await openPipelinePullRequest(caller, project(GITHUB), withDev, new Date());
-    expect(opened).toMatchObject({ ok: false, status: 502 });
-    expect(opened.ok ? '' : opened.error).toMatch(
-      /^GitHub refused the branch develop: .*; no pull request was opened\.$/
-    );
-    expect(github.calls.some((c) => c.method === 'POST' && c.path.endsWith('/pulls'))).toBe(false);
-    expect(
-      github.calls
-        .filter((c) => c.method === 'POST' && c.path.endsWith('/git/refs'))
-        .map((c) => c.json)
-    ).toEqual([{ ref: 'refs/heads/develop', sha: 'base-sha' }]);
+  it('follows the branch when its environment was renamed', () => {
+    expect(specForBranch(both, 'live', 'main').environments).toEqual([
+      { name: 'live', branch: 'main', steps: [build, deploy] },
+    ]);
+  });
+
+  it('takes the steps of the environment’s name when the branch is new to it, whatever its case', () => {
+    expect(specForBranch(both, 'Dev', 'feature/intake').environments).toEqual([
+      { name: 'Dev', branch: 'feature/intake', steps: [build] },
+    ]);
+  });
+
+  it('starts with no steps when the spec knows neither', () => {
+    expect(specForBranch(both, 'staging', 'release').environments).toEqual([
+      { name: 'staging', branch: 'release', steps: [] },
+    ]);
+  });
+
+  it('keeps the project’s own blocks', () => {
+    const own = { ...both, blocks: [] };
+    expect(specForBranch(own, 'dev', 'develop').blocks).toEqual([]);
   });
 });
 
@@ -451,7 +464,7 @@ describe('the pull request’s words', () => {
         '- **Pull requests:** Go: vet, test, build',
         '- **production**, on merge to `main`: Go: vet, test, build → Deploy with systemd on onprem-workers',
         '',
-        'Once merged, GitHub runs it: merging to an environment’s branch deploys that environment.',
+        'Once merged, GitHub runs it: the file lives on this branch, so a merge to it is what deploys.',
       ].join('\n'),
     });
   });

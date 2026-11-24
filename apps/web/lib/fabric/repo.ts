@@ -13,8 +13,7 @@
  * and never reuses a branch.
  */
 
-import { getDataStore } from '@renkei/db';
-import { readPipelineSpec, type Host } from '@renkei/ci-blocks';
+import type { Host } from '@renkei/ci-blocks';
 import { getOrgSettings } from '@renkei/settings';
 import { isRecord } from '@renkei/guards';
 import { trimChar, type RepoFile } from '@renkei/connector-fabric';
@@ -25,6 +24,7 @@ import { bitbucketAuthOf } from '@/lib/code/bitbucket-browse';
 import { repoBase } from '@/lib/code/bitbucket-pipelines';
 import { githubAuthOf } from '@/lib/code/github-browse';
 import { ownerRepoOf } from '@/lib/code/github-actions';
+import { projectEnvironments } from '@/lib/ci/environments';
 import { hostOf, type CodeRepoProject } from '@/lib/ci/pipeline-builder';
 import { bbJson, describeBitbucketFailure } from '@/lib/mcp-tools/bitbucket/client';
 import { ghJson, rec, str } from '@/lib/mcp-tools/github/client';
@@ -76,13 +76,13 @@ export async function resolveRepoProject(
   return { project: { ...project, repo: project.repo }, host };
 }
 
-/** The environments of the project's pipeline, as saved in the pipeline builder; none before one is. */
+/** The project's environments that have a branch assigned, each with its first; none before one is. */
 export async function pipelineEnvironments(
   project: CodeRepoProject
 ): Promise<{ name: string; branch: string }[]> {
-  const saved = await getDataStore().ciPipelines.get(project.id);
-  const spec = saved ? readPipelineSpec(saved.spec) : null;
-  return spec?.ok ? spec.value.environments.map((e) => ({ name: e.name, branch: e.branch })) : [];
+  return (await projectEnvironments(project.id)).flatMap((environment) =>
+    environment.branches[0] ? [{ name: environment.name, branch: environment.branches[0] }] : []
+  );
 }
 
 /** The branch a change is proposed against: the one asked for, the first environment's, or the project's. */

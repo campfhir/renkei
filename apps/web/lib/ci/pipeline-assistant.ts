@@ -119,7 +119,10 @@ export interface AssistantInput {
   specProblems?: string[];
   host: Host;
   repo: string;
+  /** The branch whose pipeline this is: its file lives there, and it is read from there. */
   branch: string;
+  /** The environment the branch is assigned to: what merges to it deploy. */
+  environment: string;
   /** The organization's published blocks (every version the builder knows). */
   blocks: (PipelineBlock & { description: string | null })[];
   targets: CheckTarget[];
@@ -179,8 +182,8 @@ function systemPrompt(input: AssistantInput): string {
     .map((t) => `${t.name}${t.labels[input.host].length === 0 ? ` (no ${hostName} labels)` : ''}`)
     .join(', ');
   return [
-    `You help a person tailor the CI/CD pipeline of the repository ${input.repo} (on ${hostName}, branch ${input.branch || 'its default'}) in Renkei's pipeline builder.`,
-    `The builder writes ${PIPELINE_FILE[input.host]} from a pipeline made of building blocks: steps run on every pull request ("checks", nothing deploys), then environments, each a branch whose merges deploy it. Renkei never deploys; merging starts ${hostName}'s pipeline.`,
+    `You help a person tailor the CI/CD pipeline of the branch ${input.branch} of the repository ${input.repo} (on ${hostName}) in Renkei's pipeline builder. The branch is assigned to the project's environment "${input.environment}".`,
+    `The builder writes ${PIPELINE_FILE[input.host]} onto that branch from a pipeline made of building blocks: steps run on every pull request ("checks", nothing deploys), then the steps that deploy ${input.environment} when something merges to ${input.branch}. A pipeline file lives on its branch, so this pipeline is about this branch alone: "environments" always holds exactly one entry, { "name": "${input.environment}", "branch": "${input.branch}", "steps": [...] }. Other environments and branches have pipelines of their own; never add them here. Renkei never deploys; merging starts ${hostName}'s pipeline.`,
     '',
     'Work from the actual source: list and read the files that say how the project builds, tests and runs (package manifests, lockfiles, Dockerfiles, Makefiles, compose files, existing CI files, scripts) before proposing anything. Do not guess commands the repository does not support.',
     '',
@@ -220,7 +223,7 @@ function tools(operator: boolean): LlmToolDef[] {
   const list: LlmToolDef[] = [
     {
       name: 'list_files',
-      description: 'List one directory of the repository on the project’s branch.',
+      description: 'List one directory of the repository on the pipeline’s branch.',
       inputSchema: {
         type: 'object',
         properties: { path: { type: 'string', description: 'Relative; empty for the top level.' } },
@@ -228,7 +231,7 @@ function tools(operator: boolean): LlmToolDef[] {
     },
     {
       name: 'read_file',
-      description: 'Read one text file of the repository on the project’s branch.',
+      description: 'Read one text file of the repository on the pipeline’s branch.',
       inputSchema: {
         type: 'object',
         properties: { path: { type: 'string' } },
@@ -299,7 +302,8 @@ type ToolOutcome = { content: string; isError?: boolean };
 /** A propose_pipeline call read whole, or what to tell the model. */
 export function readPipelineProposal(
   raw: unknown,
-  input: Pick<AssistantInput, 'host' | 'blocks' | 'targets'>
+  input: Pick<AssistantInput, 'host' | 'blocks' | 'targets'> &
+    Partial<Pick<AssistantInput, 'environment' | 'branch'>>
 ): PipelineProposal | { problems: string[] } {
   const call = isRecord(raw) ? raw : {};
   const read = readPipelineSpec({
@@ -309,6 +313,21 @@ export function readPipelineProposal(
   });
   if (!read.ok) return { problems: read.errors };
   const spec = read.value;
+  if (input.environment !== undefined && input.branch !== undefined) {
+    const [only, ...others] = spec.environments;
+    if (
+      !only ||
+      others.length > 0 ||
+      only.branch !== input.branch ||
+      only.name.toLowerCase() !== input.environment.toLowerCase()
+    ) {
+      return {
+        problems: [
+          `This pipeline is the branch ${input.branch}’s alone: "environments" must hold exactly one entry, named ${input.environment} with branch ${input.branch}.`,
+        ],
+      };
+    }
+  }
   const organization = (key: string, version: number) =>
     input.blocks.find((b) => b.key === key && b.version === version) ?? null;
   const blockAt = blockOfStep(spec, organization);

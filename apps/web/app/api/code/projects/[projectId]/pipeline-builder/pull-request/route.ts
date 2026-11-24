@@ -14,8 +14,8 @@ import { readPipelineSpec } from '@renkei/ci-blocks';
 import { jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { missingScope } from '@/lib/code/access';
-import { openPipelinePullRequest } from '@/lib/ci/pipeline-builder';
-import { builderContext } from '@/lib/ci/pipeline-builder-access';
+import { openPipelinePullRequest, specForBranch } from '@/lib/ci/pipeline-builder';
+import { branchContext } from '@/lib/ci/pipeline-builder-access';
 import { logger } from '@/lib/logger';
 import { whoIs } from '@/lib/log-actor';
 
@@ -24,9 +24,9 @@ export async function POST(
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const found = await builderContext(request, projectId, { write: true });
+  const found = await branchContext(request, projectId, { write: true });
   if (!found.ok) return found.response;
-  const { project, subject, origin, host, scopes } = found.context;
+  const { project, subject, origin, host, scopes, environment, branch: base } = found.context;
   const provider = host === 'github' ? GITHUB : project.repo.provider;
   for (const scope of ['repository:write', 'pullrequest:write']) {
     const needs = missingScope(scopes, scope, host === 'github' ? GITHUB : undefined);
@@ -43,7 +43,7 @@ export async function POST(
   const outcome = await openPipelinePullRequest(
     { subject, origin },
     project,
-    spec.value,
+    specForBranch(spec.value, environment, base),
     new Date()
   );
   if (!outcome.ok) {
@@ -74,13 +74,15 @@ export async function POST(
     details: {
       projectId,
       repository: project.repo.fullName,
+      environment,
+      into: base,
       branch: outcome.branch,
       url: outcome.url,
       updated: outcome.updated,
     },
   });
   logger.info(
-    '{actor} {verb} the pull request with the pipeline of the project "{project}" ({repository}) from {branch}: {url}',
+    '{actor} {verb} the pull request with the {into} pipeline of the project "{project}" ({repository}) from {branch}: {url}',
     {
       component: 'api/code/projects/pipeline-builder/pull-request',
       ...(await whoIs(subject)),
@@ -88,6 +90,8 @@ export async function POST(
       project: project.name,
       repository: project.repo.fullName,
       verb: outcome.updated ? 'updated' : 'opened',
+      into: base,
+      environment,
       branch: outcome.branch,
       url: outcome.url,
     }
@@ -96,6 +100,5 @@ export async function POST(
     url: outcome.url,
     branch: outcome.branch,
     updated: outcome.updated,
-    created: outcome.created ?? [],
   });
 }

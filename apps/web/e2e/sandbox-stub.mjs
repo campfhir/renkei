@@ -19,6 +19,8 @@
 import { createServer } from 'node:http';
 import { generateKeyPairSync, randomUUID, sign as signWith } from 'node:crypto';
 import JSZip from 'jszip';
+import nacl from 'tweetnacl';
+import { blake2b } from '@noble/hashes/blake2b';
 
 const PORT = Number(process.env.SANDBOX_STUB_PORT ?? '8092');
 const API_KEY = process.env.SANDBOX_WORKER_API_KEY ?? 'e2e-sandbox-key';
@@ -1450,6 +1452,64 @@ function handlePipelineVariables(request, response, list, uuid) {
  */
 const GITHUB_ACTIONS = new Map();
 
+/**
+ * The key GitHub seals secrets to: a secret arrives as a libsodium sealed
+ * box (the app's lib/code/sealed-box.ts). This stand-in opens each one as
+ * GitHub would, and refuses one that does not open — so a secret saved in
+ * the browser suite was really sealed to this key — then keeps its name
+ * and forgets its value, as GitHub never gives one back.
+ */
+const SECRET_KEY = nacl.box.keyPair();
+const SECRET_KEY_ID = 'stub-key-1';
+
+function opensSealed(base64) {
+  const sealed = new Uint8Array(Buffer.from(String(base64 ?? ''), 'base64'));
+  if (sealed.length < 48) return false;
+  const ephemeral = sealed.subarray(0, 32);
+  const both = new Uint8Array(64);
+  both.set(ephemeral, 0);
+  both.set(SECRET_KEY.publicKey, 32);
+  const nonce = blake2b(both, { dkLen: 24 });
+  return nacl.box.open(sealed.subarray(32), nonce, ephemeral, SECRET_KEY.secretKey) !== null;
+}
+
+/** The secrets endpoints of one set: the names, the sealing key, and putting or deleting one. */
+function handleActionsSecrets(request, response, names, name) {
+  if (!name) {
+    return json(response, 200, {
+      total_count: names.length,
+      secrets: names.map((secret) => ({ name: secret })),
+    });
+  }
+  if (name === 'public-key') {
+    return json(response, 200, {
+      key_id: SECRET_KEY_ID,
+      key: Buffer.from(SECRET_KEY.publicKey).toString('base64'),
+    });
+  }
+  const wanted = decodeURIComponent(name);
+  if (request.method === 'PUT') {
+    void readBody(request).then((body) => {
+      if (body.key_id !== SECRET_KEY_ID || !opensSealed(body.encrypted_value)) {
+        return error(response, 422, 'unprocessable', 'The secret is not sealed to the key.');
+      }
+      const existed = names.includes(wanted);
+      if (!existed) names.push(wanted);
+      response.writeHead(existed ? 204 : 201);
+      response.end();
+    });
+    return;
+  }
+  if (request.method === 'DELETE') {
+    const at = names.indexOf(wanted);
+    if (at < 0) return error(response, 404, 'not_found', 'Not Found');
+    names.splice(at, 1);
+    response.writeHead(204);
+    return response.end();
+  }
+  return error(response, 405, 'method_not_allowed');
+}
+
 function actionsOf(fullName) {
   if (!GITHUB_ACTIONS.has(fullName)) {
     GITHUB_ACTIONS.set(fullName, {
@@ -1633,11 +1693,29 @@ function handleGitHubActions(request, url, response) {
   const repoVariables = /^actions\/variables(?:\/([^/]+))?$/.exec(rest);
   if (repoVariables)
     return handleActionsVariables(request, response, state.variables, repoVariables[1]);
-  if (rest === 'actions/secrets') {
-    return json(response, 200, {
-      total_count: state.secrets.length,
-      secrets: state.secrets.map((name) => ({ name })),
-    });
+  const repoSecrets = /^actions\/secrets(?:\/([^/]+))?$/.exec(rest);
+  if (repoSecrets) return handleActionsSecrets(request, response, state.secrets, repoSecrets[1]);
+  // The branches the Environments page offers to assign.
+  if (rest === 'branches') {
+    return json(
+      response,
+      200,
+      ['main', 'develop', 'release/2.0'].map((name, index) => ({
+        name,
+        commit: { sha: `${index}a1b2c3d4e5f6`.padEnd(40, '0') },
+      }))
+    );
+  }
+  // One environment: whether it is there, and making it.
+  const oneEnvironment = /^environments\/([^/]+)$/.exec(rest);
+  if (oneEnvironment) {
+    const name = decodeURIComponent(oneEnvironment[1]);
+    const found = state.environments.find((entry) => entry.name === name);
+    if (request.method === 'PUT') {
+      if (!found) state.environments.push({ name, variables: [], secrets: [] });
+      return json(response, 200, { name });
+    }
+    return found ? json(response, 200, { name }) : error(response, 404, 'not_found', 'Not Found');
   }
   if (rest === 'environments') {
     return json(response, 200, {
@@ -1652,10 +1730,7 @@ function handleGitHubActions(request, url, response) {
     );
     if (!found) return error(response, 404, 'not_found', 'Not Found');
     if (environment[2] === 'secrets') {
-      return json(response, 200, {
-        total_count: found.secrets.length,
-        secrets: found.secrets.map((name) => ({ name })),
-      });
+      return handleActionsSecrets(request, response, found.secrets, environment[3]);
     }
     return handleActionsVariables(request, response, found.variables, environment[3]);
   }
@@ -1922,6 +1997,16 @@ function handleBitbucket(request, url, response) {
     }
     return json(response, 200, { values: state.runs });
   }
+  // The branches the Environments page offers to assign, on any repository
+  // (the pipeline-demo ones keep their own, in handlePipelineDemo).
+  if (/^\/repositories\/[^/]+\/[^/]+\/refs\/branches$/.test(path) && request.method === 'GET') {
+    return json(response, 200, {
+      values: [
+        { name: 'main', target: { hash: 'a1b2c3d4e5f6' } },
+        { name: 'develop', target: { hash: 'f6e5d4c3b2a1' } },
+      ],
+    });
+  }
   const repoVariables =
     /^\/repositories\/([^/]+)\/([^/]+)\/pipelines_config\/variables(?:\/([^/]+))?$/.exec(path);
   if (repoVariables) {
@@ -1931,6 +2016,21 @@ function handleBitbucket(request, url, response) {
   const environments = /^\/repositories\/([^/]+)\/([^/]+)\/environments$/.exec(path);
   if (environments) {
     const state = pipelinesOf(`${environments[1]}/${environments[2]}`);
+    if (request.method === 'POST') {
+      // A deployment environment made from the Variables tab.
+      void readBody(request).then((body) => {
+        const made = {
+          uuid: `{${randomUUID()}}`,
+          name: String(body.name ?? ''),
+          environment_type: { name: body.environment_type?.name ?? 'Test' },
+          rank: state.environments.length + 3,
+          variables: [],
+        };
+        state.environments.push(made);
+        json(response, 201, { uuid: made.uuid, name: made.name });
+      });
+      return;
+    }
     return json(response, 200, {
       values: state.environments.map((environment) => {
         const rest = { ...environment };
@@ -3419,10 +3519,20 @@ const FABRIC_NOTEBOOK = '0f0f0f0f-0000-4000-8000-00000000f002';
 const FABRIC_PIPELINE = '0f0f0f0f-0000-4000-8000-00000000f003';
 const FABRIC_LAKEHOUSE = '0f0f0f0f-0000-4000-8000-00000000f004';
 const FABRIC_ITEMS = [
-  { id: FABRIC_NOTEBOOK, displayName: 'Load orders', type: 'Notebook', description: 'Bronze to silver' },
+  {
+    id: FABRIC_NOTEBOOK,
+    displayName: 'Load orders',
+    type: 'Notebook',
+    description: 'Bronze to silver',
+  },
   { id: FABRIC_PIPELINE, displayName: 'Nightly load', type: 'DataPipeline', description: '' },
   { id: FABRIC_LAKEHOUSE, displayName: 'Bronze', type: 'Lakehouse', description: '' },
-  { id: '0f0f0f0f-0000-4000-8000-00000000f005', displayName: 'Revenue', type: 'Report', description: '' },
+  {
+    id: '0f0f0f0f-0000-4000-8000-00000000f005',
+    displayName: 'Revenue',
+    type: 'Report',
+    description: '',
+  },
 ].map((item) => ({ ...item, workspaceId: FABRIC_WORKSPACE }));
 const FABRIC_NOTEBOOK_IPYNB = JSON.stringify({
   nbformat: 4,
@@ -3483,11 +3593,17 @@ function handleFabric(request, url, response) {
     });
   }
   if (request.method === 'GET' && path === `/workspaces/${FABRIC_WORKSPACE}`) {
-    return json(response, 200, { id: FABRIC_WORKSPACE, displayName: 'Sales Analytics', type: 'Workspace' });
+    return json(response, 200, {
+      id: FABRIC_WORKSPACE,
+      displayName: 'Sales Analytics',
+      type: 'Workspace',
+    });
   }
   if (request.method === 'GET' && path === `/workspaces/${FABRIC_WORKSPACE}/items`) {
     const type = url.searchParams.get('type');
-    return json(response, 200, { value: FABRIC_ITEMS.filter((item) => !type || item.type === type) });
+    return json(response, 200, {
+      value: FABRIC_ITEMS.filter((item) => !type || item.type === type),
+    });
   }
   if (
     request.method === 'GET' &&
@@ -3495,8 +3611,18 @@ function handleFabric(request, url, response) {
   ) {
     return json(response, 200, {
       data: [
-        { name: 'orders', type: 'Managed', format: 'Delta', location: 'abfss://onelake/Tables/orders' },
-        { name: 'customers', type: 'Managed', format: 'Delta', location: 'abfss://onelake/Tables/customers' },
+        {
+          name: 'orders',
+          type: 'Managed',
+          format: 'Delta',
+          location: 'abfss://onelake/Tables/orders',
+        },
+        {
+          name: 'customers',
+          type: 'Managed',
+          format: 'Delta',
+          location: 'abfss://onelake/Tables/customers',
+        },
       ],
     });
   }
@@ -3525,7 +3651,9 @@ function handleFabric(request, url, response) {
     }
     return json(response, 200, {
       status: done ? 'Succeeded' : 'Running',
-      percentComplete: done ? 100 : Math.min(95, Math.round((elapsed / FABRIC_DEFINITION_MS) * 100)),
+      percentComplete: done
+        ? 100
+        : Math.min(95, Math.round((elapsed / FABRIC_DEFINITION_MS) * 100)),
     });
   }
   return json(response, 404, { errorCode: 'EntityNotFound', message: 'Not found.' });

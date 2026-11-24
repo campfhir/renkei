@@ -18,7 +18,6 @@
  * what Bitbucket does, nothing kept.
  */
 
-import { parseDotenv } from '@renkei/connector-sandbox';
 import type { BitbucketAuth } from '@/lib/mcp-tools/bitbucket/bitbucket-auth';
 import {
   bbJson,
@@ -213,18 +212,21 @@ async function listRuns(
   auth: BitbucketAuth,
   fullName: string,
   base: string,
-  max: number
+  max: number,
+  /** Only this branch's runs, when given. */
+  onBranch?: string
 ): Promise<{ ok: true; runs: PipelineRun[] } | { ok: false; error: string }> {
+  const filter = onBranch ? `&target.branch=${encodeURIComponent(onBranch)}` : '';
   const listed = await bbJson(
     auth,
     [PIPELINES_READ_SCOPE],
-    `${base}/pipelines?pagelen=${max}&sort=-created_on`
+    `${base}/pipelines?pagelen=${max}&sort=-created_on${filter}`
   );
   if (!listed.ok) return listed;
   const runs: PipelineRun[] = [];
   for (const raw of values(listed.body)) {
     const run = runOf(fullName, raw);
-    if (run) runs.push(run);
+    if (run && (!onBranch || run.ref === onBranch)) runs.push(run);
   }
   return { ok: true, runs };
 }
@@ -284,14 +286,19 @@ export async function readPipelineSetup(
   auth: BitbucketAuth,
   fullName: string,
   branch: string,
-  options: { readSwitch: boolean; runs?: number }
+  options: {
+    readSwitch: boolean;
+    runs?: number;
+    /** List only this branch's runs (a branch's page), not the repository's newest. */
+    runsBranch?: string;
+  }
 ): Promise<{ ok: true; setup: PipelineSetup } | { ok: false; error: string }> {
   const base = repoBase(fullName);
   if (!base) return { ok: false, error: 'The repository name is not usable.' };
   const [switchState, configFile, runs, variables, environments] = await Promise.all([
     options.readSwitch ? readEnabled(auth, base) : { enabled: null, error: null },
     readConfigFile(auth, base, branch),
-    listRuns(auth, fullName, base, options.runs ?? RUNS_ON_PAGE),
+    listRuns(auth, fullName, base, options.runs ?? RUNS_ON_PAGE, options.runsBranch),
     listVariables(auth, variablesPath(base, undefined)),
     readEnvironments(auth, base),
   ]);
@@ -564,72 +571,14 @@ export async function commitPipelineConfigFile(
   };
 }
 
-// ——— Variables as text: one box per set, parsed and applied as a diff ———
+// ——— A set of variables written as a difference ———
 
-/**
- * A variable set as text, the way a `.env` reads: `KEY=value` a line
- * (`KEY: value` is taken too), `#` comments, quotes as dotenv has them,
- * and a `secret ` prefix on a line for a secured variable. A secured
- * variable's value cannot be read back, so it renders as `secret KEY=`
- * and an empty value on one that exists means "keep what Bitbucket has".
- */
+/** One variable to write: its name, value and whether it is secured. */
 export interface VariableEntry {
   key: string;
   value: string;
   secured: boolean;
 }
-
-export interface ParsedVariables {
-  entries: VariableEntry[];
-  /** Lines that were not variables, as "line N: why". */
-  problems: string[];
-}
-
-const SECRET_PREFIX = /^(\s*)(?:secret|secured)\s+(?=[A-Za-z_])/i;
-const YAML_LINE = /^(\s*[A-Za-z_][A-Za-z0-9_]*)\s*:(?:\s+|$)(.*)$/;
-
-export function parseVariableText(text: string): ParsedVariables {
-  const entries: VariableEntry[] = [];
-  const problems: string[] = [];
-  const seen = new Set<string>();
-  const lines = text.replace(/\r\n?/g, '\n').split('\n');
-  lines.forEach((raw, index) => {
-    const number = index + 1;
-    if (!raw.trim() || raw.trim().startsWith('#')) return;
-    let line = raw;
-    const secured = SECRET_PREFIX.test(line);
-    if (secured) line = line.replace(SECRET_PREFIX, '$1');
-    const yaml = YAML_LINE.exec(line);
-    if (yaml && !line.includes('=')) line = `${yaml[1]}=${yaml[2]}`;
-    const parsed = parseDotenv(line);
-    const key = Object.keys(parsed.values)[0];
-    if (!key) {
-      problems.push(
-        ...parsed.problems.map((problem) => problem.replace(/^line 1:/, `line ${number}:`))
-      );
-      return;
-    }
-    if (!VARIABLE_KEY_PATTERN.test(key)) {
-      problems.push(`line ${number}: ${key} is not a variable name`);
-      return;
-    }
-    if (seen.has(key)) {
-      problems.push(`line ${number}: ${key} is given twice; the last one wins`);
-      entries.splice(
-        entries.findIndex((entry) => entry.key === key),
-        1
-      );
-    }
-    seen.add(key);
-    entries.push({ key, value: parsed.values[key] ?? '', secured });
-  });
-  return { entries, problems };
-}
-
-// Rendering the set as text is pure and lives beside the page's client
-// code (pipeline-variables-text.ts): this module reaches the sandbox
-// package for the parser, which a browser bundle cannot carry.
-export { renderVariableText } from './pipeline-variables-text';
 
 export interface VariablesApplied {
   added: string[];
@@ -640,7 +589,7 @@ export interface VariablesApplied {
 }
 
 /**
- * Make one set match the text: create what is new, replace what changed
+ * Make one set match the entries: create what is new, replace what changed
  * (a secured variable with an empty value is kept as it is; a new secured
  * one needs a value), delete what is gone. Each change is its own call,
  * so a refusal is reported by key and the rest still applies.

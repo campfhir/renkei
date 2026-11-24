@@ -214,6 +214,7 @@ export const EXPECTED_MIGRATIONS = [
   '188-fabric-operations',
   '189-fabric-ci-blocks',
   '190-ci-assistant-jobs',
+  '191-ci-environments',
 ];
 
 export interface MigrationStatus {

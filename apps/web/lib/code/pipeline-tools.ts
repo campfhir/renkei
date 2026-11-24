@@ -9,7 +9,7 @@
  *
  * What a chat gets is the plain half. A secured variable (a Bitbucket
  * secured variable; a GitHub secret, which is listed by name only) comes
- * back by name with its value omitted, as the Runs & variables tab under Deployments shows it,
+ * back by name with its value omitted, as the Variables tab of the project’s Environments page shows it,
  * and a chat can neither replace nor remove one, nor write a value for a
  * name that reads as a secret (pipeline-variable-plan.ts decides all of
  * that). The person adds those on the Runs & variables tab. A write only adds,
@@ -247,7 +247,7 @@ export function pipelineVariableTools(deps: PipelineToolDeps): LocalTool[] {
           'region, a deploy target, whatever the pipeline you drafted reads. `variables` maps names ' +
           'to values (created, or changed when different); `remove` names variables to take away. ' +
           'Only the names you give are touched. Never put a secret here: a token, password or key ' +
-          'belongs in a secured variable the person adds on the project’s Runs & variables tab under Deployments, so name the ' +
+          'belongs in a secured variable the person adds on the Variables tab of the project’s Environments page, so name the ' +
           'ones the pipeline needs in your answer and ask them to add those. A secured variable ' +
           'cannot be changed or removed from here, and a name that reads as a secret is refused. ' +
           'Pass environment to write one deployment environment’s set instead of the repository’s.',

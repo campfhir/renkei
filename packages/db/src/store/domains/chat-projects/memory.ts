@@ -94,9 +94,10 @@ export function memoryChatProjects(tables: MemoryTables): ChatProjectStore {
         tables.delete('chat_projects', (r) => r.owner_subject === ownerSubject && r.id === wanted)
           .length > 0;
       if (deleted) {
-        // Its memory, references, PR watches, pipeline and deployments go; its chats stay, unfiled.
+        // Its memory, references, PR watches, pipelines, environments and deployments go; its chats stay, unfiled.
         tables.delete('chat_project_memories', (r) => r.project_id === wanted);
         tables.delete('ci_pipelines', (r) => r.project_id === wanted);
+        tables.delete('ci_environments', (r) => r.project_id === wanted);
         tables.delete('ci_deployments', (r) => r.project_id === wanted);
         tables.delete('artifact_references', (r) => r.project_id === wanted);
         tables.delete('pr_subscriptions', (r) => r.project_id === wanted);

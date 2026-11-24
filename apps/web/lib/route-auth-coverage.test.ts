@@ -46,8 +46,8 @@ const SESSION_GUARDS = [
   'pipelinesProjectContext',
   // lib/ci/pipeline-builder-access.ts: codeProjectContext plus the host and, for a write, the editor role.
   'builderContext',
-  // app/(app)/deployments/[projectId]/app-project.ts: getSessionFromCookies plus the project's access, for an app's tabs.
-  'appProject',
+  // lib/ci/pipeline-builder-access.ts: builderContext for one branch's pipeline, the branch assigned to an environment.
+  'branchContext',
 ];
 
 /**
@@ -130,10 +130,12 @@ const PUBLIC: Record<string, string> = {
 const REDIRECT_ONLY: Record<string, string> = {
   '(app)/home/page.tsx': 'redirects to /',
   '(app)/admin/grants/page.tsx': 'redirects to /admin/access',
-  '(app)/code/[projectId]/pipelines/page.tsx': 'redirects to /deployments/[projectId]/runs',
-  '(app)/code/[projectId]/actions/page.tsx': 'redirects to /deployments/[projectId]/runs',
-  '(app)/code/[projectId]/pipeline-builder/page.tsx':
-    'redirects to /deployments/[projectId]/pipeline',
+  '(app)/code/[projectId]/pipelines/page.tsx': 'redirects to /code/[projectId]/environments',
+  '(app)/code/[projectId]/actions/page.tsx': 'redirects to /code/[projectId]/environments',
+  '(app)/code/[projectId]/pipeline-builder/page.tsx': 'redirects to /code/[projectId]/environments',
+  '(app)/deployments/page.tsx': 'redirects to /code',
+  '(app)/deployments/[projectId]/[[...rest]]/page.tsx':
+    'redirects to /code/[projectId]/environments',
 };
 
 /**

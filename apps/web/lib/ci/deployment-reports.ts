@@ -9,9 +9,9 @@
  */
 
 import { getDataStore, type CiDeploymentStatus } from '@renkei/db';
-import { readPipelineSpec } from '@renkei/ci-blocks';
 import { isRecord } from '@renkei/guards';
 import { getProjectRow } from '@/lib/chat/projects';
+import { projectEnvironments } from './environments';
 import { reportTo } from './pipeline-builder';
 import { verifyPipelineToken, type KeysFor, type PipelineIdentity } from './oidc';
 
@@ -116,15 +116,14 @@ export async function recordDeploymentReport(input: {
       error: 'No code project in Renkei built the pipeline for this repository.',
     };
   }
-  const spec = readPipelineSpec(pipeline.spec);
-  const known = spec.ok
-    ? spec.value.environments.find((e) => e.name.toLowerCase() === body.environment.toLowerCase())
-    : undefined;
+  const known = (await projectEnvironments(project.id)).find(
+    (e) => e.name.toLowerCase() === body.environment.toLowerCase()
+  );
   if (!known) {
     return {
       ok: false,
       status: 400,
-      error: `The pipeline Renkei built for ${project.repo.fullName} has no environment ${body.environment}.`,
+      error: `The project Renkei keeps for ${project.repo.fullName} has no environment ${body.environment}.`,
     };
   }
   const run = identity.host === 'github' ? (identity.run ?? body.run) : body.run;

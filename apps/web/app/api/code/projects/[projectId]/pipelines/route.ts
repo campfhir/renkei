@@ -39,12 +39,13 @@ export async function GET(
   const { projectId } = await params;
   const found = await pipelinesProjectContext(request, projectId);
   if (!found.ok) return found.response;
-  const { project, subject, scopes } = found.context;
+  const { project, subject, scopes, branchAsked } = found.context;
   const configureNeeds = missingScope(scopes, PIPELINES_CONFIG_SCOPE);
   const variablesNeeds = missingScope(scopes, PIPELINES_VARIABLE_SCOPE);
   const auth = await bitbucketAuthFor(request, subject);
   const read = await readPipelineSetup(auth, project.repo.fullName, project.repo.branch, {
     readSwitch: configureNeeds === null,
+    ...(branchAsked ? { runsBranch: branchAsked } : {}),
   });
   if (!read.ok) {
     logger.warn(

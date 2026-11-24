@@ -15,7 +15,9 @@ import { jsonError } from '@/lib/chat/route-support';
 import { grantScopes } from '@/lib/code/access';
 import { codeProjectContext } from '@/lib/code/route-access';
 import { getOrigin } from '@/lib/get-origin';
-import { hostOf, type CodeRepoProject } from './pipeline-builder';
+import { environmentOfBranch } from './environment-rules';
+import { projectEnvironments } from './environments';
+import { hostOf, onBranch, type CodeRepoProject } from './pipeline-builder';
 
 export interface BuilderContext {
   project: CodeRepoProject;
@@ -68,6 +70,62 @@ export async function builderContext(
       host,
       canEdit,
       scopes: options.write ? await grantScopes(session.subject, project.repo.provider) : null,
+    },
+  };
+}
+
+export interface BranchContext extends BuilderContext {
+  /** The branch asked about; `project.repo.branch` is it too. */
+  branch: string;
+  /** The environment the branch is assigned to. */
+  environment: string;
+  production: boolean;
+}
+
+/** The branch a request names, in its query (`?branch=`); null when it names none. */
+export function branchAsked(request: NextRequest): string | null {
+  const branch = request.nextUrl.searchParams.get('branch')?.trim() ?? '';
+  return branch && branch.length <= 200 ? branch : null;
+}
+
+/**
+ * builderContext for a route about one branch's pipeline: the branch is
+ * named in the query and must be assigned to one of the project's
+ * environments, since the environment is what its pipeline deploys.
+ */
+export async function branchContext(
+  request: NextRequest,
+  projectId: string,
+  options: { write?: boolean } = {}
+): Promise<{ ok: true; context: BranchContext } | { ok: false; response: NextResponse }> {
+  const found = await builderContext(request, projectId, options);
+  if (!found.ok) return found;
+  const branch = branchAsked(request);
+  if (!branch) {
+    return {
+      ok: false,
+      response: jsonError(400, 'branch', 'Name the branch whose pipeline this is.'),
+    };
+  }
+  const environment = environmentOfBranch(await projectEnvironments(projectId), branch);
+  if (!environment) {
+    return {
+      ok: false,
+      response: jsonError(
+        409,
+        'unassigned',
+        `${branch} is not assigned to an environment; assign it on the project’s Environments page first.`
+      ),
+    };
+  }
+  return {
+    ok: true,
+    context: {
+      ...found.context,
+      project: onBranch(found.context.project, branch),
+      branch,
+      environment: environment.name,
+      production: environment.production,
     },
   };
 }
