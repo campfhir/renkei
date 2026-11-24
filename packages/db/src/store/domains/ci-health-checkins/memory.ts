@@ -37,6 +37,7 @@ export function memoryCiHealth(tables: MemoryTables): CiHealthStore {
         received_at: null,
         interval_seconds: null,
         checkins: 0,
+        announced_state: null,
       });
     },
     async revoke(projectId, environment) {
@@ -60,6 +61,25 @@ export function memoryCiHealth(tables: MemoryTables): CiHealthStore {
         checkins: found.checkins + 1,
       });
       return row ? ciHealthFromRow(row) : null;
+    },
+    async listCheckedIn() {
+      return orderBy(
+        tables.select('ci_health_checkins').filter((r) => r.status !== null),
+        [(r) => r.project_id],
+        [(r) => r.environment]
+      ).map(ciHealthFromRow);
+    },
+    async announce(projectId, environment, from, to) {
+      return (
+        tables.update(
+          'ci_health_checkins',
+          (r) =>
+            r.project_id === projectId &&
+            r.environment === environment &&
+            (r.announced_state ?? null) === from,
+          { announced_state: to }
+        ).length > 0
+      );
     },
   };
 }

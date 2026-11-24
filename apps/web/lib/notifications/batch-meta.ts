@@ -20,6 +20,11 @@ export const BATCH_NOTIFICATION_KINDS = [
   'batch_failed',
 ] as const;
 
+/** The row kinds a deployment or health change writes (@renkei/ci-blocks `changeKind`). */
+export function isDeploymentNotificationKind(kind: string): boolean {
+  return kind.startsWith('deployment_') || kind.startsWith('app_');
+}
+
 export function isBatchNotificationKind(kind: string): boolean {
   return BATCH_NOTIFICATION_KINDS.some((known) => known === kind);
 }
@@ -105,6 +110,9 @@ export function notificationSourceLabel(row: {
     const meta = parseBatchNotificationMeta(row.meta);
     return meta ? `Batch job · ${meta.kindLabel}` : 'Batch job';
   }
+  // A deployment reported or an application's health changed
+  // (apps/worker/src/deployments/changes.ts): no agent is behind it.
+  if (isDeploymentNotificationKind(row.kind)) return 'Deployments';
   // Nothing here has an agent behind it — the headline already names who
   // shared it or that a reply landed, so "An agent" would just be wrong.
   if (

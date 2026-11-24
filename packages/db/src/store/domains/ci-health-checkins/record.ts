@@ -18,5 +18,6 @@ export function ciHealthFromRow(row: Selectable<CiHealthCheckins>): CiHealthReco
     receivedAt: date(row.received_at),
     intervalSeconds: row.interval_seconds,
     checkins: row.checkins,
+    announcedState: row.announced_state,
   };
 }

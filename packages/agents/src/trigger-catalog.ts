@@ -161,6 +161,45 @@ const batchNameContains = containsField(
   'the batch name contains "{value}"'
 );
 
+/** What a deployment or health change says about where it happened, shared by both events. */
+const deploymentIdentity = [
+  trigger(
+    'changeId',
+    'Change id',
+    'A name for this one change; the same change never wakes an agent twice.'
+  ),
+  trigger(
+    'projectId',
+    'Project id',
+    'The id of the code project; pass it to deployments_status or deployments_history.'
+  ),
+  trigger('project', 'Project', 'The code project’s name.'),
+  trigger('repository', 'Repository', 'The repository, as owner/name.'),
+  trigger('environment', 'Environment', 'The environment’s name, e.g. "production".'),
+  trigger(
+    'summary',
+    'Summary',
+    'One line on what happened, e.g. "Deploying production of “Shop” failed. Commit 5c1d9e7 on main."'
+  ),
+  trigger('at', 'When', 'When it was reported or noticed (ISO 8601).'),
+];
+
+const deploymentEnvironmentContains = containsField(
+  'environmentContains',
+  'environment',
+  'Environment name contains',
+  'Case-insensitive. "prod" matches production; leave empty for every environment.',
+  'the environment name contains "{value}"'
+);
+
+const deploymentProjectContains = containsField(
+  'projectContains',
+  'project',
+  'Project name contains',
+  'Case-insensitive. Leave empty for every code project you own or were given.',
+  'the project name contains "{value}"'
+);
+
 /** What a finished batch says about itself, shared by both batch events. */
 const batchIdentity = [
   trigger(
@@ -506,6 +545,118 @@ export const TRIGGER_EVENT_CATALOG: TriggerEventDescriptor[] = [
       'Runs the moment one of your batch jobs begins work — before any item has been processed. Useful for bookkeeping; to act on what a batch produced, use "A batch job finishes".',
     provides: [...batchIdentity],
     filters: [batchKindFilter, batchNameContains],
+  },
+  {
+    id: 'deployments/deployment.changed',
+    source: 'deployments',
+    type: 'deployment.changed',
+    connector: 'deployments',
+    label: 'A deployment starts, succeeds or fails',
+    description:
+      'Runs when a pipeline’s deploy step reports to Renkei how deploying an environment of one of your code projects went — yours, or one shared with you. Needs a Bitbucket or GitHub connection, and the report step in the pipeline. Use deployments_status to see the project’s environments as they stand.',
+    provides: [
+      ...deploymentIdentity,
+      trigger('status', 'Status', '"started", "succeeded" or "failed".'),
+      trigger('commit', 'Commit', 'The commit that was deployed (full SHA).'),
+      trigger(
+        'branch',
+        'Branch',
+        'The branch it was deployed from; empty when the pipeline did not say.'
+      ),
+      trigger(
+        'runUrl',
+        'Run link',
+        'The pipeline or workflow run on the code host; empty when unknown.'
+      ),
+      trigger('detail', 'Detail', 'What the deploy step said about it, if anything.'),
+    ],
+    filters: [
+      {
+        id: 'statuses',
+        payloadKey: 'status',
+        match: 'equals-any',
+        input: 'select',
+        label: 'Status',
+        hint: 'Wake only for a failed deployment, only for one that worked, or for every report.',
+        invalidMessage: 'The status filter must be "started", "succeeded" or "failed".',
+        options: [
+          { value: '', label: 'Any status', describe: '' },
+          { value: 'failed', label: 'Failed only', describe: 'only when the deployment failed' },
+          {
+            value: 'succeeded',
+            label: 'Succeeded only',
+            describe: 'only when the deployment succeeded',
+          },
+          { value: 'started', label: 'Started only', describe: 'only when a deployment starts' },
+        ],
+        describeOne: 'when the deployment {value}',
+      },
+      deploymentEnvironmentContains,
+      deploymentProjectContains,
+    ],
+  },
+  {
+    id: 'deployments/health.changed',
+    source: 'deployments',
+    type: 'health.changed',
+    connector: 'deployments',
+    label: 'A deployed application’s health changes',
+    description:
+      'Runs when the health of an environment of one of your code projects — yours, or one shared with you — changes: the application checked in with a different status, missed a check-in (potentially failing), missed three in a row (failed), stopped, or came back. Only for applications that send Renkei health check-ins. Needs a Bitbucket or GitHub connection.',
+    provides: [
+      ...deploymentIdentity,
+      trigger(
+        'state',
+        'State',
+        'How the application is now: "starting", "healthy", "degraded", "error" or "stopping" as it said itself; "late" when a check-in is overdue; "failed" when three were missed in a row; "stopped" when it said it was stopping and went quiet.'
+      ),
+      trigger(
+        'previous',
+        'Previous state',
+        'The state before this one; empty for a first check-in.'
+      ),
+      trigger(
+        'missed',
+        'Missed check-ins',
+        'How many check-ins in a row were missed; 0 when it just checked in.'
+      ),
+      trigger('message', 'Message', 'What the application last said about itself, if anything.'),
+      trigger(
+        'version',
+        'Version',
+        'The version, tag or commit the application last reported, if any.'
+      ),
+    ],
+    filters: [
+      {
+        id: 'states',
+        payloadKey: 'state',
+        match: 'equals-any',
+        input: 'select',
+        label: 'State',
+        hint: 'Wake only when the application enters one state, or for every change.',
+        invalidMessage:
+          'The state filter must be one of "failed", "stopped", "error", "degraded", "late", "healthy", "starting" or "stopping".',
+        options: [
+          { value: '', label: 'Any change', describe: '' },
+          { value: 'failed', label: 'Failed', describe: 'only when it has stopped checking in' },
+          { value: 'stopped', label: 'Stopped', describe: 'only when it has stopped' },
+          { value: 'error', label: 'Error', describe: 'only when it reports an error' },
+          { value: 'degraded', label: 'Degraded', describe: 'only when it reports it is degraded' },
+          {
+            value: 'late',
+            label: 'Potentially failing',
+            describe: 'only when a check-in is overdue',
+          },
+          { value: 'healthy', label: 'Healthy', describe: 'only when it is healthy' },
+          { value: 'starting', label: 'Starting', describe: 'only when it is starting' },
+          { value: 'stopping', label: 'Stopping', describe: 'only when it says it is stopping' },
+        ],
+        describeOne: 'when it is {value}',
+      },
+      deploymentEnvironmentContains,
+      deploymentProjectContains,
+    ],
   },
 ];
 

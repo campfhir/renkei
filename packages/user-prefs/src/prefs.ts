@@ -98,6 +98,26 @@ export interface NotificationPrefs {
    */
   fabricDefinitionReady: DeliveryPrefs;
   /**
+   * Deployments and application health, for the code projects a person
+   * owns or was given: a pipeline's deploy step reporting how it went, and
+   * a deployed application's health check-ins. Sent only to someone with a
+   * Bitbucket or GitHub connection. On by default for what needs someone —
+   * a deploy that failed, an application that stopped checking in, said it
+   * was stopping, or reports a problem — and off for the rest.
+   */
+  deploymentFailed: DeliveryPrefs;
+  deploymentSucceeded: DeliveryPrefs;
+  /** Three check-ins missed in a row. */
+  appFailed: DeliveryPrefs;
+  /** It said it was stopping, and has not checked in since. */
+  appStopped: DeliveryPrefs;
+  /** It checked in as `error` or `degraded`. */
+  appUnhealthy: DeliveryPrefs;
+  /** A check-in is overdue: potentially failing. */
+  appLate: DeliveryPrefs;
+  /** Healthy again after any of the above. */
+  appRecovered: DeliveryPrefs;
+  /**
    * On by default: someone shares a chat of theirs with you. Not
    * per-agent overridable — a chat has no agent.
    */
@@ -175,6 +195,13 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   batchFinished: { app: true, email: false, webex: false },
   batchFailed: { app: true, email: false, webex: false },
   fabricDefinitionReady: { app: true, email: false, webex: false },
+  deploymentFailed: { app: true, email: false, webex: false },
+  deploymentSucceeded: { app: false, email: false, webex: false },
+  appFailed: { app: true, email: false, webex: false },
+  appStopped: { app: true, email: false, webex: false },
+  appUnhealthy: { app: true, email: false, webex: false },
+  appLate: { app: false, email: false, webex: false },
+  appRecovered: { app: false, email: false, webex: false },
   chatShared: { app: true, email: false, webex: false },
   agentShared: { app: true, email: false, webex: false },
   chatReplyDesktop: false,
@@ -387,6 +414,19 @@ export function parseNotificationPrefs(stored: unknown): NotificationPrefs {
       raw.fabricDefinitionReady,
       DEFAULT_NOTIFICATION_PREFS.fabricDefinitionReady
     ),
+    deploymentFailed: deliveryPrefs(
+      raw.deploymentFailed,
+      DEFAULT_NOTIFICATION_PREFS.deploymentFailed
+    ),
+    deploymentSucceeded: deliveryPrefs(
+      raw.deploymentSucceeded,
+      DEFAULT_NOTIFICATION_PREFS.deploymentSucceeded
+    ),
+    appFailed: deliveryPrefs(raw.appFailed, DEFAULT_NOTIFICATION_PREFS.appFailed),
+    appStopped: deliveryPrefs(raw.appStopped, DEFAULT_NOTIFICATION_PREFS.appStopped),
+    appUnhealthy: deliveryPrefs(raw.appUnhealthy, DEFAULT_NOTIFICATION_PREFS.appUnhealthy),
+    appLate: deliveryPrefs(raw.appLate, DEFAULT_NOTIFICATION_PREFS.appLate),
+    appRecovered: deliveryPrefs(raw.appRecovered, DEFAULT_NOTIFICATION_PREFS.appRecovered),
     chatShared: deliveryPrefs(raw.chatShared, DEFAULT_NOTIFICATION_PREFS.chatShared),
     agentShared: deliveryPrefs(raw.agentShared, DEFAULT_NOTIFICATION_PREFS.agentShared),
     chatReplyDesktop: boolOr(raw.chatReplyDesktop, DEFAULT_NOTIFICATION_PREFS.chatReplyDesktop),

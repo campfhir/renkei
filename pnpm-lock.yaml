@@ -332,6 +332,9 @@ importers:
       '@renkei/batch-jobs-store':
         specifier: workspace:*
         version: link:../../packages/batch-jobs-store
+      '@renkei/ci-blocks':
+        specifier: workspace:*
+        version: link:../../packages/ci-blocks
       '@renkei/connector-atlassian':
         specifier: workspace:*
         version: link:../../packages/connector-atlassian

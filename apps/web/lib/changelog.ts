@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'added',
+        title: 'Deployment and application-health notifications, tools and agent triggers',
+        detail:
+          "When a pipeline reports a deployment, or a deployed application's health check-ins change (or stop arriving), Renkei now tells the code project's owner and everyone it is shared with. Preferences has a new Deployments card: failed deployments and applications that failed, stopped or report a problem are on by default; successful deployments, an overdue check-in and recoveries are off until you switch them on. Agents can be triggered by these changes (filtered by status or state, environment and project), and chats and agents can read environments, deployments and health with the new deployments_status and deployments_history tools. All of it is for people with a Bitbucket or GitHub connection.",
+      },
+      {
+        kind: 'added',
         title: 'Health check-ins from a deployed application',
         detail:
           "An application can now tell Renkei how it is after it is deployed. On a code project's Environments page, issue a health token for an environment (shown once; it can be saved straight to the host as that environment's secret), and the application POSTs its status — starting, healthy, degraded, error or stopping — with an optional message, version, send time and when to expect the next check-in. The environment then shows it; when a check-in is late it shows as potentially failing, and after three missed in a row as failed. It is optional and the developer's to implement: an environment that never checks in shows nothing. Code chats know the interface and build it in when asked.",

@@ -44,6 +44,7 @@ export const LOGO_FILE: Record<string, string> = {
   'batch-jobs': 'renkei',
   logs: 'renkei',
   'user-memory': 'renkei',
+  deployments: 'renkei',
   sandbox: 'renkei',
 };
 

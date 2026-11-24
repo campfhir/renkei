@@ -11,6 +11,7 @@ import { getDataStore, type CiDeploymentRecord, type CiHealthRecord } from '@ren
 import type { Host } from '@renkei/ci-blocks';
 import { bitbucketHostAdapter } from '@/lib/code/repo-host-bitbucket';
 import { githubHostAdapter } from '@/lib/code/repo-host-github';
+import { settleHealth } from './deployment-changes';
 import { healthView } from './health';
 import type { HealthView } from './health-rules';
 import {
@@ -136,6 +137,10 @@ export async function environmentsPage(
     store.ciHealth.listForProject(project.id),
   ]);
   const listed = remote.ok ? new Set(remote.branches) : null;
+  // An application that went quiet is noticed by the worker's sweep; a
+  // person looking at the page is as good a moment to notice it.
+  const now = new Date();
+  await Promise.all(health.map((record) => settleHealth(record, now)));
   return {
     host,
     project: { name: project.name, repo: project.repo.fullName },

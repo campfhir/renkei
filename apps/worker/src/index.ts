@@ -31,6 +31,10 @@ import {
   createFabricOperationsSweep,
   FABRIC_OPERATIONS_SWEEP_INTERVAL_MS,
 } from './health/fabric-operations';
+import {
+  createDeploymentHealthSweep,
+  DEPLOYMENT_HEALTH_SWEEP_INTERVAL_MS,
+} from './health/deployment-health';
 import { createSettledRetentionSweep, SETTLED_RETENTION_SWEEP_MS } from '@renkei/queue';
 import { sweepWebexWebhooks, WEBHOOK_HEALTH_INTERVAL_MS } from './health/webex-webhooks';
 import { sweepContentWatches, CONTENT_WATCH_INTERVAL_MS } from './health/content-watches';
@@ -174,6 +178,14 @@ async function main(): Promise<void> {
               'fabric/operations-sweep',
               FABRIC_OPERATIONS_SWEEP_INTERVAL_MS,
               createFabricOperationsSweep()
+            ),
+            // Applications that stopped checking in. The announced state
+            // moves by compare-and-set, so replicas need no lock.
+            schedulePeriodicSweep(
+              'deployment health',
+              'deployments/health-sweep',
+              DEPLOYMENT_HEALTH_SWEEP_INTERVAL_MS,
+              createDeploymentHealthSweep()
             ),
           ]
         : [];

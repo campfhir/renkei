@@ -1,7 +1,8 @@
 /**
  * Health check-ins, on the server (health-rules.ts holds the interface and
  * how lateness is read): issuing an environment's token, taking it away,
- * and recording a check-in made with one.
+ * and recording a check-in made with one — which, when it says something
+ * new, is a change raised for the project's people (deployment-changes.ts).
  *
  * A token is shown once, when it is issued, and kept only as its SHA-256
  * hash: Renkei cannot show it again, and a stolen row is not a token. It
@@ -12,6 +13,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { getDataStore, type CiHealthRecord } from '@renkei/db';
 import { HEALTH_PATH, readCheckin, type HealthView } from './health-rules';
+import { settleHealth } from './deployment-changes';
 
 const TOKEN_PREFIX = 'rkh_';
 
@@ -95,5 +97,8 @@ export async function recordCheckIn(input: {
       error: 'That health token is not one Renkei issued, or it was replaced.',
     };
   }
+  // A status that is not the one last announced is a change: the project's
+  // people are told, by their settings, and their agents woken.
+  await settleHealth(record, input.now);
   return { ok: true, record };
 }

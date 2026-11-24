@@ -46,7 +46,8 @@ export const CODE_PROJECT_CONNECTORS: readonly string[] = ['atlassian-bitbucket'
  * Where a code project's chat starts when neither it nor its project has
  * chosen a toolset: the repository's host, the tracker and the wiki the
  * work is described in, the organization's knowledge, and the sandbox's
- * browser and fetch for anything at a URL. Not the platform's own agents
+ * browser and fetch for anything at a URL, and how the project's
+ * environments stand (deployments and application health). Not the platform's own agents
  * and cards, which an ordinary chat starts with and a developer's chat
  * has no call for. What a person's own code-project default starts from
  * (tool-prefs.ts) and falls back to. Sorted, like a parsed config.
@@ -54,6 +55,7 @@ export const CODE_PROJECT_CONNECTORS: readonly string[] = ['atlassian-bitbucket'
 export const CODE_PROJECT_DEFAULT_CONNECTORS: readonly string[] = [
   'atlassian-bitbucket',
   'atlassian-confluence',
+  'deployments',
   'github',
   'jira',
   'knowledge',

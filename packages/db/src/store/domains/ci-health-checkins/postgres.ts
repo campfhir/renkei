@@ -60,5 +60,27 @@ export function postgresCiHealth(db: () => Kysely<DB>): CiHealthStore {
         .executeTakeFirst();
       return row ? ciHealthFromRow(row) : null;
     },
+    async listCheckedIn() {
+      const rows = await db()
+        .selectFrom('ci_health_checkins')
+        .selectAll()
+        .where('status', 'is not', null)
+        .orderBy('project_id')
+        .orderBy('environment')
+        .execute();
+      return rows.map(ciHealthFromRow);
+    },
+    async announce(projectId, environment, from, to) {
+      const result = await db()
+        .updateTable('ci_health_checkins')
+        .set({ announced_state: to })
+        .where('project_id', '=', projectId)
+        .where('environment', '=', environment)
+        .where((eb) =>
+          from === null ? eb('announced_state', 'is', null) : eb('announced_state', '=', from)
+        )
+        .executeTakeFirst();
+      return Number(result.numUpdatedRows ?? 0) > 0;
+    },
   };
 }

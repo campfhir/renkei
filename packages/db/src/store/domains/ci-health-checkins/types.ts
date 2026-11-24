@@ -24,6 +24,8 @@ export interface CiHealthRecord {
   /** How long until the next is due, as the application asked; null for the default. */
   intervalSeconds: number | null;
   checkins: number;
+  /** The state people and agents were last told of; null before any was. */
+  announcedState: string | null;
 }
 
 export interface CiHealthCheckin {
@@ -51,4 +53,16 @@ export interface CiHealthStore {
   revoke(projectId: string, environment: string): Promise<boolean>;
   /** Record a check-in made with the token of that hash. Null when no environment has it. */
   checkIn(tokenHash: string, checkin: CiHealthCheckin): Promise<CiHealthRecord | null>;
+  /** Every environment that has checked in at least once, by project then environment: what a sweep reads. */
+  listCheckedIn(): Promise<CiHealthRecord[]>;
+  /**
+   * Move the announced state from `from` to `to`, when it still is `from`.
+   * True for the one caller that moved it: that caller announces the change.
+   */
+  announce(
+    projectId: string,
+    environment: string,
+    from: string | null,
+    to: string
+  ): Promise<boolean>;
 }

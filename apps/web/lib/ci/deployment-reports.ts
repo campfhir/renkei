@@ -14,6 +14,7 @@ import { getProjectRow } from '@/lib/chat/projects';
 import { projectEnvironments } from './environments';
 import { reportTo } from './pipeline-builder';
 import { verifyPipelineToken, type KeysFor, type PipelineIdentity } from './oidc';
+import { raiseChange } from './deployment-changes';
 
 export interface ReportBody {
   environment: string;
@@ -150,7 +151,13 @@ export async function recordDeploymentReport(input: {
   }
   const run = identity.host === 'github' ? (identity.run ?? body.run) : body.run;
   const commit = identity.host === 'github' ? (identity.sha ?? body.commit) : body.commit;
-  await getDataStore().ciDeployments.record({
+  const runId = `${identity.host}:${run ?? `at-${input.now.getTime()}`}`;
+  // What this run last reported for the environment: the same status said
+  // again (a step retried its report) is not a change.
+  const before = (await store.ciDeployments.latest([project.id])).find(
+    (d) => d.environment === known.name && d.runId === runId
+  );
+  const deploymentId = await store.ciDeployments.record({
     projectId: project.id,
     environment: known.name,
     status: body.status,
@@ -158,12 +165,28 @@ export async function recordDeploymentReport(input: {
     branch: identity.branch ?? body.branch,
     target: body.target,
     // Without a run, each report is its own row, at its own instant.
-    runId: `${identity.host}:${run ?? `at-${input.now.getTime()}`}`,
+    runId,
     runUrl: runUrl(identity, project.repo.fullName, run),
     detail: body.detail,
     actor: identity.host === 'github' ? identity.actor : null,
     at: input.now,
   });
+  // A start reported after the end does not undo it, and is not a change.
+  const undone = before !== undefined && before.status !== 'started' && body.status === 'started';
+  if (before?.status !== body.status && !undone) {
+    await raiseChange({
+      kind: 'deployment',
+      projectId: project.id,
+      environment: known.name,
+      status: body.status,
+      deploymentId,
+      commit: commit.toLowerCase(),
+      branch: identity.branch ?? body.branch,
+      runUrl: runUrl(identity, project.repo.fullName, run),
+      detail: body.detail,
+      at: input.now.toISOString(),
+    });
+  }
   return {
     ok: true,
     projectId: project.id,

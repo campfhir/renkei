@@ -132,3 +132,70 @@ describe('batch/job.completed', () => {
     );
   });
 });
+
+describe('deployments/deployment.changed', () => {
+  const ID = 'deployments/deployment.changed';
+  const change = (over: Record<string, unknown> = {}) => ({
+    changeId: 'deployment:d1:failed',
+    projectId: 'p1',
+    project: 'Shop',
+    repository: 'acme/shop',
+    environment: 'production',
+    status: 'failed',
+    ...over,
+  });
+
+  it('wakes for every report when nothing is filtered', () => {
+    expect(matchesTriggerEvent(ID, undefined, change({ status: 'started' }))).toBe(true);
+  });
+
+  it('can wake only for a failed deployment', () => {
+    const match = normalizeMatch(triggerEventById(ID)?.filters ?? [], { statuses: ['failed'] });
+    expect(matchesTriggerEvent(ID, match, change())).toBe(true);
+    expect(matchesTriggerEvent(ID, match, change({ status: 'succeeded' }))).toBe(false);
+  });
+
+  it('can keep to one environment and one project, by name', () => {
+    const match = normalizeMatch(triggerEventById(ID)?.filters ?? [], {
+      environmentContains: 'prod',
+      projectContains: 'shop',
+    });
+    expect(matchesTriggerEvent(ID, match, change())).toBe(true);
+    expect(matchesTriggerEvent(ID, match, change({ environment: 'staging' }))).toBe(false);
+    expect(matchesTriggerEvent(ID, match, change({ project: 'Billing' }))).toBe(false);
+  });
+});
+
+describe('deployments/health.changed', () => {
+  const ID = 'deployments/health.changed';
+  const change = (state: string) => ({
+    changeId: `health:p1:production:${state}:2026-11-24T10:00:00.000Z`,
+    projectId: 'p1',
+    project: 'Shop',
+    environment: 'production',
+    state,
+    previous: 'healthy',
+  });
+
+  it('offers every state an application can be announced in', () => {
+    const states = triggerEventById(ID)?.filters.find((field) => field.id === 'states');
+    expect(states?.options?.map((option) => option.value)).toEqual([
+      '',
+      'failed',
+      'stopped',
+      'error',
+      'degraded',
+      'late',
+      'healthy',
+      'starting',
+      'stopping',
+    ]);
+  });
+
+  it('can wake only when the application has failed', () => {
+    const match = normalizeMatch(triggerEventById(ID)?.filters ?? [], { states: ['failed'] });
+    expect(matchesTriggerEvent(ID, match, change('failed'))).toBe(true);
+    expect(matchesTriggerEvent(ID, match, change('stopped'))).toBe(false);
+    expect(matchesTriggerEvent(ID, match, change('late'))).toBe(false);
+  });
+});

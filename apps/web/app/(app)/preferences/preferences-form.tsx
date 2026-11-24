@@ -42,6 +42,7 @@ import {
   type DeliveryEvent,
   type PauseEvent,
   type RunEvent,
+  type DeploymentEvent,
 } from './preferences-form.model';
 
 /**
@@ -118,6 +119,25 @@ const RUN_EVENTS = [
     'People you granted access to; edits land in the audit trail either way.',
   ],
 ] as const satisfies readonly [key: RunEvent, label: string, hint: string | null][];
+
+/**
+ * Deployments and application health, for the code projects a person owns
+ * or was given (apps/worker/src/deployments/changes.ts sends them). Shown
+ * only to someone with a Bitbucket or GitHub connection.
+ */
+const DEPLOYMENT_EVENTS = [
+  ['deploymentFailed', 'A deployment fails', 'A pipeline’s deploy step reported that it failed.'],
+  ['deploymentSucceeded', 'A deployment succeeds', null],
+  ['appFailed', 'An application fails', 'It missed three health check-ins in a row.'],
+  ['appStopped', 'An application stops', 'It said it was stopping, and has not checked in since.'],
+  ['appUnhealthy', 'An application is unhealthy', 'It checked in as degraded or with an error.'],
+  [
+    'appLate',
+    'An application may be failing',
+    'One health check-in is overdue — it has not failed yet.',
+  ],
+  ['appRecovered', 'An application is healthy again', 'After any of the above.'],
+] as const satisfies readonly [key: DeploymentEvent, label: string, hint: string | null][];
 
 /**
  * The three batch-job events, `{app, email, webex}` like a run event, but
@@ -260,11 +280,14 @@ function GroupSave({
 export default function PreferencesForm({
   connectors,
   channels,
+  deployments,
   initial,
   agents,
 }: {
   connectors: ConnectorRow[];
   channels: ChannelAvailability;
+  /** Whether the person has a Bitbucket or GitHub connection: the Deployments card is theirs only then. */
+  deployments: boolean;
   initial: NotificationPrefs;
   agents: AgentOption[];
 }) {
@@ -556,6 +579,83 @@ export default function PreferencesForm({
           <ChannelHints channels={channels} />
           <GroupSave group="batch" state={state} onSave={saveGroup} inset />
         </section>
+
+        {deployments ? (
+          <section
+            aria-labelledby="deployments-notifications-heading"
+            className="rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950"
+          >
+            <div className="p-4 pb-3">
+              <h3 id="deployments-notifications-heading" className="font-semibold">
+                Deployments
+              </h3>
+              <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
+                For the code projects you own or were given: when a pipeline’s deploy step reports
+                how a deployment went, and when a deployed application that sends health check-ins
+                changes. Failures, stops and reported problems are on unless you switch them off.
+              </p>
+            </div>
+            <div className="overflow-x-auto border-t border-gray-200 dark:border-gray-800">
+              <table className="w-full min-w-[420px] border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500 dark:border-gray-800 dark:text-gray-400">
+                    <th className="px-4 py-2 font-medium">When…</th>
+                    <th className="w-20 px-2 py-2 text-center font-medium">App</th>
+                    <th className="w-20 px-2 py-2 text-center font-medium">Outlook</th>
+                    <th className="w-20 px-2 py-2 text-center font-medium">WebEx</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {DEPLOYMENT_EVENTS.map(([key, label, hint]) => (
+                    <tr
+                      key={key}
+                      className="border-t border-gray-100 first:border-t-0 dark:border-gray-900"
+                    >
+                      <td className="px-4 py-3 align-top">
+                        <span className="font-medium">{label}</span>
+                        {hint ? (
+                          <span className="block text-xs text-gray-500 dark:text-gray-400">
+                            {hint}
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="px-2 py-3 text-center align-top">
+                        <input
+                          type="checkbox"
+                          aria-label={`${label} — App`}
+                          checked={prefs[key].app}
+                          onChange={(event) => setDeliveryChannel(key, 'app', event.target.checked)}
+                        />
+                      </td>
+                      <td className="px-2 py-3 text-center align-top">
+                        <input
+                          type="checkbox"
+                          aria-label={`${label} — Outlook`}
+                          {...channelBox(prefs[key].email, channels.outlook)}
+                          onChange={(event) =>
+                            setDeliveryChannel(key, 'email', event.target.checked)
+                          }
+                        />
+                      </td>
+                      <td className="px-2 py-3 text-center align-top">
+                        <input
+                          type="checkbox"
+                          aria-label={`${label} — WebEx`}
+                          {...channelBox(prefs[key].webex, channels.webex)}
+                          onChange={(event) =>
+                            setDeliveryChannel(key, 'webex', event.target.checked)
+                          }
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <ChannelHints channels={channels} />
+            <GroupSave group="deployments" state={state} onSave={saveGroup} inset />
+          </section>
+        ) : null}
 
         <section className="rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
           <div className="p-4 pb-3">

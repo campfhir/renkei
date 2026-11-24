@@ -68,6 +68,7 @@ const PREFIXES: [string, string][] = [
   ['agent_', 'agents'],
   ['log_', 'logs'],
   ['user_memory_', 'user-memory'],
+  ['deployments_', 'deployments'],
   ['sandbox_', 'sandbox'],
   ['batch_', 'batch-jobs'],
 ];

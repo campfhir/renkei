@@ -48,8 +48,19 @@ export type DeliveryEvent =
   | 'agentEditedByOthers'
   | BatchEvent
   | 'fabricDefinitionReady'
+  | DeploymentEvent
   | 'chatShared'
   | 'agentShared';
+
+/** Deployments and application health: the Deployments card's rows. */
+export type DeploymentEvent =
+  | 'deploymentFailed'
+  | 'deploymentSucceeded'
+  | 'appFailed'
+  | 'appStopped'
+  | 'appUnhealthy'
+  | 'appLate'
+  | 'appRecovered';
 
 export type RunEvent = 'runStarted' | 'runFinished' | 'runFailed' | 'agentEditedByOthers';
 export type PauseEvent = 'approvalNeeded' | 'questionAsked';
@@ -58,7 +69,15 @@ export type SaveStatus = 'idle' | 'saving' | 'saved' | 'failed';
 
 /** The cards on the form, each with a Save of its own. */
 export type NotificationGroup =
-  'runs' | 'batch' | 'sharing' | 'pauses' | 'overrides' | 'acts' | 'popups' | 'browser';
+  | 'runs'
+  | 'batch'
+  | 'deployments'
+  | 'sharing'
+  | 'pauses'
+  | 'overrides'
+  | 'acts'
+  | 'popups'
+  | 'browser';
 
 /**
  * The fields each card edits and saves; every field of NotificationPrefs
@@ -68,6 +87,15 @@ export type NotificationGroup =
 export const GROUP_FIELDS: Record<NotificationGroup, readonly (keyof NotificationPrefs)[]> = {
   runs: ['runStarted', 'runFinished', 'runFailed', 'agentEditedByOthers'],
   batch: ['batchStarted', 'batchFinished', 'batchFailed', 'fabricDefinitionReady'],
+  deployments: [
+    'deploymentFailed',
+    'deploymentSucceeded',
+    'appFailed',
+    'appStopped',
+    'appUnhealthy',
+    'appLate',
+    'appRecovered',
+  ],
   sharing: ['chatShared', 'agentShared'],
   pauses: ['approvalNeeded', 'questionAsked'],
   overrides: ['agentOverrides'],
@@ -80,6 +108,7 @@ export const GROUP_FIELDS: Record<NotificationGroup, readonly (keyof Notificatio
 export const NOTIFICATION_GROUPS: readonly NotificationGroup[] = [
   'runs',
   'batch',
+  'deployments',
   'sharing',
   'pauses',
   'overrides',
@@ -167,6 +196,7 @@ function idleGroups(): Record<NotificationGroup, SaveStatus> {
   return {
     runs: 'idle',
     batch: 'idle',
+    deployments: 'idle',
     sharing: 'idle',
     pauses: 'idle',
     overrides: 'idle',

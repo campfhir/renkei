@@ -6,14 +6,19 @@
  * branch) — a start, then its outcome on the same row — and everything
  * else is refused with nothing recorded: no token, a token another issuer
  * or key signed, one for another audience or repository, an environment
- * the project does not have.
+ * the project does not have. Each report that changes a deployment's
+ * status is raised as a change, for the project's people and their agents.
  */
+
+jest.mock('./deployment-changes', () => ({ raiseChange: jest.fn(async () => true) }));
 
 import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair, type JWTPayload } from 'jose';
 import { createMemoryDataStore, getDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { ATLASSIAN_BITBUCKET, GITHUB } from '@renkei/provider-grants';
 import { readReportBody, recordDeploymentReport } from './deployment-reports';
 import type { KeysFor } from './oidc';
+
+const { raiseChange } = jest.requireMock<{ raiseChange: jest.Mock }>('./deployment-changes');
 
 const ORIGIN = 'https://renkei.example';
 const GITHUB_ISSUER = 'https://token.actions.githubusercontent.com';
@@ -111,6 +116,7 @@ const report = async (bearer: string | null, sent: unknown, at = NOW) =>
 
 beforeEach(() => {
   asked = [];
+  raiseChange.mockClear();
   registerDataStore(createMemoryDataStore());
 });
 afterEach(() => resetDataStore());
@@ -174,6 +180,60 @@ describe('a GitHub job’s report', () => {
       status: 401,
       error: 'The token’s signature does not match the host’s keys.',
     });
+  });
+});
+
+describe('a report as a change', () => {
+  const claims = {
+    iss: GITHUB_ISSUER,
+    aud: ORIGIN,
+    repository: 'Acme/Sync-Worker',
+    ref: 'refs/heads/main',
+    sha: 'f04b6e9aa1',
+    run_id: '2231',
+    run_attempt: '1',
+    actor: 'jordan',
+  };
+  const raised = () => raiseChange.mock.calls.map(([change]) => change);
+
+  it('a start and its outcome are each raised once, as the same deployment', async () => {
+    const projectId = await codeProject(GITHUB, 'acme/sync-worker', 'acme/sync-worker');
+    await report(await token(claims), body());
+    await report(await token(claims), body({ status: 'failed', detail: 'exit code 1' }));
+    const [row] = await getDataStore().ciDeployments.recent([projectId], 10);
+    expect(raised()).toEqual([
+      expect.objectContaining({
+        kind: 'deployment',
+        projectId,
+        environment: 'production',
+        status: 'started',
+        deploymentId: row?.id,
+        commit: 'f04b6e9aa1',
+        branch: 'main',
+        runUrl: 'https://github.com/acme/sync-worker/actions/runs/2231',
+        at: NOW.toISOString(),
+      }),
+      expect.objectContaining({ status: 'failed', deploymentId: row?.id, detail: 'exit code 1' }),
+    ]);
+  });
+
+  it('the same outcome reported again is not a change', async () => {
+    await codeProject(GITHUB, 'acme/sync-worker', 'acme/sync-worker');
+    await report(await token(claims), body({ status: 'failed' }));
+    await report(await token(claims), body({ status: 'failed' }));
+    expect(raised().map((change) => change.status)).toEqual(['failed']);
+  });
+
+  it('a start that arrives after the end is not one either', async () => {
+    await codeProject(GITHUB, 'acme/sync-worker', 'acme/sync-worker');
+    await report(await token(claims), body({ status: 'succeeded' }));
+    await report(await token(claims), body());
+    expect(raised().map((change) => change.status)).toEqual(['succeeded']);
+  });
+
+  it('a refused report raises nothing', async () => {
+    await report(await token(claims), body());
+    expect(raised()).toEqual([]);
   });
 });
 

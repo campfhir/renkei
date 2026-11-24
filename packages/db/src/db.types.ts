@@ -780,6 +780,7 @@ export interface CiEnvironments {
 }
 
 export interface CiHealthCheckins {
+  announced_state: string | null;
   checkins: Generated<number>;
   environment: string;
   interval_seconds: number | null;

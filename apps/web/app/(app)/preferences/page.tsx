@@ -24,6 +24,7 @@ import { listChatActToolGroups } from '@/lib/chat/permission-catalog';
 import { loadVoiceAvailability } from '@/lib/voice/availability';
 import { listChatModels, listImageModels } from '@/lib/chat/models';
 import { keyStatusView } from '@/lib/keys/status';
+import { hasCodeHost } from '@/lib/code/access';
 import PreferencesForm from './preferences-form';
 import { notificationConnectorRows } from './preferences-form.model';
 import DefaultToolsForm from './default-tools-form';
@@ -60,6 +61,7 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
     chatModelPrefs,
     chatModels,
     keyStatus,
+    codeHost,
     chatArchive,
     org,
   ] = await Promise.all([
@@ -88,6 +90,8 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
     // Managed until they say otherwise; a missing row reads as managed too.
     // The delegate answers; unreachable, and the section is left out.
     keyStatusView(session),
+    // The Deployments card is for someone with Bitbucket or GitHub connected.
+    hasCodeHost(session.subject),
     getChatArchivePrefs(session.subject, { fresh: true }),
     getOrgSettings(),
   ]);
@@ -198,6 +202,7 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
       <PreferencesForm
         connectors={connectors}
         channels={channels}
+        deployments={codeHost}
         initial={notifications}
         agents={myAgents}
       />

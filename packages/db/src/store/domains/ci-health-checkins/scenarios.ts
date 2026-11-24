@@ -22,6 +22,7 @@ const fixture = {
       received_at: at(21),
       interval_seconds: 300,
       checkins: 7,
+      announced_state: 'healthy',
     },
     {
       project_id: PROJECT.annCode,
@@ -37,11 +38,35 @@ const fixture = {
       received_at: null,
       interval_seconds: null,
       checkins: 0,
+      announced_state: null,
     },
   ],
 };
 
 export const ciHealthScenarios: Scenario<DataStore>[] = [
+  {
+    method: 'ciHealth.listCheckedIn',
+    name: 'every environment that has checked in, and not one still waiting for its first',
+    fixture,
+    run: async (store) => store.ciHealth.listCheckedIn(),
+  },
+  {
+    method: 'ciHealth.announce',
+    name: 'moves the announced state once: the caller that finds it as expected, and no other',
+    fixture,
+    run: async (store) => [
+      await store.ciHealth.announce(PROJECT.annCode, 'production', 'healthy', 'late'),
+      // A second caller that also read "healthy" does not move it again.
+      await store.ciHealth.announce(PROJECT.annCode, 'production', 'healthy', 'late'),
+      await store.ciHealth.announce(PROJECT.annCode, 'dev', null, 'starting'),
+      await store.ciHealth.announce(PROJECT.annCode, 'dev', null, 'healthy'),
+      await store.ciHealth.announce(PROJECT.annCode, 'staging', null, 'healthy'),
+      (await store.ciHealth.listForProject(PROJECT.annCode)).map((r) => [
+        r.environment,
+        r.announcedState,
+      ]),
+    ],
+  },
   {
     method: 'ciHealth.listForProject',
     name: 'a project’s environments with a token, by environment, and none for another',

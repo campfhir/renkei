@@ -362,6 +362,28 @@ project's pipelines hang from its branches, on its **Environments** page
   `RENKEI_HEALTH_TOKEN` secret beside `RENKEI_HEALTH_URL`, through the
   variables route; a code chat is told the interface (the chat's system
   prompt) and never sees a token.
+- **Telling people.** A deployment reported, or an environment's health
+  becoming something else, is a _change_ (`packages/ci-blocks/src/changes.ts`):
+  the report route raises one per status a run reaches, a check-in raises
+  one when it says something new, and the worker's sweep
+  (`apps/worker/src/health/deployment-health.ts`, every minute) raises one
+  when an application goes quiet — overdue, three missed, or stopped. The
+  environment's row keeps the state last announced (`announced_state`,
+  migration 194), moved by compare-and-set, so each state is announced
+  once whoever notices it. A change rides the events queue
+  (`deployments/deployment.changed`, `deployments/health.changed`) to
+  `apps/worker/src/deployments/changes.ts`, which tells the project's
+  owner and everyone it is shared with — only those with a Bitbucket or
+  GitHub connection — as their Preferences say (the Deployments card: a
+  failed deployment and an application that failed, stopped or reports a
+  problem are on by default; a successful deployment, an overdue
+  check-in and a recovery are off), and wakes their agents that listen
+  (the trigger catalog's `deployments/*` events, with filters on status
+  or state, environment and project). A chat or an agent reads how the
+  projects stand with `deployments_status` and `deployments_history`
+  (`apps/web/lib/mcp-tools/deployments`): read-only, Renkei's own rows,
+  registered only for someone with a code host connection. A change
+  carries no variable, token or request body.
 
 The project page carries only a link to it, so it stays about the
 repository. The page exists to make CI/CD the path of least resistance:
