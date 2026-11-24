@@ -220,6 +220,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-17',
     entries: [
       {
+        kind: 'added',
+        title: 'Ask your agents from a chat',
+        detail:
+          "Type @ in a chat (or press Ask an agent) to hand one of your agents a task, the way you'd message a colleague who knows the area. It works in the background with its own tools and approvals, and its reply appears on a card in the chat — which the chat can then build on. The chat can also suggest an agent, behind a confirm card. A chat project now has a Team: the agents its chats offer first. Each agent's page has Ask in a chat.",
+      },
+      {
         kind: 'fixed',
         title: 'Code projects on a branch with a slash show their files',
         detail:

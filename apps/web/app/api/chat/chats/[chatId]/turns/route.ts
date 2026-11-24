@@ -48,6 +48,10 @@ export async function POST(
     voice: body.voice === true,
     timeZone: timeZoneOf(body.timeZone),
     origin: origin.ok ? origin.val : null,
+    // Addressed to an agent (the composer's @-mention): start-turn checks
+    // the person may ask it before anything is allowed unasked.
+    addressedAgentId:
+      typeof body.agentId === 'string' && isUuid(body.agentId) ? body.agentId : null,
   });
   if (!started.ok) {
     switch (started.err.type) {

@@ -25,6 +25,7 @@ import { agentDefinitionOf } from '@renkei/agents';
 import { createAgentRun } from '@renkei/agents/runs';
 import type { FinalizedRun } from './engine';
 import { logger } from './logger';
+import { notifyChatAsker } from './chat-ask-notification';
 
 export function createFinalizeHook(agentProducer: QueueProducer, eventsProducer: QueueProducer) {
   return async function onFinalized(run: FinalizedRun): Promise<void> {
@@ -36,6 +37,9 @@ export function createFinalizeHook(agentProducer: QueueProducer, eventsProducer:
     // outside the run asked it to stop, so they already know — engine.ts
     // always pairs it with quiet: true, but the status check stays here
     // as a second, explicit guard against ever chaining from one.
+    // Whoever asked from a chat hears the answer, a quiet one included:
+    // it is the reply to what they asked, not a notice about the agent.
+    await notifyChatAsker(run);
     const agent = await agentAttrs(run.agentId);
     if (run.quiet || run.status === 'stopped' || run.status === 'canceled') {
       logger.info(

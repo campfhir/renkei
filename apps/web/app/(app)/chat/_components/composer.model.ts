@@ -24,6 +24,8 @@ export interface ComposerSubmit {
   attachments: AttachmentView[];
   /** Said, not typed: from a voice conversation, so the reply is written to be heard. */
   voice?: boolean;
+  /** Addressed to one of the person's agents (agent-mention.model.ts). */
+  agentId?: string;
 }
 
 /** One queued send, shown in order with what it will do and how to drop it. */

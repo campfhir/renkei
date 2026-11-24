@@ -8,6 +8,7 @@ import type { ChatBlock, ChatMessageView } from './views';
 import { milestoneKindOf } from '@/lib/code/milestones';
 import { TASK_COMPLETE_TOOL } from './auto-mode';
 import { isSubagentTool } from './subagent-tools';
+import { CHAT_ASK_AGENT_TOOL } from './agent-ask-view';
 import { MOCKUP_TOOL, parseMockupRequest, type MockupRequest } from '@/lib/mockups/request';
 import { IMAGE_TOOL } from './image-size';
 import { ASK_FORM_TOOL, parseAskFormRequest, type AskFormRequest } from './ask-form';
@@ -27,6 +28,12 @@ export type Segment =
   | { kind: 'milestone'; step: Extract<WorkStep, { kind: 'call' }> }
   /** A sub-agent at work, or its report: a card with its progress and a way into its transcript. */
   | { kind: 'subagent'; step: Extract<WorkStep, { kind: 'call' }> }
+  /**
+   * A task handed to one of the person's agents (chat_ask_agent,
+   * agent-asks.ts): a card of its own from the moment the call starts —
+   * the agent's progress, and its reply once it answers.
+   */
+  | { kind: 'agent'; step: Extract<WorkStep, { kind: 'call' }> }
   /**
    * A call whose result is bound to an MCP Apps widget (its tool_result's
    * `uiResourceUri` — turn-runner.ts stamps it on from the tool's
@@ -108,7 +115,10 @@ export function segment(
   // call the person is already watching.
   const cards = new Map<
     string,
-    Extract<Segment, { kind: 'milestone' | 'subagent' | 'widget' | 'mockup' | 'image' | 'form' }>
+    Extract<
+      Segment,
+      { kind: 'milestone' | 'subagent' | 'agent' | 'widget' | 'mockup' | 'image' | 'form' }
+    >
   >();
   for (const message of messages) {
     if (message.role !== 'assistant') {
@@ -142,7 +152,11 @@ export function segment(
             already.step = step;
             break;
           }
-          if (isSubagentTool(block.name)) {
+          if (block.name === CHAT_ASK_AGENT_TOOL) {
+            const card: Extract<Segment, { kind: 'agent' }> = { kind: 'agent', step };
+            out.push(card);
+            cards.set(block.id, card);
+          } else if (isSubagentTool(block.name)) {
             const card: Extract<Segment, { kind: 'subagent' }> = { kind: 'subagent', step };
             out.push(card);
             cards.set(block.id, card);

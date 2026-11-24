@@ -16,6 +16,7 @@ describe('isExternallyTriggered', () => {
     expect(isExternallyTriggered('event')).toBe(true);
     expect(isExternallyTriggered('api')).toBe(true);
     expect(isExternallyTriggered('manual')).toBe(false);
+    expect(isExternallyTriggered('chat')).toBe(false);
     expect(isExternallyTriggered('schedule')).toBe(false);
   });
 

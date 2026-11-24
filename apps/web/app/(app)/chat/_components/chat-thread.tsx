@@ -92,6 +92,9 @@ import {
   useCodeChatTools,
 } from '../../code/_components/code-chat-tools';
 import AutoModeToggle from './auto-mode-toggle';
+import AgentsHint from './agents-hint';
+import type { AddressRequest } from './agent-mention';
+import type { AskableAgent } from '@/lib/chat/agent-ask-view';
 import { TemporaryChatMark, TemporaryChatToggle } from './temporary-chat';
 import OverflowMenu, { type OverflowItem } from './overflow-menu';
 import MoveChatDialog from './move-chat-dialog';
@@ -121,6 +124,8 @@ interface ThreadProps {
   massUploadThreshold: number;
   /** The org has a voice service, and how this person has it set; null shows nothing about voice. */
   voice: VoiceAvailability | null;
+  /** Address the first message to this agent (an agent's "Ask in a chat", `?agent=`). */
+  addressAgentId?: string | null;
 }
 
 /** A code project's page lives under Code; a chat project's under Chat. */
@@ -191,6 +196,7 @@ export default function ChatThread({
   uploadsEnabled,
   massUploadThreshold,
   voice,
+  addressAgentId = null,
 }: ThreadProps) {
   const router = useRouter();
   const [chat, setChat] = useState<ChatView>(initialChat);
@@ -237,6 +243,15 @@ export default function ChatThread({
     initialChat.toolConfig?.connectors ?? null
   );
   const isOwner = chat.role === 'owner';
+  // Agents in chat (lib/chat/agent-asks.ts): the owner of an ordinary chat
+  // or chat project's chat may hand one of their agents a task — `@` in the
+  // composer, a name in the empty chat, Reply on an agent's card. A code
+  // project's chat has its own sub-agents and its `@` completes paths.
+  const agentsOffered = isOwner && chat.projectKind !== 'code';
+  const [addressRequest, setAddressRequest] = useState<AddressRequest | null>(null);
+  const addressAgent = useCallback((agent: AskableAgent) => {
+    setAddressRequest((current) => ({ agent, nonce: (current?.nonce ?? 0) + 1 }));
+  }, []);
   const running = activeTurnId !== null;
   const wasRunning = useRef(running);
   useEffect(() => {
@@ -1420,6 +1435,7 @@ export default function ChatThread({
               subagents={state.subagents}
               artifacts={state.artifacts}
               onShowSubagent={setSubagent}
+              onReplyToAgent={agentsOffered ? addressAgent : null}
               onWidgetDecision={isOwner ? beginWidgetTurn : null}
               onAnswerForm={isOwner ? (text) => queueOrSend({ text, attachments: [] }) : null}
               speech={
@@ -1436,7 +1452,11 @@ export default function ChatThread({
               }
               empty={
                 state.messages.length === 0 ? (
-                  <EmptyState hasModel={currentModel !== null} temporary={chat.temporary} />
+                  <EmptyState
+                    hasModel={currentModel !== null}
+                    temporary={chat.temporary}
+                    agents={agentsOffered ? { projectId: chat.projectId, onAsk: addressAgent } : null}
+                  />
                 ) : null
               }
             />
@@ -1511,6 +1531,16 @@ export default function ChatThread({
                 }
                 pathCompletions={
                   codeProjectId ? { projectId: codeProjectId, chatId: chat.id } : null
+                }
+                agents={
+                  agentsOffered
+                    ? {
+                        projectId: chat.projectId,
+                        addressRequest,
+                        // Only an empty chat takes `?agent=`: a reload later leaves it alone.
+                        preferAgentId: state.messages.length === 0 ? addressAgentId : null,
+                      }
+                    : null
                 }
                 onStop={stop}
                 modelControl={
@@ -1742,7 +1772,16 @@ export default function ChatThread({
   );
 }
 
-function EmptyState({ hasModel, temporary }: { hasModel: boolean; temporary: boolean }) {
+function EmptyState({
+  hasModel,
+  temporary,
+  agents,
+}: {
+  hasModel: boolean;
+  temporary: boolean;
+  /** Agents in chat: suggest the person's agents by name; null where they are not offered. */
+  agents: { projectId: string | null; onAsk: (agent: AskableAgent) => void } | null;
+}) {
   return (
     <div className="mx-auto max-w-md px-4 py-16 text-center text-sm text-gray-500">
       {hasModel && temporary ? (
@@ -1762,6 +1801,7 @@ function EmptyState({ hasModel, temporary }: { hasModel: boolean; temporary: boo
             Ask about tickets, mail, documents or meetings. The assistant uses your own access to
             the organization's tools, and can read files you attach.
           </p>
+          {agents ? <AgentsHint projectId={agents.projectId} onAsk={agents.onAsk} /> : null}
         </>
       ) : (
         <p>

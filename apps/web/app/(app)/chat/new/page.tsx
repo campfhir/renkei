@@ -14,6 +14,9 @@ import { getProjectRow } from '@/lib/chat/projects';
  * person mid-reply. An empty chat stays out of the menu until its first
  * message, and one nobody ever wrote in is swept after a day.
  * `?temporary=1` starts a temporary chat (lib/chat/temporary.ts).
+ * `?agent=` (an agent's "Ask in a chat") opens the new chat with its
+ * first message addressed to that agent (lib/chat/agent-asks.ts); the
+ * composer checks the person may ask it.
  *
  * In a code project the new chat becomes the project's active chat and
  * the previous one history (lib/code/active-chat.ts). While that previous
@@ -25,9 +28,9 @@ import { getProjectRow } from '@/lib/chat/projects';
 export default async function NewChatPage({
   searchParams,
 }: {
-  searchParams: Promise<{ project?: string; temporary?: string }>;
+  searchParams: Promise<{ project?: string; temporary?: string; agent?: string }>;
 }) {
-  const { project: requestedProjectId, temporary } = await searchParams;
+  const { project: requestedProjectId, temporary, agent } = await searchParams;
   const session = await getSessionFromCookies();
   if (!session) {
     const query = requestedProjectId
@@ -60,5 +63,9 @@ export default async function NewChatPage({
     // A temporary chat stands outside projects (lib/chat/temporary.ts).
     temporary: temporary === '1' && !projectId,
   });
-  redirect(`/chat/${chatId}`);
+  redirect(
+    agent && isUuid(agent) && project?.kind !== 'code'
+      ? `/chat/${chatId}?agent=${encodeURIComponent(agent)}`
+      : `/chat/${chatId}`
+  );
 }

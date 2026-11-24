@@ -14,8 +14,16 @@ import ChatThread from '../_components/chat-thread';
  * fellow member of the chat's project) reads it and watches it live.
  * Someone with neither gets a 404, never a 403.
  */
-export default async function ChatPage({ params }: { params: Promise<{ chatId: string }> }) {
+export default async function ChatPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ chatId: string }>;
+  /** `?agent=`: address the first message to that agent (an agent's "Ask in a chat"). */
+  searchParams: Promise<{ agent?: string }>;
+}) {
   const { chatId } = await params;
+  const { agent } = await searchParams;
   const session = await getSessionFromCookies();
   if (!session) redirect(signInUrl(`/chat/${chatId}`));
 
@@ -40,6 +48,7 @@ export default async function ChatPage({ params }: { params: Promise<{ chatId: s
       uploadsEnabled={uploadsEnabled}
       massUploadThreshold={orgSettings.ok ? orgSettings.val.massUploadThreshold : 10}
       voice={voice}
+      addressAgentId={typeof agent === 'string' && agent ? agent : null}
     />
   );
 }

@@ -542,6 +542,15 @@ export interface SandboxSizeRequests {
   subject: string;
 }
 
+export interface ChatAgentAsks {
+  agent_id: string;
+  asked_by: string;
+  chat_id: string;
+  created_at: Generated<Timestamp>;
+  run_id: string;
+  tool_use_id: string;
+}
+
 export interface ChatDrafts {
   chat_id: string;
   content: string;
@@ -558,6 +567,13 @@ export interface ChatPresence {
   chat_id: string;
   subject: string;
   updated_at: Generated<Timestamp>;
+}
+
+export interface ChatProjectAgents {
+  added_by: string;
+  agent_id: string;
+  created_at: Generated<Timestamp>;
+  project_id: string;
 }
 
 export interface ChatProjectMemories {
@@ -1922,10 +1938,12 @@ export interface DB {
   batch_job_schedules: BatchJobSchedules;
   batch_jobs: BatchJobs;
   batch_processed_files: BatchProcessedFiles;
+  chat_agent_asks: ChatAgentAsks;
   chat_messages: ChatMessages;
   chat_presence: ChatPresence;
   chat_drafts: ChatDrafts;
   chat_queued_sends: ChatQueuedSends;
+  chat_project_agents: ChatProjectAgents;
   chat_project_memories: ChatProjectMemories;
   chat_projects: ChatProjects;
   chat_subagent_runs: ChatSubagentRuns;

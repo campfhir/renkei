@@ -286,6 +286,7 @@ export async function resumeChatTurn(turn: TurnRow): Promise<void> {
     voice: turn.runner?.voice === true,
     timeZone: turn.runner?.timeZone ?? null,
     origin: turn.runner?.origin ?? null,
+    addressedAgentId: turn.runner?.addressedAgentId ?? null,
     resume: { seed },
   });
 }

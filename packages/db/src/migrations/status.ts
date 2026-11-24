@@ -218,6 +218,7 @@ export const EXPECTED_MIGRATIONS = [
   '192-ci-repo-keys',
   '193-ci-health-checkins',
   '194-ci-health-announced',
+  '195-chat-agents',
 ];
 
 export interface MigrationStatus {

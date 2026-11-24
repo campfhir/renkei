@@ -11,6 +11,7 @@ const newestFirst = (rows: Chat[]) => orderBy(rows, [(r) => r.updated_at, 'desc'
 function deleteChatRows(tables: MemoryTables, chatIds: Set<string>): void {
   const ofChat = (r: { chat_id: string }) => chatIds.has(r.chat_id);
   for (const table of [
+    'chat_agent_asks',
     'chat_drafts',
     'chat_messages',
     'chat_presence',

@@ -177,12 +177,20 @@ export function queueView(queue: QueuedSend[]): QueuedComposerItem[] {
 export function turnRequest(
   input: ComposerSubmit,
   modelId: string | null
-): { text: string; attachmentIds: string[]; llmModelId: string | null; voice?: true } {
+): {
+  text: string;
+  attachmentIds: string[];
+  llmModelId: string | null;
+  voice?: true;
+  agentId?: string;
+} {
   return {
     text: input.text,
     attachmentIds: input.attachments.map((attachment) => attachment.id),
     llmModelId: modelId,
     ...(input.voice ? { voice: true as const } : {}),
+    // Addressed to an agent from the composer (agent-mention.model.ts).
+    ...(input.agentId ? { agentId: input.agentId } : {}),
   };
 }
 

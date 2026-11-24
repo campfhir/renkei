@@ -23,6 +23,7 @@ import { attachmentTools } from './attachment-tools';
 import { compactionTools } from './compaction-tools';
 import { fileTools } from './file-tools';
 import { imageGenerationTool } from './image-tools';
+import { chatAskAgentTool } from './agent-ask-tool';
 import { memoryTools } from './memory-tools';
 import { sandboxFileTools } from './sandbox-file-tools';
 import { userMemoryTools } from './user-memory-tools';
@@ -61,6 +62,8 @@ export function chatOwnActTools(): ActToolEntry[] {
     ...actNamesOf(imageTool ? [imageTool] : []),
     ...actNamesOf(memoryTools()),
     ...actNamesOf(userMemoryTools()),
+    // Handing one of the person's agents a task (agent-asks.ts).
+    ...actNamesOf([chatAskAgentTool({ chat: { id: '', title: null }, addressedAgentId: null })]),
     // Listed whether or not this person has a git host connected: the catalog is of tools that exist.
     ...actNamesOf(platformToolsFor({ operator: false, codeHosts: CODE_HOSTS })),
   ]);

@@ -28,6 +28,8 @@
  * clipboard and the timers.
  */
 
+import AgentAskCard from './agent-ask-card';
+import type { AskableAgent } from '@/lib/chat/agent-ask-view';
 import {
   useCallback,
   useEffect,
@@ -176,6 +178,7 @@ export default function MessageList({
   onShowSubagent = null,
   onWidgetDecision = null,
   onAnswerForm = null,
+  onReplyToAgent = null,
   artifacts = [],
 }: {
   chatId: string;
@@ -195,6 +198,8 @@ export default function MessageList({
   subagents?: Record<string, SubagentProgress>;
   /** Open a sub-agent's run — progress, report, transcript — by its delegating call. */
   onShowSubagent?: ((toolUseId: string) => void) | null;
+  /** "Reply to …" on an agent's card: address the composer to it; null when the person cannot send. */
+  onReplyToAgent?: ((agent: AskableAgent) => void) | null;
   /** A preview card's decision landed (widget-card.tsx): the note to show and the turn to stream. */
   onWidgetDecision?: ((outcome: WidgetModelContextOutcome) => void) | null;
   /** Send a form's answers as the person's next message (chat_ask_form); null when they cannot send. */
@@ -271,6 +276,7 @@ export default function MessageList({
                 code={code}
                 subagents={subagents}
                 onShowSubagent={onShowSubagent}
+                onReplyToAgent={onReplyToAgent}
                 onWidgetDecision={onWidgetDecision}
                 onAnswerForm={onAnswerForm}
                 formLater={formLaterOf(promptTexts(turns[groupIndex + 1]))}
@@ -479,6 +485,7 @@ function Reply({
   code,
   subagents,
   onShowSubagent,
+  onReplyToAgent,
   onWidgetDecision,
   onAnswerForm,
   formLater,
@@ -498,6 +505,7 @@ function Reply({
   code: CodeActions | null;
   subagents: Record<string, SubagentProgress>;
   onShowSubagent: ((toolUseId: string) => void) | null;
+  onReplyToAgent: ((agent: AskableAgent) => void) | null;
   onWidgetDecision: ((outcome: WidgetModelContextOutcome) => void) | null;
   onAnswerForm: ((text: string) => Promise<boolean>) | null;
   /** What came after this reply's forms in the thread. */
@@ -557,6 +565,18 @@ function Reply({
             return (
               <PersonNote key={index} text={part.text} onOpenFile={code?.onOpenFile ?? null} />
             );
+          case 'agent': {
+            const step = part.step;
+            return (
+              <AgentAskCard
+                key={step.block.id}
+                chatId={chatId}
+                toolUseId={step.block.id}
+                call={{ state: stateOf(step, tail), input: step.block.input, result: step.result }}
+                onReply={onReplyToAgent}
+              />
+            );
+          }
           case 'subagent': {
             const step = part.step;
             return (

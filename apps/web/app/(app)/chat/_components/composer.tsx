@@ -39,6 +39,8 @@ import PromptPicker from './prompt-picker';
 import PromptFormDialog from './prompt-form-dialog';
 import { parsePromptVariables } from '@/lib/chat/prompt-variables';
 import { usePathCompletions, type PathCompletionScope } from './path-autocomplete';
+import { useAgentMention, type AddressRequest } from './agent-mention';
+import { addressedText } from './agent-mention.model';
 import { VoiceWaveIcon, type WaveAccent } from './voice-wave';
 import { useDraftSync } from './use-draft-sync';
 import {
@@ -145,6 +147,7 @@ export default function Composer({
   draft,
   pathCompletions = null,
   dropZone,
+  agents = null,
 }: {
   chatId: string;
   disabled: boolean;
@@ -214,6 +217,17 @@ export default function Composer({
    * positioned (`relative`). Left out, only the box itself takes a drop.
    */
   dropZone?: RefObject<HTMLElement | null>;
+  /**
+   * Agents in chat (agent-mention.tsx): `@` or "Ask an agent" addresses
+   * the next message to one of the person's agents. Null where agents are
+   * not offered — a code project's chat, whose `@` completes paths.
+   */
+  agents?: {
+    projectId: string | null;
+    addressRequest: AddressRequest | null;
+    /** Address the message to this agent once the list shows the person may ask it. */
+    preferAgentId?: string | null;
+  } | null;
 }) {
   const [state, dispatch] = useReducer(composerReducer<File>, draft, initialComposer<File>);
   const {
@@ -242,6 +256,16 @@ export default function Composer({
   }, [project]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const completions = usePathCompletions({ scope: pathCompletions, textareaRef, text, setText });
+  const mention = useAgentMention({
+    enabled: agents !== null && pathCompletions === null,
+    projectId: agents?.projectId ?? null,
+    textareaRef,
+    text,
+    setText,
+    addressRequest: agents?.addressRequest ?? null,
+    preferAgentId: agents?.preferAgentId ?? null,
+  });
+  const addressee = mention.state.addressee;
   // An earlier prompt being rewritten fills the box but is not a draft of the next one.
   useDraftSync(chatId, text, draft !== undefined && !editing, draft ?? '');
   const composerAnchor = useCoachAnchor('chat-composer');
@@ -437,9 +461,18 @@ export default function Composer({
     // Sending while running is not blocked here — the caller (onSubmit)
     // queues it and returns true.
     if (step.kind !== 'submit') return;
-    const ok = await onSubmit(step.input);
-    if (ok) dispatch({ type: 'submitted' });
-  }, [state, disabled, sendBlocked, onSubmit, confirmDrop]);
+    // Addressed to an agent: its name leads the message, and the chat is
+    // told whom it is for (agent-mention.model.ts).
+    const ok = await onSubmit(
+      addressee
+        ? { ...step.input, text: addressedText(step.input.text, addressee), agentId: addressee.id }
+        : step.input
+    );
+    if (ok) {
+      dispatch({ type: 'submitted' });
+      mention.sent();
+    }
+  }, [state, disabled, sendBlocked, onSubmit, confirmDrop, addressee, mention]);
 
   const sendAfterUpload = readyToSendAfterUpload(state);
   useEffect(() => {
@@ -454,6 +487,7 @@ export default function Composer({
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     // The path list has first claim on arrows, Enter, Tab and Escape while it shows.
     if (completions.onKeyDown(event)) return;
+    if (mention.onKeyDown(event)) return;
     if (event.key === '/' && text === '') {
       event.preventDefault();
       dispatch({ type: 'promptsOpened' });
@@ -808,15 +842,25 @@ export default function Composer({
             onClose={() => dispatch({ type: 'listClosed' })}
           />
         ) : null}
+        {mention.chip}
         <textarea
           ref={textareaRef}
           value={text}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={onKeyDown}
-          onSelect={completions.refresh}
-          aria-autocomplete={pathCompletions ? 'list' : undefined}
-          aria-controls={completions.open ? completions.listboxId : undefined}
-          aria-activedescendant={completions.activeId}
+          onSelect={() => {
+            completions.refresh();
+            mention.refresh();
+          }}
+          aria-autocomplete={pathCompletions || agents ? 'list' : undefined}
+          aria-controls={
+            completions.open
+              ? completions.listboxId
+              : mention.activeId
+                ? mention.listboxId
+                : undefined
+          }
+          aria-activedescendant={completions.activeId ?? mention.activeId}
           onPaste={(event) => {
             const files = [...event.clipboardData.files];
             if (uploads && files.length > 0) {
@@ -824,13 +868,14 @@ export default function Composer({
               upload(files);
             }
           }}
-          placeholder={placeholder(state, running)}
+          placeholder={(!running && !text ? mention.hint : null) ?? placeholder(state, running)}
           rows={1}
           disabled={disabled}
           aria-label="Message"
           className="block w-full resize-none bg-transparent px-3 py-2.5 text-sm outline-none disabled:opacity-60"
         />
         {completions.overlay}
+        {mention.overlay}
         <div className="flex items-center gap-1 px-2 pb-2">
           {project && remembered ? (
             <button
@@ -883,6 +928,7 @@ export default function Composer({
           >
             <Icon path={ICONS.sparkle} className="h-5 w-5" />
           </button>
+          {mention.button}
           {foldTools ? (
             <ComposerToolsMenu
               disabled={disabled}

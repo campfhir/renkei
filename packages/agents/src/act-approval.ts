@@ -113,13 +113,15 @@ export function isAlwaysApprovalTool(tool: string): boolean {
  * Whether a run's start counts as external for the policy: an event
  * trigger ('event' — a connector's fan-out) or an API-key invocation
  * ('api' — a webhook from another system). 'manual' (a person pressed
- * Run) and 'schedule' are the org's own clock and hand. 'agent' — a run
+ * Run), 'chat' (a person handed the agent a task from a chat) and
+ * 'schedule' are the org's own clock and hand — the engine still treats a
+ * manual or chat run started by someone other than the owner as external. 'agent' — a run
  * another run chained — is resolved by the engine to the ROOT of its
  * chain before it gets here; one that could not be resolved reads as
  * external, the fail-closed direction.
  */
 export function isExternallyTriggered(triggerKind: string): boolean {
-  return triggerKind !== 'manual' && triggerKind !== 'schedule';
+  return triggerKind !== 'manual' && triggerKind !== 'chat' && triggerKind !== 'schedule';
 }
 
 export type ToolKindHint = 'read' | 'act' | null;

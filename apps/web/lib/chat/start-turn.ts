@@ -94,6 +94,9 @@ import { createTurnStore } from './turn-store';
 import { runChatTurn, DEFAULT_TURN_LIMITS, type TurnResumeSeed } from './turn-runner';
 import { chatLocalTools } from './chat-local-tools';
 import { autoTitleChat } from './chat-title-tools';
+import { agentAsksBrief } from './agent-asks';
+import { chatAskAgentTool } from './agent-ask-tool';
+import { CHAT_ASK_AGENT_TOOL } from './agent-ask-view';
 import { recordImageUsage, type ImageUsageReport } from '@/lib/image/usage';
 import { latestUserPrompt } from './prompt-text';
 import {
@@ -235,6 +238,12 @@ export interface StartTurnInput {
    * way the row is the model's cue to reply.
    */
   kind?: 'prompt' | 'note' | 'decision';
+  /**
+   * The agent the person addressed this message to (@-mention in the
+   * composer, agent-asks.ts): the chat hands it the task without asking
+   * again. Ignored unless the person may ask that agent.
+   */
+  addressedAgentId?: string | null;
   defer?: (task: () => Promise<void>) => void;
 }
 
@@ -426,6 +435,7 @@ export async function startChatTurn(
           voice: input.voice === true,
           timeZone: input.timeZone ?? null,
           origin: input.origin ?? null,
+          addressedAgentId: input.addressedAgentId ?? null,
         },
       }),
       prompts: chunkedUserBlocks(redacted.text, extraBlocks).map((blocks) => ({
@@ -483,6 +493,7 @@ export async function startChatTurn(
         voice: input.voice === true,
         timeZone: input.timeZone ?? null,
         origin: input.origin ?? null,
+        addressedAgentId: input.addressedAgentId ?? null,
       })
     );
   } catch (error) {
@@ -503,6 +514,8 @@ export async function startChatTurn(
 }
 
 export interface ExecuteTurnInput {
+  /** See StartTurnInput.addressedAgentId. */
+  addressedAgentId?: string | null;
   session: { subject: string; roles: string[] };
   chat: ChatRow;
   /** The chat's cipher (access.cipher; chat-keys.ts for a resumed turn). */
@@ -889,6 +902,36 @@ async function executeTurnBody(
     // over its checkout, and is not offered a second way to delegate.
     const chatTools =
       input.localTools ?? (await chatLocalTools(localContext, toolConfig, filesAllowed));
+    // Agents in chat (agent-asks.ts): an ordinary chat or chat project may
+    // hand one of the person's agents a task. The agent acts on its own
+    // owner's accounts, so org read-only mode offers no way to start one;
+    // a code project's chat has its own sub-agents instead. A brief that
+    // cannot be read is not worth failing the turn over: the chat simply
+    // goes without agents this once.
+    const agentsOffered = !input.localTools && project?.kind !== 'code' && !readOnly;
+    const agents = agentsOffered
+      ? await agentAsksBrief({
+          subject: input.session.subject,
+          chatId: input.chat.id,
+          projectId: input.chat.projectId,
+          addressedAgentId: input.addressedAgentId ?? null,
+        }).catch((error: unknown) => {
+          log('chat agents brief not read: {message}', {
+            message: error instanceof Error ? error.message : String(error),
+          });
+          return null;
+        })
+      : null;
+    const agentsBrief = agents?.brief ?? null;
+    // Addressed to an agent the person may not ask (or none at all): the
+    // turn carries on as an ordinary message, with nothing allowed unasked.
+    const addressedAgentId = agents?.addressedAgentId ?? null;
+    const askAgent = agentsBrief
+      ? chatAskAgentTool({
+          chat: { id: input.chat.id, title: input.chat.title },
+          addressedAgentId,
+        })
+      : null;
     const delegate =
       models === null
         ? null
@@ -909,6 +952,7 @@ async function executeTurnBody(
       input.localTools ?? [
         ...chatTools,
         ...(delegate ? [delegate] : []),
+        ...(askAgent ? [askAgent] : []),
         ...(code?.tools ?? []),
         ...(auto ? [taskCompleteTool()] : []),
       ]
@@ -994,6 +1038,7 @@ async function executeTurnBody(
         chartsAllowed,
         pythonAllowed,
         autoMode: auto,
+        agentsBrief,
         timeZone: input.timeZone ?? null,
         now: new Date(),
       });
@@ -1068,7 +1113,12 @@ async function executeTurnBody(
         // "always" for that tool (permission-prefs.ts) — or the chat is in
         // auto mode, where nothing asks and only a blocked tool refuses.
         permissions: {
-          alwaysAllowed: new Set(permissionPrefs.alwaysAllow),
+          // A message the person addressed to an agent is their say-so for
+          // handing it that task (agent-ask-tool.ts refuses any other agent).
+          alwaysAllowed: new Set([
+            ...permissionPrefs.alwaysAllow,
+            ...(addressedAgentId && askAgent ? [CHAT_ASK_AGENT_TOOL] : []),
+          ]),
           // A blocked tool's preview card is blocked with it.
           denied: new Set([...denied, ...surface.blockedPreviews]),
           previewOnly: surface.previewOnly,

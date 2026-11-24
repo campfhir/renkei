@@ -75,6 +75,13 @@ describe('what a Send asks for', () => {
     expect(turnRequest({ ...message('Hi'), voice: true }, null)).toMatchObject({ voice: true });
   });
 
+  it('a message addressed to an agent names it, so the chat hands that agent the task', () => {
+    expect(
+      turnRequest({ ...message('@Triage look at INC-42'), agentId: 'agent-1' }, null)
+    ).toMatchObject({ text: '@Triage look at INC-42', agentId: 'agent-1' });
+    expect(turnRequest(message('Hi'), null)).not.toHaveProperty('agentId');
+  });
+
   it('/compact runs a compaction pass rather than going to the model as words', () => {
     expect(isCompactCommand(' /Compact ')).toBe(true);
     expect(isCompactCommand('/compact this please')).toBe(false);

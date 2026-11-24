@@ -45,6 +45,7 @@ import { chatProjects } from './chat-projects';
 import { promptLibraries } from './prompt-libraries';
 import { userMemory } from './user-memory';
 import { chatTasks } from './chat-tasks';
+import { chatAgents } from './chat-agents';
 import { artifacts } from './artifacts';
 import { codeProjects } from './code-projects';
 import { codeTemplates } from './code-templates';
@@ -144,6 +145,7 @@ export const DOMAINS = {
   promptLibraries,
   userMemory,
   chatTasks,
+  chatAgents,
   artifacts,
   codeProjects,
   codeTemplates,
