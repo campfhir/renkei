@@ -117,7 +117,7 @@ test.describe('Code project pipelines', () => {
       timeout: 30_000,
     });
     const strip = main.getByTestId('code-repo-strip');
-    const link = strip.getByRole('link', { name: 'Pipelines & environments' });
+    const link = strip.getByRole('link', { name: 'Pipelines', exact: true });
     await expect(link).toHaveAttribute('href', `/code/${ids.projectId}/environments`);
     // The rail is drawn once its Environment card is: no runs, setup or variables beside it.
     await expect(main.getByRole('heading', { level: 2, name: 'Environment' }).first()).toBeVisible({
@@ -267,7 +267,7 @@ test.describe('Code project pipelines', () => {
     const main = page.getByRole('main');
     await main.getByRole('button', { name: 'More', exact: true }).click();
     const opened = page.waitForEvent('popup');
-    await page.getByRole('menuitem', { name: 'Pipelines & environments' }).click();
+    await page.getByRole('menuitem', { name: 'Pipelines', exact: true }).click();
     const tab = await opened;
     await expect(tab).toHaveURL(new RegExp(`/code/${ids.projectId}/environments`));
     const there = tab.getByRole('main');

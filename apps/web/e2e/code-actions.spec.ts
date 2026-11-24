@@ -79,7 +79,7 @@ test.describe('Code project Actions', () => {
     });
     await main
       .getByTestId('code-repo-strip')
-      .getByRole('link', { name: 'Pipelines & environments' })
+      .getByRole('link', { name: 'Actions', exact: true })
       .click();
     await expect(page).toHaveURL(new RegExp(`/code/${ids.projectId}/environments`));
 
@@ -157,7 +157,7 @@ test.describe('Code project Actions', () => {
     await page.goto(`/chat/${chatId}`);
     await main.getByRole('button', { name: 'More', exact: true }).click();
     const opened = page.waitForEvent('popup');
-    await page.getByRole('menuitem', { name: 'Pipelines & environments' }).click();
+    await page.getByRole('menuitem', { name: 'Actions', exact: true }).click();
     const tab = await opened;
     await expect(tab).toHaveURL(new RegExp(`/code/${ids.projectId}/environments`));
     const there = tab.getByRole('main');

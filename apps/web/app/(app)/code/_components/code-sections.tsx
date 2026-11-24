@@ -116,12 +116,12 @@ export function CodeRepoStrip({
         <span className="font-mono text-sm">{code.repoFullName}</span>
         {statusPill}
         <span className="ml-auto flex items-center gap-3">
-          {/* Its environments: each one's branches, and a branch's pipeline, runs and variables. */}
+          {/* Its Environments page, named as the host names what runs there: each environment's branches, and a branch's pipeline, runs and variables. */}
           <Link
             href={`/code/${projectId}/environments`}
             className="text-xs font-medium whitespace-nowrap text-blue-600 hover:underline dark:text-blue-400"
           >
-            Pipelines &amp; environments
+            {isGitHub ? 'Actions' : 'Pipelines'}
           </Link>
           {hostUrl ? (
             <ExternalLink

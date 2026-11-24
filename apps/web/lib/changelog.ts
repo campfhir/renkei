@@ -58,7 +58,7 @@ export const CHANGELOG: ChangelogRelease[] = [
         kind: 'changed',
         title: 'Environments: pipelines, runs and variables by branch',
         detail:
-          "A code project's pipelines moved from the Deployments section to its own Environments page (the “Pipelines & environments” link on the project). Name the environments you deploy to, assign each the branches of the repository that deploy it — production takes exactly one — then pick an environment and a branch to see that branch's pipeline, its runs and its variables. A pipeline is now built per branch, and its pull request goes against that branch, because the pipeline file lives there. Pipelines built before this are split into one per environment branch; the Deployments item is gone from the menu, and promoting between environments from Renkei with it.",
+          "A code project's pipelines moved from the Deployments section to its own Environments page (the Pipelines link on a Bitbucket project, Actions on a GitHub one). Name the environments you deploy to, assign each the branches of the repository that deploy it — production takes exactly one — then pick an environment and a branch to see that branch's pipeline, its runs and its variables. A pipeline is now built per branch, and its pull request goes against that branch, because the pipeline file lives there. Pipelines built before this are split into one per environment branch; the Deployments item is gone from the menu, and promoting between environments from Renkei with it.",
       },
     ],
   },

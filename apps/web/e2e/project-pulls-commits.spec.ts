@@ -197,7 +197,7 @@ test.describe('project pulls and commits', () => {
 
     // Pipelines, runs and variables live on its Environments page: a link, no card.
     await expect(
-      main.getByTestId('code-repo-strip').getByRole('link', { name: 'Pipelines & environments' })
+      main.getByTestId('code-repo-strip').getByRole('link', { name: 'Actions', exact: true })
     ).toHaveAttribute('href', `/code/${ids.projectId}/environments`);
     await expect(main.getByRole('heading', { level: 2, name: 'Actions', exact: true })).toHaveCount(
       0

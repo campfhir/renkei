@@ -159,7 +159,7 @@ test('environments: branches, a branch’s pipeline, variables from a .env, and 
     const main = page.getByRole('main');
     await main
       .getByTestId('code-repo-strip')
-      .getByRole('link', { name: 'Pipelines & environments' })
+      .getByRole('link', { name: 'Pipelines', exact: true })
       .click();
     await expect(page).toHaveURL(new RegExp(`/code/${projectId}/environments`), {
       timeout: 30_000,

@@ -1071,8 +1071,8 @@ export default function ChatThread({
     overflow.push({ label: 'Environment', icon: ICONS.chip, onSelect: codeTools.openEnvironment });
     // Its environments, with each branch's pipeline, runs and variables; a new tab keeps the chat.
     overflow.push({
-      // Not "Environment": that is the item above, what the project's commands run with.
-      label: 'Pipelines & environments',
+      // Named as the host names them: Actions on GitHub, Pipelines on Bitbucket.
+      label: chat.projectHost === 'github' ? 'Actions' : 'Pipelines',
       icon: ICONS.deploy,
       onSelect: () => window.open(`/code/${codeProjectId}/environments`, '_blank', 'noopener'),
     });

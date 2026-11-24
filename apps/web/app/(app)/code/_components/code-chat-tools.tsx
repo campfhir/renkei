@@ -5,7 +5,7 @@
  * Tools — their own buttons on a wide screen, items of the overflow menu
  * on a narrow one: **Environment** — the project's variables, to look
  * at, replace by pasting a `.env`, or prune, without leaving the chat;
- * and, in the overflow menu, **Pipelines & environments**
+ * and, in the overflow menu, **Pipelines** (**Actions** on GitHub)
  * (chat-thread.tsx) — the project's Environments page, in a new tab,
  * where a person sees, by branch, the workflow a chat drafted and the
  * variables it set;

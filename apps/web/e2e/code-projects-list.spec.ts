@@ -78,7 +78,6 @@ test('the Code page searches, pages, and describes projects from their README', 
 
   const fullHeight = (await frame.boundingBox())!.height;
 
-
   // Search by the hand-typed description: in the URL, back on page one.
   const search = main.getByRole('searchbox', { name: 'Search code projects' });
   await search.fill('invoicing');
@@ -97,14 +96,16 @@ test('the Code page searches, pages, and describes projects from their README', 
   await search.fill('');
   await expect(rows).toHaveCount(10);
   await page.setViewportSize({ width: 390, height: 1400 });
-  const cards = frame.getByRole('list', { name: 'Code projects', exact: true }).locator('li:not([aria-hidden])');
+  const cards = frame
+    .getByRole('list', { name: 'Code projects', exact: true })
+    .locator('li:not([aria-hidden])');
   await expect(cards).toHaveCount(10);
   await expect(frame.locator('table')).toBeHidden();
   await expect(frame.getByRole('navigation', { name: 'Code projects pages' })).toBeInViewport();
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/4-phone.png`, caret: 'initial' });
-  expect(
-    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)
-  ).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true
+  );
 
   // Shared: another person sees it under "Shared with me", with its
   // owner's name, and nothing of their own under "Mine".
