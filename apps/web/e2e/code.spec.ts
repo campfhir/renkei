@@ -407,7 +407,8 @@ test.describe('code projects', () => {
     const action = async (name: string) => {
       if (mobile) {
         await main.getByRole('button', { name: 'More' }).click();
-        await main.getByRole('menuitem', { name }).click();
+        // Exactly: “Environment” is also in “Pipelines & environments”.
+        await main.getByRole('menuitem', { name, exact: true }).click();
       } else await main.getByRole('button', { name }).click();
     };
 

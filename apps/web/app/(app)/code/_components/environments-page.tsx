@@ -277,7 +277,7 @@ export default function EnvironmentsPage({
                   {problem ??
                     (state.form.kind === 'add'
                       ? `Name it as ${HOST[host]} does or will: a deploy job names its environment, and its variables hang from that name.`
-                      : 'Deployments reported under the old name stay under it.')}
+                      : 'A pipeline file names the environment it deploys: after renaming, open each branch’s pull request again so its file carries the new name. Deployments reported under the old name stay under it.')}
                 </p>
               </form>
             ) : null}
