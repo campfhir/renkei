@@ -97,12 +97,13 @@ export async function POST(
       decision === 'chat' ? 'allow' : 'deny'
     ).catch((error: unknown) => {
       logger.error(
-        '{actor} answered "{decision}" for {tool} in chat {chatId}, but it was not saved on the chat; the call waits on: {error}',
+        '{actor} answered "{decision}" for {tool} in chat "{chat}", but it was not saved on the chat; the call waits on: {error}',
         {
           component: 'api/chat/permission',
           ...who(session),
           decision,
           tool: pending.name,
+          chat: chat.title ?? 'Untitled chat',
           chatId: chat.id,
           error: error instanceof Error ? error.message : String(error),
         }

@@ -11,8 +11,6 @@
  * Tool permissions, the notifications page at Notifications.
  */
 
-import type { IconName } from '@/components/icons';
-
 export const PREFERENCES_PATH = '/preferences';
 
 export type PreferencesSectionId =
@@ -27,10 +25,23 @@ export type PreferencesSectionId =
   | 'security'
   | 'data';
 
+/** The icon each section shows: names in components/icons.tsx's ICONS. */
+export type PreferencesIcon =
+  | 'sun'
+  | 'microphone'
+  | 'sparkles'
+  | 'chat'
+  | 'shield'
+  | 'agent'
+  | 'code'
+  | 'bell'
+  | 'lock'
+  | 'download';
+
 export interface PreferencesSection {
   id: PreferencesSectionId;
   label: string;
-  icon: IconName;
+  icon: PreferencesIcon;
   /** What the section holds, for the overview when there is no state to say. */
   blurb: string;
 }
