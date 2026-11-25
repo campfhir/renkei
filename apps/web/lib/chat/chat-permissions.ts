@@ -10,6 +10,9 @@
  *
  * The organization's locked high-risk tools are never allowed this way:
  * the card does not offer it and the route refuses it.
+ *
+ * Either answer can be taken back from the chat's Tools dialog ("Decided
+ * in this chat"), which puts the tool back to asking.
  */
 
 import { getDataStore } from '@renkei/db';
@@ -42,15 +45,19 @@ export function parseChatToolAnswers(stored: unknown): ChatToolAnswers {
   return { allow: names(stored.allow).filter((name) => !denied.has(name)), deny };
 }
 
-/** The answers with one tool moved onto `rule`'s list (and off the other). */
+/** What can be decided for a tool in one chat; 'ask' takes a decision back. */
+export type ChatToolRule = 'allow' | 'deny' | 'ask';
+
+/** The answers with one tool moved onto `rule`'s list (and off the other); 'ask' takes it off both. */
 export function withChatToolAnswer(
   answers: ChatToolAnswers,
   name: string,
-  rule: 'allow' | 'deny'
+  rule: ChatToolRule
 ): ChatToolAnswers {
   const allow = answers.allow.filter((entry) => entry !== name);
   const deny = answers.deny.filter((entry) => entry !== name);
-  (rule === 'allow' ? allow : deny).push(name);
+  if (rule === 'allow') allow.push(name);
+  if (rule === 'deny') deny.push(name);
   return { allow: allow.sort(), deny: deny.sort() };
 }
 
@@ -62,12 +69,19 @@ export function withChatToolAnswer(
 export async function rememberChatToolAnswer(
   chatId: string,
   name: string,
-  rule: 'allow' | 'deny'
-): Promise<boolean> {
-  if (!TOOL_NAME.test(name)) return false;
+  rule: ChatToolRule
+): Promise<ChatToolAnswers | null> {
+  if (!TOOL_NAME.test(name)) return null;
   const chat = await getDataStore().chats.get(chatId);
-  if (!chat) return false;
+  if (!chat) return null;
   const next = withChatToolAnswer(parseChatToolAnswers(chat.toolPermissions), name, rule);
-  await getDataStore().chats.setToolPermissions(chatId, next);
-  return true;
+  const empty = next.allow.length === 0 && next.deny.length === 0;
+  await getDataStore().chats.setToolPermissions(chatId, empty ? null : next);
+  return next;
+}
+
+/** A chat's answers as stored; none when the chat is gone. */
+export async function readChatToolAnswers(chatId: string): Promise<ChatToolAnswers> {
+  const chat = await getDataStore().chats.get(chatId);
+  return chat ? parseChatToolAnswers(chat.toolPermissions) : NO_CHAT_TOOL_ANSWERS;
 }

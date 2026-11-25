@@ -108,7 +108,7 @@ export async function POST(
           error: error instanceof Error ? error.message : String(error),
         }
       );
-      return false;
+      return null;
     });
     if (!remembered) return jsonError(500, 'not-remembered', 'Could not save the permission');
   }

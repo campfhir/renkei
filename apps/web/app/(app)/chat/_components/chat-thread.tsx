@@ -1362,6 +1362,7 @@ export default function ChatThread({
                 locked={codeProjectId ? CODE_PROJECT_CONNECTORS : undefined}
                 kind={codeProjectId ? 'code' : 'chat'}
                 projectDefault={chat.projectToolConfig?.connectors ?? null}
+                chatId={chat.id}
               />
             ) : null
           ) : (
@@ -1374,6 +1375,7 @@ export default function ChatThread({
                   locked={codeProjectId ? CODE_PROJECT_CONNECTORS : undefined}
                   kind={codeProjectId ? 'code' : 'chat'}
                   projectDefault={chat.projectToolConfig?.connectors ?? null}
+                  chatId={chat.id}
                 />
               ) : null}
             </>

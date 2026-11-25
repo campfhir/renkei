@@ -165,10 +165,12 @@ test('a parked turn shows the ask inline, and Always allow lands on the Preferen
   }
 });
 
-test('Block in this chat, from the Deny button’s arrow, refuses the call and keeps it out of the chat', async ({
+test('Block in this chat refuses the call and keeps it out of the chat, until Reset in its Tools dialog', async ({
   page,
   person: _person,
 }, testInfo) => {
+  // Two turns, a dialog and a reset: longer than one ask.
+  test.setTimeout(120_000);
   const parked = await parkedChat(page.request, testInfo);
   try {
     await page.goto(`/chat/${parked.chatId}`);
@@ -187,6 +189,49 @@ test('Block in this chat, from the Deny button’s arrow, refuses the call and k
 
     // Kept on this chat alone: the person's own lists are untouched.
     expect(await toolPermissions(page.request)).toEqual({ alwaysAllow: [], alwaysDeny: [] });
+
+    // Taken back from the chat's Tools dialog: Reset sends "ask" for the tool.
+    await page.getByRole('button', { name: 'Tools', exact: true }).click();
+    const decided = page.getByRole('region', { name: 'Decided in this chat' });
+    await expect(decided).toContainText('Blocked in this chat');
+    await shot(page, testInfo, 'chat-tools-decided.png');
+    const reset = page.waitForRequest(
+      (request) => request.method() === 'PUT' && request.url().endsWith('/tool-answers')
+    );
+    await decided.getByRole('button', { name: new RegExp(`^Reset .*\\(${TOOL}\\)$`) }).click();
+    expect((await reset).postDataJSON()).toEqual({ tool: TOOL, rule: 'ask' });
+    await expect(decided).toBeHidden();
+    await page.keyboard.press('Escape');
+
+    // The next call to the tool in this chat asks again.
+    await expect
+      .poll(
+        async () => (await readChat(page.request, parked.chatId)).chat.activeTurn?.status ?? null,
+        {
+          timeout: 30_000,
+        }
+      )
+      .toBeNull();
+    const again = await startTurn(
+      page.request,
+      parked.chatId,
+      scripted(PROMPT, [
+        toolStep(TOOL, { note: NOTE }, 'Trying again.'),
+        { text: 'Noted for next time.' },
+      ]),
+      parked.modelId
+    );
+    await expect
+      .poll(
+        async () =>
+          (await readChat(page.request, parked.chatId)).chat.activeTurn?.pendingPermission?.name ??
+          null,
+        { timeout: 30_000 }
+      )
+      .toBe(TOOL);
+    await page.reload();
+    await expect(card.getByText('Allow this?')).toBeVisible({ timeout: 30_000 });
+    await page.request.post(`/api/chat/chats/${parked.chatId}/turns/${again}/cancel`);
   } finally {
     await page.request.post(`/api/chat/chats/${parked.chatId}/turns/${parked.turnId}/cancel`);
     await removeModel(page.request, parked.modelId);

@@ -28,6 +28,7 @@ import { LoadingLine } from '@/components/skeleton';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { subscribePreferencesChanged } from '@/lib/preferences-events';
 import { defaultToolsReload } from '../../preferences-sync.model';
+import ChatToolAnswers from './chat-tool-answers';
 import {
   connectorLabel,
   effectiveTools,
@@ -60,6 +61,7 @@ export default function ToolsDialog({
   open: controlledOpen,
   onOpenChange,
   trigger = true,
+  chatId,
 }: {
   /** null = the core set. */
   selected: string[] | null;
@@ -108,6 +110,12 @@ export default function ToolsDialog({
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   trigger?: boolean;
+  /**
+   * The chat this dialog is about, when it is one (its owner's view): the
+   * dialog then also lists what was allowed or blocked in this chat from
+   * its permission cards, with a way to take each back.
+   */
+  chatId?: string;
 }) {
   const [ownOpen, setOwnOpen] = useState(false);
   const open = controlledOpen ?? ownOpen;
@@ -284,6 +292,7 @@ export default function ToolsDialog({
                 </div>
               ))}
             </div>
+            {chatId ? <ChatToolAnswers chatId={chatId} /> : null}
             {foot.projectNote ? (
               <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
                 Saved on the project as soon as you toggle it. Your personal default for new chats

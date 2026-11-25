@@ -22,6 +22,18 @@ describe('a chat’s own tool answers', () => {
     expect(withChatToolAnswer(blocked, 'jira_create_issue', 'allow')).toEqual(allowed);
   });
 
+  it('"ask" takes a decision back, whichever list it was on', () => {
+    const both = { allow: ['jira_create_issue'], deny: ['outlook_send_mail'] };
+    expect(withChatToolAnswer(both, 'outlook_send_mail', 'ask')).toEqual({
+      allow: ['jira_create_issue'],
+      deny: [],
+    });
+    expect(withChatToolAnswer(both, 'jira_create_issue', 'ask')).toEqual({
+      allow: [],
+      deny: ['outlook_send_mail'],
+    });
+  });
+
   it('is kept on that chat alone', async () => {
     registerDataStore(createMemoryDataStore());
     try {
@@ -35,14 +47,21 @@ describe('a chat’s own tool answers', () => {
           autoMode: false,
         });
       const [one, two] = [await make(), await make()];
-      expect(await rememberChatToolAnswer(one, 'jira_create_issue', 'allow')).toBe(true);
-      expect(await rememberChatToolAnswer(one, 'outlook_send_mail', 'deny')).toBe(true);
+      expect(await rememberChatToolAnswer(one, 'jira_create_issue', 'allow')).not.toBeNull();
+      expect(await rememberChatToolAnswer(one, 'outlook_send_mail', 'deny')).toEqual({
+        allow: ['jira_create_issue'],
+        deny: ['outlook_send_mail'],
+      });
       expect(parseChatToolAnswers((await getDataStore().chats.get(one))?.toolPermissions)).toEqual({
         allow: ['jira_create_issue'],
         deny: ['outlook_send_mail'],
       });
       expect((await getDataStore().chats.get(two))?.toolPermissions).toBeNull();
-      expect(await rememberChatToolAnswer(one, 'not a tool', 'allow')).toBe(false);
+      expect(await rememberChatToolAnswer(one, 'not a tool', 'allow')).toBeNull();
+      // Taking both back leaves the chat with nothing stored.
+      await rememberChatToolAnswer(one, 'jira_create_issue', 'ask');
+      await rememberChatToolAnswer(one, 'outlook_send_mail', 'ask');
+      expect((await getDataStore().chats.get(one))?.toolPermissions).toBeNull();
     } finally {
       resetDataStore();
     }

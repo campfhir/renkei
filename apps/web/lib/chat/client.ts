@@ -268,6 +268,18 @@ export const chatClient = {
       { toolUseId, decision }
     ),
 
+  /** What the owner decided for this one chat from its permission card (chat-permissions.ts). */
+  toolAnswers: (chatId: string) =>
+    getJson<{ allow: string[]; deny: string[] }>(`${base()}/chats/${chatId}/tool-answers`),
+
+  /** Put one tool back to asking in this chat: the way out of "Block in this chat". */
+  resetToolAnswer: (chatId: string, tool: string) =>
+    sendJsonFull<{ allow: string[]; deny: string[] }>(
+      `${base()}/chats/${chatId}/tool-answers`,
+      'PUT',
+      { tool, rule: 'ask' }
+    ),
+
   /** What this person decided ahead of time about the chat's act tools (permission-prefs.ts). */
   toolPermissions: () =>
     getJson<{ alwaysAllow: string[]; alwaysDeny: string[] }>(`${base()}/tool-permissions`),

@@ -740,7 +740,8 @@ const DECISION_LABELS: Record<ToolPermissionDecision, [idle: string, busy: strin
 export const DECISION_HINTS: Partial<Record<ToolPermissionDecision, string>> = {
   chat: 'Stops asking about this tool in this chat.',
   always: 'Stops asking about this tool in every chat. Change it under Preferences.',
-  'deny-chat': 'Refuses this call and keeps the tool out of this chat.',
+  'deny-chat':
+    'Refuses this call and keeps the tool out of this chat. Undo it from this chat’s Tools.',
   'deny-always':
     'Refuses this call and blocks the tool in every chat. Change it under Preferences.',
 };
