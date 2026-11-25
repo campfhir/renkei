@@ -126,6 +126,8 @@ export interface ModelUsage {
   names: string[];
   /** People whose preferred chat model it is. */
   preferences: number;
+  /** People whose preferred code project model it is. */
+  codePreferences: number;
   projects: number;
   chats: number;
   agents: number;
@@ -633,6 +635,9 @@ export function removalView(state: ModelFormsState): RemovalView | null {
   const what = usage
     ? [
         usage.preferences > 0 ? counted(usage.preferences, 'preferred chat model') : null,
+        usage.codePreferences > 0
+          ? counted(usage.codePreferences, 'preferred code project model')
+          : null,
         usage.projects > 0 ? counted(usage.projects, 'project') : null,
         usage.chats > 0 ? counted(usage.chats, 'chat') : null,
         usage.agents > 0 ? counted(usage.agents, 'agent') : null,

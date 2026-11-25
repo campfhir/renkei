@@ -1,7 +1,7 @@
 /**
  * The "your model changed" note — written when an administrator removes a
  * model from the organization while it was a person's preferred chat model
- * or their projects, chats or agents were set to it. Each person it touched is told what was removed and what theirs run
+ * or code project model, or their projects, chats or agents were set to it. Each person it touched is told what was removed and what theirs run
  * on now: the replacement the administrator picked, or the organization's
  * default when none was.
  *
@@ -24,6 +24,8 @@ export const MODEL_REMOVED_KIND = 'model_removed';
 export interface ModelRemovedUse extends LlmModelUse {
   /** It was their preferred chat model. */
   preference: boolean;
+  /** It was their preferred code project model. */
+  codePreference: boolean;
 }
 
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
@@ -41,12 +43,14 @@ export function modelRemovedHeadline(input: {
   /** The model picked to take its place; null for the organization's default. */
   replacementLabel: string | null;
   preference: boolean;
+  codePreference: boolean;
   projects: number;
   chats: number;
   agents: number;
 }): string {
   const touched = [
     input.preference ? 'your preferred chat model' : null,
+    input.codePreference ? 'your preferred code project model' : null,
     input.projects > 0 ? count(input.projects, 'project') : null,
     input.chats > 0 ? count(input.chats, 'chat') : null,
     input.agents > 0 ? count(input.agents, 'agent') : null,
@@ -59,18 +63,31 @@ export function modelRemovedHeadline(input: {
 
 /**
  * Everyone a model's removal touches, by subject: the owners of projects,
- * chats and agents set to it, and the people who prefer it for new chats.
+ * chats and agents set to it, and the people who prefer it for new chats
+ * or for their code projects.
  */
 export function modelRemovedUses(
   uses: readonly LlmModelUse[],
-  preferring: readonly string[]
+  preferring: readonly string[],
+  preferringForCode: readonly string[]
 ): ModelRemovedUse[] {
   const people = new Map<string, ModelRemovedUse>(
-    uses.map((use) => [use.subject, { ...use, preference: false }])
+    uses.map((use) => [use.subject, { ...use, preference: false, codePreference: false }])
   );
+  const person = (subject: string): ModelRemovedUse =>
+    people.get(subject) ?? {
+      subject,
+      projects: 0,
+      chats: 0,
+      agents: 0,
+      preference: false,
+      codePreference: false,
+    };
   for (const subject of preferring) {
-    const found = people.get(subject) ?? { subject, projects: 0, chats: 0, agents: 0 };
-    people.set(subject, { ...found, preference: true });
+    people.set(subject, { ...person(subject), preference: true });
+  }
+  for (const subject of preferringForCode) {
+    people.set(subject, { ...person(subject), codePreference: true });
   }
   return [...people.values()].sort((a, b) =>
     a.subject < b.subject ? -1 : a.subject > b.subject ? 1 : 0

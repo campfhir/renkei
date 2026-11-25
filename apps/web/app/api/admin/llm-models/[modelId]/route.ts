@@ -19,7 +19,12 @@ import { checkServiceEndpoint } from '@/lib/service-endpoint';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
 import { who } from '@/lib/log-actor';
-import { patchChatModelPrefs, subjectsPreferringChatModel } from '@renkei/user-prefs';
+import {
+  patchChatModelPrefs,
+  patchCodeModelPrefs,
+  subjectsPreferringChatModel,
+  subjectsPreferringCodeModel,
+} from '@renkei/user-prefs';
 import { modelRemovedUses, notifyModelRemoved } from '@/lib/agents/model-removed-notification';
 
 export async function PUT(
@@ -144,28 +149,36 @@ export async function DELETE(
   }
 
   // Read before the delete: afterwards nothing says who was on it.
-  const preferring = await subjectsPreferringChatModel(modelId);
-  const people = modelRemovedUses(await models.usedBy(modelId), preferring);
+  const [preferring, preferringForCode] = await Promise.all([
+    subjectsPreferringChatModel(modelId),
+    subjectsPreferringCodeModel(modelId),
+  ]);
+  const people = modelRemovedUses(await models.usedBy(modelId), preferring, preferringForCode);
   if (!(await models.delete(modelId, replacement?.id ?? null))) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
   invalidateLlmCache();
   // The preferences name the model by id in their own documents, which the
   // delete does not reach: each moves to the replacement, or to none.
-  const moved = await Promise.all(
-    preferring.map((subject) => patchChatModelPrefs(subject, { modelId: replacement?.id ?? null }))
-  );
+  const moved = await Promise.all([
+    ...preferring.map((subject) =>
+      patchChatModelPrefs(subject, { modelId: replacement?.id ?? null })
+    ),
+    ...preferringForCode.map((subject) =>
+      patchCodeModelPrefs(subject, { modelId: replacement?.id ?? null })
+    ),
+  ]);
   const unmoved = moved.filter((result) => !result.ok).length;
   if (unmoved > 0) {
     logger.warn(
-      '{actor} removed the LLM model "{label}", but {unmoved} of the {preferring} chat model preferences naming it could not be rewritten; those people start new chats on the organization default',
+      '{actor} removed the LLM model "{label}", but {unmoved} of the {preferring} chat and code project model preferences naming it could not be rewritten; those people start new chats on the organization default',
       {
         component: 'api/admin/llm-models',
         ...who(session),
         modelId,
         label: existing.label,
         unmoved,
-        preferring: preferring.length,
+        preferring: preferring.length + preferringForCode.length,
       }
     );
   }

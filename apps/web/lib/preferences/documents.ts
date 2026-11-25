@@ -5,8 +5,8 @@
  * here, so a change the model makes on the person's word passes the same
  * checks as one made on the Preferences page.
  *
- * `notifications`, `theme`, `voice`, `image`, `chatModel`, `coachMarks` and
- * `chatArchive` are independent documents. A patch changes some fields of any —
+ * `notifications`, `theme`, `voice`, `image`, `chatModel`, `codeModel`,
+ * `coachMarks` and `chatArchive` are independent documents. A patch changes some fields of any —
  * `{ theme: { mode: 'dark' } }` changes the mode and nothing else — merged
  * into what is stored in one atomic write per document. Every patch is read
  * and checked before anything is written, so a refused field leaves every
@@ -18,6 +18,7 @@ import {
   getChatArchivePrefs,
   getChatModelPrefs,
   getCoachMarkPrefs,
+  getCodeModelPrefs,
   getImagePrefs,
   getNotificationPrefs,
   getThemePrefs,
@@ -25,6 +26,7 @@ import {
   parseChatArchivePatch,
   parseChatModelPatch,
   parseCoachMarkPatch,
+  parseCodeModelPatch,
   parseImagePatch,
   parseNotificationPatch,
   parseThemePatch,
@@ -32,6 +34,7 @@ import {
   patchChatArchivePrefs,
   patchChatModelPrefs,
   patchCoachMarkPrefs,
+  patchCodeModelPrefs,
   patchImagePrefs,
   patchNotificationPrefs,
   patchThemePrefs,
@@ -41,17 +44,18 @@ import {
 import { isRecord } from '@renkei/guards';
 
 export async function readAllPreferences(subject: string) {
-  const [notifications, theme, voice, image, chatModel, coachMarks, chatArchive] =
+  const [notifications, theme, voice, image, chatModel, codeModel, coachMarks, chatArchive] =
     await Promise.all([
       getNotificationPrefs(subject, { fresh: true }),
       getThemePrefs(subject, { fresh: true }),
       getVoicePrefs(subject, { fresh: true }),
       getImagePrefs(subject, { fresh: true }),
       getChatModelPrefs(subject, { fresh: true }),
+      getCodeModelPrefs(subject, { fresh: true }),
       getCoachMarkPrefs(subject, { fresh: true }),
       getChatArchivePrefs(subject, { fresh: true }),
     ]);
-  return { notifications, theme, voice, image, chatModel, coachMarks, chatArchive };
+  return { notifications, theme, voice, image, chatModel, codeModel, coachMarks, chatArchive };
 }
 
 export type AllPreferences = Awaited<ReturnType<typeof readAllPreferences>>;
@@ -81,6 +85,7 @@ const DOCUMENTS: Record<string, (raw: unknown) => Prepared> = {
   voice: document(parseVoicePatch, patchVoicePrefs),
   image: document(parseImagePatch, patchImagePrefs),
   chatModel: document(parseChatModelPatch, patchChatModelPrefs),
+  codeModel: document(parseCodeModelPatch, patchCodeModelPrefs),
   coachMarks: document(parseCoachMarkPatch, patchCoachMarkPrefs),
   chatArchive: document(parseChatArchivePatch, patchChatArchivePrefs),
 };
@@ -97,7 +102,7 @@ export type PatchPreferencesOutcome =
 
 /**
  * Change some fields of one or more documents. Answers with the documents
- * that were written and all six as now stored.
+ * that were written and all of them as now stored.
  */
 export async function patchPreferences(
   subject: string,

@@ -24,7 +24,12 @@ import {
   parseEncryptionKey,
 } from '@renkei/crypto';
 import { createMemoryDataStore, getDataStore, registerDataStore, resetDataStore } from '@renkei/db';
-import { getChatModelPrefs, patchChatModelPrefs } from '@renkei/user-prefs';
+import {
+  getChatModelPrefs,
+  getCodeModelPrefs,
+  patchChatModelPrefs,
+  patchCodeModelPrefs,
+} from '@renkei/user-prefs';
 import { DELETE, PUT } from './route';
 import { GET as USAGE } from './usage/route';
 
@@ -271,13 +276,14 @@ describe('DELETE with people still on the model', () => {
     );
   const other: ModelConfigRow = { ...baseRow, id: ROW_2, label: 'Other', is_default: true };
 
-  /** ann prefers the model and has a project and a chat on it; bob has a chat. */
+  /** ann prefers the model and has a project and a chat on it; bob prefers it for code projects and has a chat. */
   async function inUse() {
     const db = fakeDb([{ ...baseRow }, other]);
     const store = getDataStore();
     const ann = `auth0|ann-${randomUUID()}`;
     const bob = `auth0|bob-${randomUUID()}`;
     await patchChatModelPrefs(ann, { modelId: ROW_1 });
+    await patchCodeModelPrefs(bob, { modelId: ROW_1 });
     const project = await store.chatProjects.create({
       ownerSubject: ann,
       name: 'p',
@@ -313,11 +319,12 @@ describe('DELETE with people still on the model', () => {
     expect((await world.store.chats.get(world.annChat))?.llmModelId).toBe(ROW_2);
     expect((await world.store.chats.get(world.bobChat))?.llmModelId).toBe(ROW_2);
     expect((await getChatModelPrefs(world.ann, { fresh: true })).modelId).toBe(ROW_2);
+    expect((await getCodeModelPrefs(world.bob, { fresh: true })).modelId).toBe(ROW_2);
     expect(await world.headlines(world.ann)).toEqual([
       'An administrator removed the model "Prod Claude". "Other" replaced it for your preferred chat model, 1 project and 1 chat.',
     ]);
     expect(await world.headlines(world.bob)).toEqual([
-      'An administrator removed the model "Prod Claude". "Other" replaced it for 1 chat.',
+      'An administrator removed the model "Prod Claude". "Other" replaced it for your preferred code project model and 1 chat.',
     ]);
   });
 
@@ -331,7 +338,7 @@ describe('DELETE with people still on the model', () => {
     expect((await world.store.chats.get(world.bobChat))?.llmModelId).toBeNull();
     expect((await getChatModelPrefs(world.ann, { fresh: true })).modelId).toBeNull();
     expect(await world.headlines(world.bob)).toEqual([
-      'An administrator removed the model "Prod Claude". The organization\'s default model replaced it for 1 chat.',
+      'An administrator removed the model "Prod Claude". The organization\'s default model replaced it for your preferred code project model and 1 chat.',
     ]);
   });
 
@@ -372,6 +379,7 @@ describe('DELETE with people still on the model', () => {
       people: 2,
       names: ['Ann Example'],
       preferences: 1,
+      codePreferences: 1,
       projects: 1,
       chats: 2,
       agents: 0,

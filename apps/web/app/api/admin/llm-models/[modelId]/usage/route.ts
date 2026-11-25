@@ -8,7 +8,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDataStore } from '@renkei/db';
-import { subjectsPreferringChatModel } from '@renkei/user-prefs';
+import { subjectsPreferringChatModel, subjectsPreferringCodeModel } from '@renkei/user-prefs';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { modelRemovedUses } from '@/lib/agents/model-removed-notification';
 
@@ -29,7 +29,8 @@ export async function GET(
   }
   const people = modelRemovedUses(
     await models.usedBy(modelId),
-    await subjectsPreferringChatModel(modelId)
+    await subjectsPreferringChatModel(modelId),
+    await subjectsPreferringCodeModel(modelId)
   );
   const sum = (of: (person: (typeof people)[number]) => number) =>
     people.reduce((total, person) => total + of(person), 0);
@@ -41,6 +42,7 @@ export async function GET(
     people: people.length,
     names: named.flatMap((subject) => nameOf.get(subject) || []),
     preferences: sum((person) => (person.preference ? 1 : 0)),
+    codePreferences: sum((person) => (person.codePreference ? 1 : 0)),
     projects: sum((person) => person.projects),
     chats: sum((person) => person.chats),
     agents: sum((person) => person.agents),

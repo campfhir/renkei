@@ -30,6 +30,7 @@ const SHELL_DOCUMENTS: ReadonlySet<string> = new Set([
   'chatArchive',
   'image',
   'chatModel',
+  'codeModel',
   'defaultTools',
 ]);
 

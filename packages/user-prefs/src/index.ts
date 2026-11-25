@@ -36,6 +36,10 @@ import {
   DEFAULT_CHAT_MODEL_PREFS,
   parseChatModelPrefs,
   type ChatModelPrefs,
+  CODE_MODEL_KEY,
+  DEFAULT_CODE_MODEL_PREFS,
+  parseCodeModelPrefs,
+  type CodeModelPrefs,
   CHAT_ARCHIVE_KEY,
   DEFAULT_CHAT_ARCHIVE_PREFS,
   parseChatArchivePrefs,
@@ -333,6 +337,52 @@ export async function subjectsPreferringChatModel(modelId: string): Promise<stri
   const rows = await getDataStore().userPreferences.listByKey(CHAT_MODEL_KEY);
   return rows
     .filter((row) => parseChatModelPrefs(row.value).modelId === modelId.toLowerCase())
+    .map((row) => row.subject);
+}
+
+const codeModelCache = new Map<string, { value: CodeModelPrefs; expiresAt: number }>();
+
+/**
+ * Which model this person's new chats in a code project start on. Same
+ * cache and `fresh` discipline as the chat model preference. Never fails
+ * loudly: a database problem reads as "no preference", which is the
+ * person's preferred chat model, else the organization's default.
+ */
+export async function getCodeModelPrefs(
+  subject: string,
+  options: { fresh?: boolean } = {}
+): Promise<CodeModelPrefs> {
+  const key = cacheKey(subject);
+  const cached = codeModelCache.get(key);
+  if (!options.fresh && cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const rowResult = await wrapAsync(
+    () => getDataStore().userPreferences.get(subject, CODE_MODEL_KEY),
+    'DB_ERROR' as const
+  );
+  if (!rowResult.ok) return DEFAULT_CODE_MODEL_PREFS;
+
+  const value = parseCodeModelPrefs(rowResult.val);
+  codeModelCache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
+  return value;
+}
+
+/** Change this person's code project model preference: the fields given, nothing else (see mergePrefs). */
+export async function patchCodeModelPrefs(
+  subject: string,
+  patch: Partial<CodeModelPrefs>
+): Promise<Result<void, 'DB_ERROR'>> {
+  return mergePrefs(subject, CODE_MODEL_KEY, patch, codeModelCache);
+}
+
+/**
+ * Everyone whose preferred code project model is this one, by subject:
+ * who a model's removal leaves without their pick.
+ */
+export async function subjectsPreferringCodeModel(modelId: string): Promise<string[]> {
+  const rows = await getDataStore().userPreferences.listByKey(CODE_MODEL_KEY);
+  return rows
+    .filter((row) => parseCodeModelPrefs(row.value).modelId === modelId.toLowerCase())
     .map((row) => row.subject);
 }
 
