@@ -2,7 +2,7 @@ import { like, orderBy, page } from '../../memory/order';
 import { parseJson, toJson, type MemoryTables, type Row } from '../../memory/tables';
 import { deleteRunRows } from '../agent-runs/sweep-memory';
 import { jsonField } from './json';
-import { agentFromRow, definitionColumns, escapeLike, triggerFromRow } from './record';
+import { actionNames, agentFromRow, definitionColumns, escapeLike, triggerFromRow } from './record';
 import { memoryAgentSweeps } from './sweep-memory';
 import type { AgentAdminRecord, AgentStore } from './types';
 
@@ -152,6 +152,9 @@ export function memoryAgents(tables: MemoryTables): AgentStore {
         owner_subject: agent.ownerSubject,
         ...definitionColumns(agent),
         tools: toJson(agent.tools),
+        allowed_actions: toJson([...new Set(agent.allowedActions)].sort()),
+        // The switch allowed actions replaced (migration 199); kept as stored.
+        auto_accept_actions: false,
         description: null,
         description_status: 'stale',
         review_notes: null,
@@ -171,6 +174,7 @@ export function memoryAgents(tables: MemoryTables): AgentStore {
       tables.update('agents', owned, (row) => ({
         ...definitionColumns(values),
         tools: toJson(values.tools),
+        allowed_actions: toJson([...new Set(values.allowedActions)].sort()),
         steps_version: row.steps_version + 1,
         ...(markDescriptionStale ? { description_status: 'stale' } : {}),
         updated_at: new Date(),
@@ -511,7 +515,7 @@ export function memoryAgents(tables: MemoryTables): AgentStore {
             enabled: row.enabled,
             guardrails: row.guardrails,
             canAskQuestions: row.can_ask_questions,
-            autoAcceptActions: row.auto_accept_actions,
+            allowedActions: actionNames(row.allowed_actions),
           }
         : null;
     },

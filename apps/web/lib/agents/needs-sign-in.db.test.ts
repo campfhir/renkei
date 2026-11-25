@@ -77,7 +77,7 @@ maybe('resumeRunsNeedingSignIn', () => {
       enabled: true,
       guardrails: null,
       canAskQuestions: false,
-      autoAcceptActions: false,
+      allowedActions: [],
     });
   });
 

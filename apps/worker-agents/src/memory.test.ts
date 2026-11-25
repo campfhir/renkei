@@ -69,7 +69,7 @@ maybe('agent memory', () => {
       enabled: true,
       guardrails: null,
       canAskQuestions: false,
-      autoAcceptActions: false,
+      allowedActions: [],
     });
     return id;
   }

@@ -74,7 +74,13 @@ import { parseDigest, type ArtifactDigest } from './artifact-digest-input';
 import { PROMPT_FILE_MAX_BYTES } from './attachments';
 import type { ChatStreamEvent } from './stream-events';
 import type { TurnChannel } from './turn-events';
-import type { AttachmentView, PendingToolPermission, ToolPermissionDecision } from './views';
+import type { ToolDecision, ToolKind } from './tool-decision';
+import {
+  isRefusal,
+  type AttachmentView,
+  type PendingToolPermission,
+  type ToolPermissionDecision,
+} from './views';
 import { toChatBlock } from './views';
 import type { MessageStatus, MessageTiming, TurnStatus } from './views';
 
@@ -267,18 +273,22 @@ const RETRYABLE_MODEL_ERROR_KINDS = new Set<LlmErrorKind>(['network', 'provider_
 /**
  * The turn's permission policy. Absent, nothing asks — the runner then
  * runs every call as it always did, which is what a test against fakes
- * and a caller with its own gate want. Present, every call the runner
- * cannot vouch for as read-only (readOnlyTools) asks unless its name is
- * in `alwaysAllowed`, which grows with every 'always' the person answers.
+ * and a caller with its own gate want. Present, every call is decided by
+ * `decide` (tool-decision.ts over the turn's layers: blocks, the
+ * organization's locks, this chat's, its project's and the person's
+ * lists, Auto mode): it runs, asks first, or is refused. A read tool can
+ * ask too — one the organization locks, or one made to ask. An answer
+ * that outlasts its call ("in this chat", "always", a block) holds for
+ * the rest of the turn; the route has already stored it for the next.
  */
 export interface TurnPermissions {
-  alwaysAllowed: ReadonlySet<string>;
+  decide: (name: string, kind: ToolKind) => ToolDecision;
   /**
-   * Auto mode (auto-mode.ts): nothing asks. Every call runs as if the
-   * person had said "always" for it — except the tools in `denied`,
-   * which stay refused. The person chose this for the chat.
+   * The organization's locked high-risk tools (@renkei/settings'
+   * lockedHighRiskTools): an allowing answer to one of them does not stick
+   * — it asks again next time — and the card offers none.
    */
-  allowAll?: boolean;
+  locked?: ReadonlySet<string>;
   /**
    * Tools the person blocked outright (permission-prefs.ts). The surface
    * never offers these, so a call can only come from the model's memory
@@ -309,7 +319,7 @@ export const PERMISSION_TIMEOUT_RESULT =
 export const previewOnlyResult = (preview: string) =>
   `This tool is not available in chat: it acts only after the person confirms on a preview card. Call ${preview} instead and let them decide from the card; do not repeat its contents in your reply.`;
 export const PERMISSION_BLOCKED_RESULT =
-  'The person has blocked this tool in their preferences, so it cannot be used in this chat. Do not retry it or work around it; tell them what you were going to do and let them decide.';
+  'The person has blocked this tool, for this chat or in their preferences, so it cannot be used here. Do not retry it or work around it; tell them what you were going to do and let them decide.';
 /**
  * What the model is told in place of a result for a tool call whose
  * arguments were cut off mid-stream (the reply hit its output-token
@@ -721,17 +731,26 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
   const readOnlyTools = deps.readOnlyTools ?? new Set<string>();
   const concurrentTools = deps.concurrentTools ?? new Set<string>();
   const widgetResourceUris = deps.widgetResourceUris ?? new Map<string, string>();
-  const alwaysAllowed = new Set(deps.permissions?.alwaysAllowed ?? []);
-  const denied = deps.permissions?.denied ?? new Set<string>();
+  // Allowed by an answer during this turn ("in this chat", "always").
+  const answeredAllowed = new Set<string>();
+  const locked = deps.permissions?.locked ?? new Set<string>();
+  // Grows with every "block in this chat" or "block always" answered this turn.
+  const denied = new Set(deps.permissions?.denied ?? []);
   const previewOnly = deps.permissions?.previewOnly ?? new Map<string, string>();
   const unavailable = deps.permissions?.unavailable ?? new Map<string, string>();
-  const needsPermission = (name: string) =>
-    deps.permissions !== undefined &&
-    deps.permissions.allowAll !== true &&
-    !denied.has(name) &&
-    !unavailable.has(name) &&
-    !readOnlyTools.has(name) &&
-    !alwaysAllowed.has(name);
+  const kindOf = (name: string): ToolKind => (readOnlyTools.has(name) ? 'read' : 'act');
+  /** Refused outright: blocked by an answer this turn, or by the layers. */
+  const isBlocked = (name: string): boolean =>
+    denied.has(name) ||
+    (deps.permissions !== undefined && deps.permissions.decide(name, kindOf(name)) === 'refuse');
+  const needsPermission = (name: string): boolean => {
+    const permissions = deps.permissions;
+    if (permissions === undefined) return false;
+    if (unavailable.has(name) || isBlocked(name)) return false;
+    if (permissions.decide(name, kindOf(name)) !== 'ask') return false;
+    return !(answeredAllowed.has(name) && !locked.has(name));
+  };
+
   let permissionWaited = 0;
   // Auto mode: whether the model has marked the task finished this turn,
   // how many times it has been told to carry on, and whether it has
@@ -1030,6 +1049,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       messageId: assistant.id,
       name: use.name,
       requestedAt: new Date().toISOString(),
+      ...(locked.has(use.name) ? { locked: true } : {}),
     };
     stage = `permission:${use.name}`;
     await store.requestToolPermission({ ...ask, input: use.input });
@@ -1095,7 +1115,13 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         decision: answer,
       });
     }
-    if (answer === 'always') alwaysAllowed.add(use.name);
+    // The answers that outlast this call hold for the rest of the turn
+    // too; the route has already stored them for the next one. A locked
+    // tool keeps asking, whatever was answered.
+    if ((answer === 'always' || answer === 'chat') && !locked.has(use.name)) {
+      answeredAllowed.add(use.name);
+    }
+    if (answer === 'deny-chat' || answer === 'deny-always') denied.add(use.name);
     return answer;
   };
 
@@ -1533,7 +1559,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       // round's results are written, then the turn ends as a reply would.
       let endTurnAfterRound = false;
       for (const use of toolUses) {
-        if (denied.has(use.name)) refused.set(use.id, 'blocked');
+        if (isBlocked(use.name)) refused.set(use.id, 'blocked');
         else if (unavailable.has(use.name)) refused.set(use.id, 'unavailable');
         else if (previewOnly.has(use.name)) refused.set(use.id, 'preview');
         else if (truncatedToolIds.has(use.id)) refused.set(use.id, 'truncated');
@@ -1690,14 +1716,21 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         // as running, since a refused one never runs.
         let canceledWhileAsking = false;
         for (const use of group) {
-          if (refused.has(use.id) || !needsPermission(use.name)) continue;
+          if (refused.has(use.id)) continue;
+          // Blocked by an answer earlier in this round ("block in this chat").
+          if (isBlocked(use.name)) {
+            refused.set(use.id, 'blocked');
+            continue;
+          }
+          if (!needsPermission(use.name)) continue;
           const answer = await askPermission(use);
           if (answer === 'suspended') return await finalizeSuspended();
           if (answer === 'canceled') {
             canceledWhileAsking = true;
             break;
           }
-          if (answer === 'deny' || answer === 'timeout') refused.set(use.id, answer);
+          if (answer === 'timeout') refused.set(use.id, 'timeout');
+          else if (isRefusal(answer)) refused.set(use.id, 'deny');
         }
         if (canceledWhileAsking || cancelRequested || channel.cancelRequested) break;
         for (const use of group) {

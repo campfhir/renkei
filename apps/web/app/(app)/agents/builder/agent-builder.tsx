@@ -20,6 +20,7 @@
  */
 
 import { useEffect, useMemo, useReducer } from 'react';
+import { Icon, ICONS } from '@/components/icons';
 import { useRouter } from 'next/navigation';
 import { INSTRUCTION_SECTIONS, MAX_INSTRUCTIONS_CHARS } from '@renkei/agents';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
@@ -37,7 +38,8 @@ import { ToolPicker } from './tool-picker';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { clientLogger } from '@/lib/client-logger';
 import {
-  autoAcceptNote,
+  allowedActionRows,
+  allowedActionsNote,
   builderReducer,
   canDraft,
   canSave,
@@ -75,6 +77,8 @@ export interface AgentBuilderProps {
   runLimits: { minutes: number; toolCalls: number };
   /** When the org makes a person accept staged actions anyway. */
   actApprovalPolicy: ActApprovalPolicy;
+  /** The organization's locked high-risk tools: they always wait. */
+  lockedTools: string[];
   /** Present in edit mode. */
   existing?: StoredAgent;
 }
@@ -91,6 +95,7 @@ export function AgentBuilder({
   models,
   runLimits,
   actApprovalPolicy,
+  lockedTools,
   existing,
 }: AgentBuilderProps) {
   const router = useRouter();
@@ -110,7 +115,7 @@ export function AgentBuilder({
     llmModelId,
     guardrails,
     canAskQuestions,
-    autoAcceptActions,
+    allowedActions,
     saving,
     saveError,
     saveModal,
@@ -265,10 +270,11 @@ export function AgentBuilder({
       llmModelId,
       guardrails,
       canAskQuestions,
-      autoAcceptActions,
+      allowedActions,
       tools,
     ]
   );
+  const allowedRows = allowedActionRows(state, tools, lockedTools);
   const issues = shownIssues(state, clientIssues);
   const issuesAt = (prefix: string) => issuesAtOf(issues, prefix);
   const instructionIssues = instructionIssuesOf(state, issues);
@@ -540,29 +546,53 @@ export function AgentBuilder({
                     </p>
                   </label>
                 </div>
-                <div className="flex items-start gap-2">
-                  <input
-                    id="agent-auto-accept"
-                    type="checkbox"
-                    className="mt-0.5"
-                    checked={autoAcceptActions}
-                    onChange={(event) =>
-                      dispatch({
-                        type: 'flagChanged',
-                        flag: 'autoAcceptActions',
-                        value: event.target.checked,
-                      })
-                    }
-                  />
-                  <label htmlFor="agent-auto-accept" className="text-sm">
-                    <span className="font-medium">Accept proposed actions automatically</span>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">
-                      The agent never changes anything itself — it proposes a batch of actions, and
-                      a separate process carries them out once accepted. With this on, you skip the
-                      card. {autoAcceptNote(actApprovalPolicy)}
+                <fieldset>
+                  <legend className="text-sm font-medium">Runs without asking</legend>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {allowedActionsNote(actApprovalPolicy)}
+                  </p>
+                  {allowedRows.length === 0 ? (
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      It has no tools that act: it can read and report, but propose no changes.
                     </p>
-                  </label>
-                </div>
+                  ) : (
+                    <ul className="mt-1.5 space-y-1">
+                      {allowedRows.map((row) => (
+                        <li key={row.name}>
+                          <label
+                            className={`flex items-center gap-2 text-sm ${row.locked ? 'cursor-default text-gray-500' : ''}`}
+                            title={
+                              row.locked
+                                ? 'Your organization locks this tool: it always waits for you'
+                                : undefined
+                            }
+                          >
+                            <input
+                              type="checkbox"
+                              checked={row.allowed}
+                              disabled={row.locked}
+                              aria-label={`${row.label} (${row.name}) runs without asking`}
+                              onChange={(event) =>
+                                dispatch({
+                                  type: 'actionAllowed',
+                                  tool: row.name,
+                                  allowed: event.target.checked,
+                                })
+                              }
+                            />
+                            <span className="min-w-0 flex-1 truncate">{row.label}</span>
+                            {row.locked ? (
+                              <span className="inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400">
+                                <Icon path={ICONS.lock} className="h-3 w-3" />
+                                Always waits
+                              </span>
+                            ) : null}
+                          </label>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </fieldset>
               </div>
 
               <GuardrailsPanel

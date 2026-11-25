@@ -20,12 +20,42 @@ import {
   toolGroups,
   type TurnInput,
   type TurnOutcome,
+  type TurnPermissions,
   type TurnStore,
 } from './turn-runner';
 import { applyStreamEvent, initialThreadState, type ThreadState } from './stream-events';
 import type { ChatStreamEvent } from './stream-events';
 import type { LocalToolContext } from './local-tools';
 import { resourceCipher } from './content-crypto';
+import type { ToolPermissionDecision } from './views';
+import { decideTool, emptyLayers } from './tool-decision';
+
+/**
+ * A turn's permissions from a sketch of the layers (tool-decision.ts):
+ * the person's always-allowed tools, blocked ones, the organization's
+ * locks, and Auto mode's high-risk tools when it is on.
+ */
+function permit(sketch: {
+  allow?: string[];
+  deny?: string[];
+  locked?: string[];
+  autoHighRisk?: string[];
+  /** This chat's Ask: a read tool made to ask. */
+  ask?: string[];
+}): TurnPermissions {
+  const locked = new Set(sketch.locked ?? []);
+  const base = emptyLayers();
+  const layers = {
+    ...base,
+    session: { ...base.session, ask: new Set(sketch.ask ?? []) },
+    locked,
+    user: { allow: new Set(sketch.allow ?? []), deny: new Set(sketch.deny ?? []) },
+    auto: sketch.autoHighRisk
+      ? { highRisk: (name: string) => (sketch.autoHighRisk ?? []).includes(name) }
+      : null,
+  };
+  return { decide: (name, kind) => decideTool(layers, name, kind), locked };
+}
 
 /** A chat key for the fixtures: the ciphers under test only care that one is there. */
 const testCipher = resourceCipher({
@@ -53,8 +83,8 @@ function fakeStore() {
   const stages: (string | null)[] = [];
   // The permission column: the ask the runner wrote, and the answer a
   // "route" (the test) writes into it for the poll to find.
-  const asks: { toolUseId: string; name: string; messageId: string }[] = [];
-  let pending: { toolUseId: string; decision: 'once' | 'always' | 'deny' | null } | null = null;
+  const asks: { toolUseId: string; name: string; messageId: string; locked?: boolean }[] = [];
+  let pending: { toolUseId: string; decision: ToolPermissionDecision | null } | null = null;
   let cleared = 0;
   const suspensions: number[] = [];
   const store: TurnStore = {
@@ -103,7 +133,12 @@ function fakeStore() {
       usage.push(u.outputTokens);
     },
     async requestToolPermission(ask) {
-      asks.push({ toolUseId: ask.toolUseId, name: ask.name, messageId: ask.messageId });
+      asks.push({
+        toolUseId: ask.toolUseId,
+        name: ask.name,
+        messageId: ask.messageId,
+        ...(ask.locked ? { locked: true } : {}),
+      });
       pending = { toolUseId: ask.toolUseId, decision: null };
     },
     async readToolPermission(toolUseId) {
@@ -1115,7 +1150,7 @@ describe('runChatTurn permissions', () => {
     localTools: createLocalToolSet([]),
     localContext,
     readOnlyTools: new Set(['jira_search_issues']),
-    permissions: { alwaysAllowed: new Set() },
+    permissions: permit({}),
     channel,
     store: fake.store,
     limits: { flushMs: 5, permissionPollMs: 10, permissionWaitMs: 5_000 },
@@ -1161,7 +1196,7 @@ describe('runChatTurn permissions', () => {
         channel,
         [act('tu_r', 'jira_search_issues'), act('tu_w', 'webex_send_message'), text('Done')],
         calls,
-        { permissions: { alwaysAllowed: new Set(['webex_send_message']) } }
+        { permissions: permit({ allow: ['webex_send_message'] }) }
       ),
       inputFor('turn-p2')
     );
@@ -1177,7 +1212,7 @@ describe('runChatTurn permissions', () => {
     const calls: string[] = [];
     const outcome = await runChatTurn(
       deps(fake, channel, [act('tu_1', 'jira_delete_issue'), text('Understood')], calls, {
-        permissions: { alwaysAllowed: new Set(), denied: new Set(['jira_delete_issue']) },
+        permissions: permit({ deny: ['jira_delete_issue'] }),
       }),
       inputFor('turn-p2b')
     );
@@ -1202,7 +1237,7 @@ describe('runChatTurn permissions', () => {
     const outcome = await runChatTurn(
       deps(fake, channel, [act('tu_1', 'chat_memory_remember'), text('Understood')], calls, {
         permissions: {
-          alwaysAllowed: new Set(),
+          ...permit({}),
           unavailable: new Map([['chat_memory_remember', 'This is a temporary chat.']]),
         },
       }),
@@ -1230,7 +1265,7 @@ describe('runChatTurn permissions', () => {
       deps(fake, channel, [act('tu_1', 'outlook_send_mail'), text('Understood')], calls, {
         permissions: {
           // Even "always allow" cannot let the plain tool past its card.
-          alwaysAllowed: new Set(['outlook_send_mail']),
+          ...permit({ allow: ['outlook_send_mail'] }),
           previewOnly: new Map([['outlook_send_mail', 'outlook_send_mail_preview']]),
         },
       }),
@@ -1275,6 +1310,114 @@ describe('runChatTurn permissions', () => {
     const outcome = await run;
     expect(outcome.status).toBe('completed');
     expect(fake.asks).toHaveLength(1);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('"allow in this chat" lets the rest of the turn call the tool unasked, like "always"', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-p4c');
+    const calls: string[] = [];
+    const run = runChatTurn(
+      deps(fake, channel, [act('tu_1'), act('tu_2'), text('Done')], calls),
+      inputFor('turn-p4c')
+    );
+    await waitUntil(() => fake.asks.length === 1);
+    channel.resolveToolPermission('tu_1', 'chat');
+    expect((await run).status).toBe('completed');
+    expect(fake.asks).toHaveLength(1);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('"block in this chat" refuses this call and every later one to the tool without asking', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-p4d');
+    const calls: string[] = [];
+    const run = runChatTurn(
+      deps(fake, channel, [act('tu_1'), act('tu_2'), text('Understood')], calls),
+      inputFor('turn-p4d')
+    );
+    await waitUntil(() => fake.asks.length === 1);
+    channel.resolveToolPermission('tu_1', 'deny-chat');
+    expect((await run).status).toBe('completed');
+    expect(fake.asks).toHaveLength(1);
+    expect(calls).toEqual([]);
+    const results = [...fake.rows.values()]
+      .filter((row) => row.kind === 'tool_results')
+      .flatMap((row) => row.blocks);
+    expect(results).toEqual([
+      expect.objectContaining({ toolUseId: 'tu_1', isError: true }),
+      expect.objectContaining({ toolUseId: 'tu_2', isError: true }),
+    ]);
+  });
+
+  it('a tool the organization locks asks every time: always-allowed or not, and "always" doesn\'t stick', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-p4e');
+    const calls: string[] = [];
+    const run = runChatTurn(
+      deps(fake, channel, [act('tu_1'), act('tu_2'), text('Done')], calls, {
+        permissions: permit({ allow: ['jira_create_issue'], locked: ['jira_create_issue'] }),
+      }),
+      inputFor('turn-p4e')
+    );
+    await waitUntil(() => fake.asks.length === 1);
+    expect(fake.asks[0]).toMatchObject({ toolUseId: 'tu_1', locked: true });
+    channel.resolveToolPermission('tu_1', 'always');
+    await waitUntil(() => fake.asks.length === 2);
+    channel.resolveToolPermission('tu_2', 'once');
+    expect((await run).status).toBe('completed');
+    expect(calls).toHaveLength(2);
+  });
+
+  it('a read tool runs unasked, unless the organization locks it or this chat makes it ask', async () => {
+    const read = (id: string): LlmResponse => act(id, 'jira_search_issues');
+    const cases: [Parameters<typeof permit>[0], boolean][] = [
+      [{}, false],
+      [{ locked: ['jira_search_issues'] }, true],
+      [{ ask: ['jira_search_issues'] }, true],
+    ];
+    for (const [sketch, asks] of cases) {
+      const fake = fakeStore();
+      const id = `turn-read-${String(asks)}-${Object.keys(sketch).join('')}`;
+      const channel = openTurnChannel(id);
+      const calls: string[] = [];
+      const run = runChatTurn(
+        deps(fake, channel, [read('tu_1'), text('Found')], calls, {
+          permissions: permit(sketch),
+        }),
+        inputFor(id)
+      );
+      if (asks) {
+        await waitUntil(() => fake.asks.length === 1);
+        channel.resolveToolPermission('tu_1', 'once');
+      }
+      expect((await run).status).toBe('completed');
+      expect(fake.asks).toHaveLength(asks ? 1 : 0);
+      expect(calls).toHaveLength(1);
+    }
+  });
+
+  it('in Auto mode only a high-risk tool asks; the rest run unasked', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-p4f');
+    const calls: string[] = [];
+    const run = runChatTurn(
+      deps(
+        fake,
+        channel,
+        [act('tu_1', 'code_git_push'), act('tu_2', 'github_merge_pull_request'), text('Done')],
+        calls,
+        {
+          permissions: permit({ autoHighRisk: ['github_merge_pull_request'] }),
+        }
+      ),
+      inputFor('turn-p4f')
+    );
+    await waitUntil(() => fake.asks.length === 1);
+    expect(fake.asks[0]).toMatchObject({ toolUseId: 'tu_2', name: 'github_merge_pull_request' });
+    expect(calls).toHaveLength(1);
+    channel.resolveToolPermission('tu_2', 'once');
+    expect((await run).status).toBe('completed');
     expect(calls).toHaveLength(2);
   });
 
@@ -1669,7 +1812,7 @@ describe('runChatTurn logs every tool call attempt', () => {
         localContext,
         // jira_create_issue is not in readOnlyTools, so it needs asking —
         // deny it to exercise the refused path in the same test.
-        permissions: { alwaysAllowed: new Set(), denied: new Set() },
+        permissions: permit({}),
         readOnlyTools: new Set(['local_echo']),
         channel,
         store: fake.store,
@@ -1934,7 +2077,7 @@ describe('runChatTurn in auto mode', () => {
     expect([...fake.rows.values()].some((row) => row.kind === 'nudge')).toBe(false);
   });
 
-  it('runs act tools without asking under allowAll, and still refuses a blocked one', async () => {
+  it('runs act tools without asking in Auto mode when none is high risk, and still refuses a blocked one', async () => {
     const fake = fakeStore();
     const calls: string[] = [];
     const channel = openTurnChannel('turn-auto-4');
@@ -1951,11 +2094,7 @@ describe('runChatTurn in auto mode', () => {
         mcp: fakeMcp(calls),
         localTools: createLocalToolSet([]),
         localContext,
-        permissions: {
-          alwaysAllowed: new Set(),
-          denied: new Set(['outlook_send_mail']),
-          allowAll: true,
-        },
+        permissions: permit({ deny: ['outlook_send_mail'], autoHighRisk: [] }),
         channel,
         store: fake.store,
         limits: { flushMs: 5 },
@@ -2080,7 +2219,7 @@ describe('runChatTurn on shutdown', () => {
         mcp: fakeMcp(calls),
         localTools: createLocalToolSet([]),
         localContext,
-        permissions: { alwaysAllowed: new Set() },
+        permissions: permit({}),
         suspendSignal: suspend.signal,
         channel,
         store: fake.store,

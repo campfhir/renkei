@@ -29,7 +29,6 @@ import { chatClient } from '@/lib/chat/client';
 import {
   CHAT_OWN_TOOLS_KEY,
   CODE_TOOLS_KEY,
-  ruleFor,
   type ActToolGroup,
   type ChatToolPermissionPrefs,
   type ToolPermissionRule,
@@ -38,6 +37,8 @@ import {
   canSave,
   groupSummary,
   initToolPermissions,
+  allowLocked,
+  shownRule,
   saveBody,
   toolPermissionsReducer,
   unlistedDecisions,
@@ -53,16 +54,26 @@ const RULES: readonly { rule: ToolPermissionRule; label: string; hint: string }[
 export default function ToolPermissionsForm({
   groups,
   initial,
+  locked = [],
+  kind = 'chat',
 }: {
+  /** Which kind of chat these lists are for (ordinary, chat project, code project). */
+  kind?: 'chat' | 'project' | 'code';
   groups: ActToolGroup[];
   initial: ChatToolPermissionPrefs;
+  /** The organization's locked high-risk tools: Allow is not offered for them. */
+  locked?: string[];
 }) {
-  const [state, dispatch] = useReducer(toolPermissionsReducer, initial, initToolPermissions);
+  const [state, dispatch] = useReducer(
+    toolPermissionsReducer,
+    { prefs: initial, locked, groups },
+    initToolPermissions
+  );
   const { prefs, status } = state;
 
   async function save() {
     dispatch({ type: 'save-started' });
-    const result = await chatClient.setToolPermissions(saveBody(state));
+    const result = await chatClient.setToolPermissions(saveBody(state), kind);
     if (result.data) dispatch({ type: 'save-succeeded', stored: result.data });
     else dispatch({ type: 'save-failed' });
   }
@@ -84,7 +95,8 @@ export default function ToolPermissionsForm({
           A chat asks before it does anything that changes something — files an issue, sends a
           message, writes a file. Decide ahead of time here, per tool: keep asking, allow it without
           asking, or block it so the chat never sees it. &ldquo;Always allow&rdquo; on a
-          chat&rsquo;s permission card lands here too. Reading never asks.
+          chat&rsquo;s permission card lands here too. Tools that only read never ask, but you can
+          still block one here.
         </p>
       </div>
 
@@ -146,7 +158,7 @@ export default function ToolPermissionsForm({
                     </thead>
                     <tbody>
                       {group.tools.map((tool) => {
-                        const current = ruleFor(prefs, tool.name);
+                        const current = shownRule(state, tool.name);
                         return (
                           <tr
                             key={tool.name}
@@ -156,25 +168,50 @@ export default function ToolPermissionsForm({
                           >
                             <td className="px-3 py-2 align-top">
                               <span className="font-medium">{tool.label}</span>
+                              {tool.read ? (
+                                <span
+                                  className="ml-2 rounded bg-gray-100 px-1 text-[11px] text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+                                  title="Only reads: it never asks, but you can block it"
+                                >
+                                  reads
+                                </span>
+                              ) : null}
                               <code className="ml-2 font-mono text-xs break-all text-gray-500 dark:text-gray-400">
                                 {tool.name}
                               </code>
                             </td>
-                            {RULES.map(({ rule, label }) => (
-                              <td key={rule} className="px-1 py-2 text-center align-top">
-                                <input
-                                  type="radio"
-                                  name={`tool-rule:${tool.name}`}
-                                  // The wire name is part of the accessible name:
-                                  // two tools can share a title within a connector.
-                                  aria-label={`${tool.label} (${tool.name}) — ${label}`}
-                                  checked={current === rule}
-                                  onChange={() =>
-                                    dispatch({ type: 'set-rule', name: tool.name, rule })
-                                  }
-                                />
-                              </td>
-                            ))}
+                            {RULES.map(({ rule, label }) =>
+                              tool.read && rule === 'ask' ? (
+                                // A reading tool never asks: no Ask to choose.
+                                <td
+                                  key={rule}
+                                  className="px-1 py-2 text-center align-top text-gray-400"
+                                  aria-hidden="true"
+                                >
+                                  —
+                                </td>
+                              ) : (
+                                <td key={rule} className="px-1 py-2 text-center align-top">
+                                  <input
+                                    type="radio"
+                                    disabled={rule === 'allow' && allowLocked(state, tool.name)}
+                                    title={
+                                      rule === 'allow' && allowLocked(state, tool.name)
+                                        ? 'Your organization locks this tool as high risk: it always asks'
+                                        : undefined
+                                    }
+                                    name={`tool-rule:${tool.name}`}
+                                    // The wire name is part of the accessible name:
+                                    // two tools can share a title within a connector.
+                                    aria-label={`${tool.label} (${tool.name}) — ${label}`}
+                                    checked={current === rule}
+                                    onChange={() =>
+                                      dispatch({ type: 'set-rule', name: tool.name, rule })
+                                    }
+                                  />
+                                </td>
+                              )
+                            )}
                           </tr>
                         );
                       })}
@@ -220,7 +257,7 @@ export default function ToolPermissionsForm({
           <span className="text-sm text-red-600 dark:text-red-400">Could not save.</span>
         ) : null}
         <p className="text-xs text-gray-500 dark:text-gray-400">
-          Applies from the next message you send, in every chat of yours.
+          Applies from the next message you send, in every chat of this kind.
         </p>
       </div>
     </section>

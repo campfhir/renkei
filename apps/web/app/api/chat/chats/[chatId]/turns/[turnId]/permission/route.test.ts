@@ -16,6 +16,8 @@ import { createMemoryDataStore, getDataStore, registerDataStore, resetDataStore 
 import { createTurn, requestToolPermission } from '@/lib/chat/turns';
 import { CHAT_PERMISSION_NOTIFICATION_KIND } from '@/lib/chat/permission-notification';
 import { GET as getPrefs, PUT as putPrefs } from '../../../../../tool-permissions/route';
+import { invalidateSettingsCache, setOrgSettings } from '@renkei/settings';
+import { parseChatToolAnswers } from '@/lib/chat/chat-permissions';
 import { POST } from './route';
 
 const { getSessionFromRequest: mockGetSession } = jest.requireMock<{
@@ -28,11 +30,15 @@ let me: string;
 beforeEach(() => {
   jest.clearAllMocks();
   registerDataStore(createMemoryDataStore());
+  invalidateSettingsCache();
   me = `alice-${randomUUID()}`;
   mockGetSession.mockImplementation(async () => ({ subject: me, roles: ['renkei-user'] }));
 });
 
-afterEach(() => resetDataStore());
+afterEach(() => {
+  resetDataStore();
+  invalidateSettingsCache();
+});
 
 /** A chat of `owner`'s whose running turn is parked behind TOOL, with the ask's notification. */
 async function parked(owner: string) {
@@ -125,6 +131,41 @@ describe('answering a permission ask', () => {
   it('refuses a decision it does not know', async () => {
     const ask = await parked(me);
     expect((await answer(ask, 'maybe')).status).toBe(400);
+  });
+
+  it('Allow in this chat puts the tool on the chat’s own list, not the person’s', async () => {
+    const ask = await parked(me);
+    expect((await answer(ask, 'chat')).status).toBe(200);
+    expect(await prefs()).toEqual({ alwaysAllow: [], alwaysDeny: [] });
+    expect(
+      parseChatToolAnswers((await getDataStore().chats.get(ask.chatId))?.toolPermissions)
+    ).toEqual({ allow: [TOOL], deny: [], ask: [] });
+  });
+
+  it('Block in this chat puts it on the chat’s blocked list; Block always on the person’s', async () => {
+    const inChat = await parked(me);
+    expect((await answer(inChat, 'deny-chat')).status).toBe(200);
+    expect(
+      parseChatToolAnswers((await getDataStore().chats.get(inChat.chatId))?.toolPermissions)
+    ).toEqual({ allow: [], deny: [TOOL], ask: [] });
+    expect(await prefs()).toEqual({ alwaysAllow: [], alwaysDeny: [] });
+
+    const always = await parked(me);
+    expect((await answer(always, 'deny-always')).status).toBe(200);
+    expect(await prefs()).toEqual({ alwaysAllow: [], alwaysDeny: [TOOL] });
+  });
+
+  it('a tool the organization locks can be allowed once, never in this chat or always', async () => {
+    await setOrgSettings({ lockedHighRiskTools: [TOOL] });
+    for (const decision of ['always', 'chat']) {
+      const ask = await parked(me);
+      const refused = await answer(ask, decision);
+      expect(refused.status).toBe(409);
+      expect(await refused.json()).toMatchObject({ code: 'locked' });
+    }
+    expect(await prefs()).toEqual({ alwaysAllow: [], alwaysDeny: [] });
+    const ask = await parked(me);
+    expect((await answer(ask, 'once')).status).toBe(200);
   });
 
   it('only the owner answers: anyone else finds no such chat', async () => {

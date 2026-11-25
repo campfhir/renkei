@@ -448,7 +448,10 @@ export default function PreferencesForm({
           </p>
         </div>
 
-        <section className="rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
+        <section
+          id="notify-runs"
+          className="scroll-mt-28 rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950"
+        >
           <div className="p-4 pb-3">
             <h3 className="font-semibold">Runs</h3>
             <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
@@ -513,7 +516,10 @@ export default function PreferencesForm({
           <GroupSave group="runs" state={state} onSave={saveGroup} inset />
         </section>
 
-        <section className="rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
+        <section
+          id="notify-batch-jobs"
+          className="scroll-mt-28 rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950"
+        >
           <div className="p-4 pb-3">
             <h3 className="font-semibold">Batch jobs</h3>
             <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
@@ -582,8 +588,10 @@ export default function PreferencesForm({
 
         {deployments ? (
           <section
+            id="notify-deployments"
+
             aria-labelledby="deployments-notifications-heading"
-            className="rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950"
+            className="scroll-mt-28 rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950"
           >
             <div className="p-4 pb-3">
               <h3 id="deployments-notifications-heading" className="font-semibold">
@@ -655,9 +663,23 @@ export default function PreferencesForm({
             <ChannelHints channels={channels} />
             <GroupSave group="deployments" state={state} onSave={saveGroup} inset />
           </section>
-        ) : null}
+        ) : (
+          <section
+            id="notify-deployments"
+            className="scroll-mt-28 rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
+          >
+            <h3 className="font-semibold">Deployments</h3>
+            <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
+              Connect Bitbucket or GitHub under Connectors to be told when a deployment of yours
+              starts, finishes or fails.
+            </p>
+          </section>
+        )}
 
-        <section className="rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
+        <section
+          id="notify-sharing"
+          className="scroll-mt-28 rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950"
+        >
           <div className="p-4 pb-3">
             <h3 className="font-semibold">Sharing</h3>
             <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
@@ -721,7 +743,10 @@ export default function PreferencesForm({
           <GroupSave group="sharing" state={state} onSave={saveGroup} inset />
         </section>
 
-        <section className="rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
+        <section
+          id="notify-approvals"
+          className="scroll-mt-28 rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950"
+        >
           <div className="p-4 pb-3">
             <h3 className="font-semibold">Approvals &amp; questions</h3>
             <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
@@ -777,7 +802,10 @@ export default function PreferencesForm({
           <GroupSave group="pauses" state={state} onSave={saveGroup} inset />
         </section>
 
-        <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
+        <section
+          id="notify-overrides"
+          className="scroll-mt-28 rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
+        >
           <h3 className="font-semibold">Agent overrides</h3>
           <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
             Everything above is your general preference. Pick one of your own agents to set its own
@@ -961,7 +989,10 @@ export default function PreferencesForm({
           <GroupSave group="overrides" state={state} onSave={saveGroup} />
         </section>
 
-        <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
+        <section
+          id="notify-acts"
+          className="scroll-mt-28 rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
+        >
           <h3 className="font-semibold">Things your agents do</h3>
           <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
             Only actions that change something are ever offered here — reading is never announced.
@@ -1096,7 +1127,10 @@ export default function PreferencesForm({
           <GroupSave group="acts" state={state} onSave={saveGroup} />
         </section>
 
-        <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
+        <section
+          id="notify-popups"
+          className="scroll-mt-28 rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
+        >
           <h3 className="font-semibold">Pop-ups</h3>
           <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
             The cards that appear in a corner while you are using Renkei. Turning them off does not
@@ -1141,7 +1175,10 @@ export default function PreferencesForm({
           <GroupSave group="popups" state={state} onSave={saveGroup} />
         </section>
 
-        <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
+        <section
+          id="notify-browser"
+          className="scroll-mt-28 rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
+        >
           <h3 className="font-semibold">Browser notifications</h3>
           <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
             The other half of pop-ups: your system&rsquo;s own notifications, shown when Renkei is

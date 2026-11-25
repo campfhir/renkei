@@ -7,11 +7,14 @@
  * these; the route's side is app/api/chat/chats/[chatId]/turns/[turnId]/permission/route.test.ts.
  */
 
-import type { ActToolGroup } from '@/lib/chat/permission-rules';
+import { ruleFor, type ActToolGroup } from '@/lib/chat/permission-rules';
 import {
   canSave,
   groupSummary,
   initToolPermissions,
+  allowLocked,
+  isReadTool,
+  shownRule,
   isDirty,
   saveBody,
   toolPermissionsReducer,
@@ -33,8 +36,7 @@ const own: ActToolGroup = {
 const fold = (
   actions: ToolPermissionsAction[],
   from: ToolPermissionsState = initToolPermissions({
-    alwaysAllow: ['chat_memory_remember'],
-    alwaysDeny: [],
+    prefs: { alwaysAllow: ['chat_memory_remember'], alwaysDeny: [] },
   })
 ) => actions.reduce(toolPermissionsReducer, from);
 
@@ -121,7 +123,7 @@ describe('what a chat may do', () => {
   it('keeps, and says, the decisions for tools not listed right now, until asked again', () => {
     const state = fold(
       [],
-      initToolPermissions({ alwaysAllow: ['gone_allow'], alwaysDeny: ['gone_deny'] })
+      initToolPermissions({ prefs: { alwaysAllow: ['gone_allow'], alwaysDeny: ['gone_deny'] } })
     );
     expect(unlistedDecisions([own], state.prefs)).toEqual([
       { name: 'gone_allow', rule: 'allow' },
@@ -130,5 +132,50 @@ describe('what a chat may do', () => {
     const asked = fold([{ type: 'set-rule', name: 'gone_deny', rule: 'ask' }], state);
     expect(unlistedDecisions([own], asked.prefs)).toEqual([{ name: 'gone_allow', rule: 'allow' }]);
     expect(canSave(asked)).toBe(true);
+  });
+
+  it('a tool the organization locks cannot be allowed, one by one or with "all", but can be blocked', () => {
+    const start = initToolPermissions({
+      prefs: { alwaysAllow: [], alwaysDeny: [] },
+      locked: ['chat_memory_forget'],
+    });
+    expect(allowLocked(start, 'chat_memory_forget')).toBe(true);
+    const tried = fold([{ type: 'set-rule', name: 'chat_memory_forget', rule: 'allow' }], start);
+    expect(ruleFor(tried.prefs, 'chat_memory_forget')).toBe('ask');
+    expect(canSave(tried)).toBe(false);
+    const all = fold([{ type: 'set-all', group: own, rule: 'allow' }], start);
+    expect(ruleFor(all.prefs, 'chat_memory_forget')).toBe('ask');
+    expect(ruleFor(all.prefs, 'chat_memory_remember')).toBe('allow');
+    const blocked = fold([{ type: 'set-rule', name: 'chat_memory_forget', rule: 'deny' }], start);
+    expect(ruleFor(blocked.prefs, 'chat_memory_forget')).toBe('deny');
+  });
+
+  it('a reading tool runs without asking: it shows Allow, offers no Ask, and can be blocked', () => {
+    const groups: ActToolGroup[] = [
+      {
+        key: 'renkei-chat',
+        label: 'The chat itself',
+        tools: [
+          { name: 'chat_memory_list', label: 'List memories', read: true },
+          { name: 'chat_memory_remember', label: 'Remember' },
+        ],
+      },
+    ];
+    const start = initToolPermissions({ prefs: { alwaysAllow: [], alwaysDeny: [] }, groups });
+    expect(isReadTool(start, 'chat_memory_list')).toBe(true);
+    expect(shownRule(start, 'chat_memory_list')).toBe('allow');
+    expect(shownRule(start, 'chat_memory_remember')).toBe('ask');
+    expect(groupSummary(groups[0], start.prefs)).toBe('1 ask · 1 read');
+
+    const blocked = fold([{ type: 'set-rule', name: 'chat_memory_list', rule: 'deny' }], start);
+    expect(saveBody(blocked)).toEqual({ alwaysAllow: [], alwaysDeny: ['chat_memory_list'] });
+    expect(groupSummary(groups[0], blocked.prefs)).toBe('1 blocked');
+
+    // Allow on a reading tool stores nothing: it is simply back to running.
+    const back = fold([{ type: 'set-rule', name: 'chat_memory_list', rule: 'allow' }], blocked);
+    expect(saveBody(back)).toEqual({ alwaysAllow: [], alwaysDeny: [] });
+    // "All of …: Allow" never puts a reading tool on the allowed list.
+    const all = fold([{ type: 'set-all', group: groups[0], rule: 'allow' }], start);
+    expect(saveBody(all)).toEqual({ alwaysAllow: ['chat_memory_remember'], alwaysDeny: [] });
   });
 });

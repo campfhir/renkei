@@ -20,7 +20,7 @@ export interface AgentDraft {
   tools?: string[];
   llmModelId?: string;
   canAskQuestions?: boolean;
-  autoAcceptActions?: boolean;
+  allowedActions?: string[];
   /** Default: switched on with an API trigger, so it can be run by hand. */
   enabled?: boolean;
   triggers?: unknown[];

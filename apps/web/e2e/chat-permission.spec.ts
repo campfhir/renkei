@@ -1,7 +1,9 @@
 /**
  * A chat parked behind a tool call, on the real server: the thread draws
- * the ask inline, Always allow lets the runner carry on, and the
- * Preferences page then shows the tool allowed and saves a change. The
+ * the ask inline, Always allow (behind the Allow button's arrow) lets the
+ * runner carry on, and Preferences › Tool permissions then shows the tool
+ * allowed and saves a change; Block in this chat (behind Deny's arrow)
+ * sends its answer and leaves the person's own lists alone. The
  * notification the ask raised opens the chat in the same tab.
  *
  * The turn really runs: the scripted stand-in model (e2e/support/stub-model.ts)
@@ -126,19 +128,18 @@ test('a parked turn shows the ask inline, and Always allow lands on the Preferen
     await expect(page.getByRole('button', { name: /stop/i })).toBeVisible();
     await shot(page, testInfo, 'chat-permission-ask.png');
 
-    // Always allow: the answer reaches the turn, the runner carries on, the card goes.
-    await card.getByRole('button', { name: 'Always allow' }).click();
+    // Always allow, from the Allow button's arrow: the answer reaches the
+    // turn, the runner carries on, the card goes.
+    await card.getByRole('button', { name: 'More ways to allow' }).click();
+    await shot(page, testInfo, 'chat-permission-allow-menu.png');
+    await card.getByRole('menuitem', { name: /^Always allow/ }).click();
     await expect(page.getByText('Noted for next time.')).toBeVisible({ timeout: 15_000 });
     await expect(card).toBeHidden();
 
-    // Preferences shows the decision in the chat's own fold, and the
-    // system-notification click preference sits with the other switches.
-    await page.goto(`/preferences`);
+    // Preferences › Tool permissions shows the decision in the chat's own fold.
+    await page.goto(`/preferences/permissions`);
     const section = page.getByRole('region', { name: 'What a chat may do' });
     await expect(section).toBeVisible();
-    await expect(
-      page.getByRole('checkbox', { name: /Open the notification.s own application/ })
-    ).toBeChecked();
     const own = section.locator('details', { hasText: 'The chat itself' }).first();
     await expect(own.locator('summary')).toContainText('1 allowed');
     await own.locator('summary').click();
@@ -153,8 +154,132 @@ test('a parked turn shows the ask inline, and Always allow lands on the Preferen
     await expect
       .poll(() => toolPermissions(page.request))
       .toEqual({ alwaysAllow: [TOOL], alwaysDeny: ['chat_memory_forget'] });
+
+    // The system-notification click preference sits with the other switches.
+    await page.goto(`/preferences/notifications`);
+    await expect(
+      page.getByRole('checkbox', { name: /Open the notification.s own application/ })
+    ).toBeChecked();
   } finally {
     await removeModel(page.request, parked.modelId);
+  }
+});
+
+test('Block in this chat refuses the call and keeps it out of the chat, until Reset in its Tools dialog', async ({
+  page,
+  person: _person,
+}, testInfo) => {
+  // Two turns, a dialog and a reset: longer than one ask.
+  test.setTimeout(120_000);
+  const parked = await parkedChat(page.request, testInfo);
+  try {
+    await page.goto(`/chat/${parked.chatId}`);
+    const card = page.getByRole('group', { name: 'Permission needed' });
+    await expect(card.getByText('Allow this?')).toBeVisible();
+
+    await card.getByRole('button', { name: 'More ways to deny' }).click();
+    const menu = card.getByRole('menu', { name: 'Deny' });
+    await expect(menu.getByRole('menuitem')).toHaveText([/^Block in this chat/, /^Block always/]);
+    const answered = page.waitForRequest(
+      (request) => request.method() === 'POST' && request.url().endsWith('/permission')
+    );
+    await menu.getByRole('menuitem', { name: /^Block in this chat/ }).click();
+    expect((await answered).postDataJSON()).toMatchObject({ decision: 'deny-chat' });
+    await expect(card).toBeHidden({ timeout: 15_000 });
+
+    // Kept on this chat alone: the person's own lists are untouched.
+    expect(await toolPermissions(page.request)).toEqual({ alwaysAllow: [], alwaysDeny: [] });
+
+    // Taken back from the chat's Tools dialog: Reset sends "ask" for the tool.
+    await page.getByRole('button', { name: 'Tools', exact: true }).click();
+    const decided = page.getByRole('region', { name: 'Permissions' });
+    await expect(decided).toContainText('Blocked here');
+    await shot(page, testInfo, 'chat-tools-decided.png');
+    const reset = page.waitForRequest(
+      (request) => request.method() === 'PUT' && request.url().endsWith('/tool-answers')
+    );
+    await decided.getByRole('button', { name: new RegExp(`^Reset .*\\(${TOOL}\\)$`) }).click();
+    expect((await reset).postDataJSON()).toEqual({ tool: TOOL, rule: 'clear', scope: 'chat' });
+    await expect(decided.getByRole('button', { name: 'Blocked here' })).toBeHidden();
+    await page.keyboard.press('Escape');
+
+    // The next call to the tool in this chat asks again.
+    await expect
+      .poll(
+        async () => (await readChat(page.request, parked.chatId)).chat.activeTurn?.status ?? null,
+        {
+          timeout: 30_000,
+        }
+      )
+      .toBeNull();
+    const again = await startTurn(
+      page.request,
+      parked.chatId,
+      scripted(PROMPT, [
+        toolStep(TOOL, { note: NOTE }, 'Trying again.'),
+        { text: 'Noted for next time.' },
+      ]),
+      parked.modelId
+    );
+    await expect
+      .poll(
+        async () =>
+          (await readChat(page.request, parked.chatId)).chat.activeTurn?.pendingPermission?.name ??
+          null,
+        { timeout: 30_000 }
+      )
+      .toBe(TOOL);
+    await page.reload();
+    await expect(card.getByText('Allow this?')).toBeVisible({ timeout: 30_000 });
+    await page.request.post(`/api/chat/chats/${parked.chatId}/turns/${again}/cancel`);
+  } finally {
+    await page.request.post(`/api/chat/chats/${parked.chatId}/turns/${parked.turnId}/cancel`);
+    await removeModel(page.request, parked.modelId);
+  }
+});
+
+test('a reading tool, which never asks, can be blocked from the chat’s Tools dialog', async ({
+  page,
+  person: _person,
+}, testInfo) => {
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const modelId = await addStubModel(page.request, tag);
+  try {
+    const chatId = await createChat(page.request, { llmModelId: modelId, title: `Reads ${tag}` });
+    await page.goto(`/chat/${chatId}`);
+    await page.getByRole('button', { name: 'Tools', exact: true }).click();
+    const permissions = page.getByRole('region', { name: 'Permissions' });
+    await expect(permissions).toContainText('Anything not listed asks first.');
+
+    // Its own small dialog: search, pick one, what it may do, Save.
+    await permissions.getByRole('button', { name: 'Set a tool' }).click();
+    const blockDialog = page.getByRole('dialog', { name: 'Set a tool' });
+    await blockDialog.getByLabel('Search tools').fill('chat_memory_list');
+    await blockDialog.getByRole('option', { name: /\(chat_memory_list\)$/ }).click();
+    await expect(
+      blockDialog.getByRole('option', { name: /\(chat_memory_list\)$/ })
+    ).toHaveAttribute('aria-selected', 'true');
+    // A reading tool: this chat can make it ask, or block it.
+    await blockDialog.getByText('Block', { exact: true }).click();
+    const blocked = page.waitForRequest(
+      (request) => request.method() === 'PUT' && request.url().endsWith('/tool-answers')
+    );
+    await blockDialog.getByRole('button', { name: 'Save' }).click();
+    expect((await blocked).postDataJSON()).toEqual({
+      tool: 'chat_memory_list',
+      rule: 'deny',
+      scope: 'chat',
+    });
+    await expect(blockDialog).toBeHidden();
+
+    // Listed now; pressing its tag floats what it means beside it.
+    const tagButton = permissions.getByRole('button', { name: 'Blocked here' });
+    await expect(tagButton).toBeVisible();
+    await tagButton.click();
+    await expect(page.getByRole('tooltip')).toHaveText(/Refused in this chat/);
+    await shot(page, testInfo, 'chat-tools-permissions.png');
+  } finally {
+    await removeModel(page.request, modelId);
   }
 });
 

@@ -132,7 +132,7 @@ const definition = {
   enabled: true,
   guardrails: 'be nice',
   canAskQuestions: true,
-  autoAcceptActions: false,
+  allowedActions: ['b'],
 };
 
 /** An agent record without its write-time timestamps (defaults are now()). */
@@ -771,7 +771,7 @@ export const agentScenarios: Scenario<DataStore>[] = [
           ...agent(1, 'ann', 'alpha', 1),
           guardrails: 'never email',
           can_ask_questions: true,
-          auto_accept_actions: true,
+          allowed_actions: ['jira_add_comment', 'outlook_send_mail'],
         },
         agent(2, 'bob', 'Beta', 2),
       ],

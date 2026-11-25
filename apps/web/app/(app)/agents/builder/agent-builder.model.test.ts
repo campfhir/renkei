@@ -3,7 +3,8 @@ import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import type { StoredAgent } from '@/lib/agents/store';
 import {
   agentDraftOf,
-  autoAcceptNote,
+  allowedActionRows,
+  allowedActionsNote,
   builderReducer,
   canDraft,
   canSave,
@@ -85,7 +86,7 @@ function storedAgent(overrides: Partial<StoredAgent> = {}): StoredAgent {
     enabled: true,
     guardrails: null,
     canAskQuestions: false,
-    autoAcceptActions: false,
+    allowedActions: [],
     createdAt: '2026-10-01T00:00:00.000Z',
     updatedAt: '2026-10-01T00:00:00.000Z',
     triggers: [
@@ -201,7 +202,7 @@ describe('Save', () => {
         // Blank guardrails are none at all.
         guardrails: null,
         canAskQuestions: true,
-        autoAcceptActions: false,
+        allowedActions: [],
         refreshDescription: true,
       },
     });
@@ -215,7 +216,7 @@ describe('Save', () => {
       [
         { type: 'saveFailed', error: 'old' },
         { type: 'confirmOpened' },
-        { type: 'flagChanged', flag: 'autoAcceptActions', value: true },
+        { type: 'flagChanged', flag: 'canAskQuestions', value: true },
       ],
       editing
     );
@@ -224,7 +225,7 @@ describe('Save', () => {
     const request = saveRequestOf(confirming);
     expect(request.url).toBe('/api/agents/agent-1');
     expect(request.method).toBe('PUT');
-    expect(request.body).toMatchObject({ enabled: true, autoAcceptActions: true });
+    expect(request.body).toMatchObject({ enabled: true, canAskQuestions: true });
     expect(request.body.triggers).toEqual([
       { id: 'trigger-1', draft: API_TRIGGER, enabled: true, keyHint: 'ab12', lastError: null },
     ]);
@@ -614,24 +615,48 @@ describe('worth checking', () => {
 });
 
 describe('the switches', () => {
-  it('a new agent starts with questions and auto-accept off; the draft carries what is set', () => {
+  it('a new agent starts with questions off and nothing running without asking; the draft carries what is set', () => {
     const state = fold([
-      { type: 'flagChanged', flag: 'autoAcceptActions', value: true },
+      { type: 'toolsChanged', tools: ['agent_list', 'jira_add_comment'] },
+      { type: 'actionAllowed', tool: 'jira_add_comment', allowed: true },
       { type: 'modelChanged', llmModelId: 'model-1' },
     ]);
     expect(agentDraftOf(state)).toMatchObject({
       canAskQuestions: false,
-      autoAcceptActions: true,
+      allowedActions: ['jira_add_comment'],
       llmModelId: 'model-1',
       enabled: false,
     });
   });
 
-  it('says what auto-accept cannot skip under each org policy', () => {
-    expect(autoAcceptNote('off')).toMatch(/^Changes from high-risk tools/);
-    expect(autoAcceptNote('all')).toMatch(/^Your organization requires a person to accept every/);
-    expect(autoAcceptNote('externally_triggered')).toMatch(
-      /^Runs started by an email, a message or an API call still wait for you/
+  it('"runs without asking" lists only its act tools; a locked one is off and stays off; removing a tool forgets it', () => {
+    const catalog = [
+      { name: 'jira_search', title: 'Search Jira', kind: 'read' },
+      { name: 'jira_add_comment', title: 'Comment on an issue', kind: 'act' },
+      { name: 'outlook_send_mail', title: 'Send mail', kind: 'act' },
+    ] satisfies Pick<ToolDescriptor, 'name' | 'title' | 'kind'>[];
+    const state = fold([
+      { type: 'toolsChanged', tools: ['jira_search', 'jira_add_comment', 'outlook_send_mail'] },
+      { type: 'actionAllowed', tool: 'jira_add_comment', allowed: true },
+      { type: 'actionAllowed', tool: 'outlook_send_mail', allowed: true },
+      // Not one of its tools: nothing to allow.
+      { type: 'actionAllowed', tool: 'webex_send_message', allowed: true },
+    ]);
+    expect(allowedActionRows(state, catalog, ['outlook_send_mail'])).toEqual([
+      { name: 'jira_add_comment', label: 'Comment on an issue', allowed: true, locked: false },
+      { name: 'outlook_send_mail', label: 'Send mail', allowed: false, locked: true },
+    ]);
+    const removed = fold([{ type: 'toolsChanged', tools: ['jira_search'] }], state);
+    expect(removed.allowedActions).toEqual([]);
+  });
+
+  it('says what running without asking cannot skip under each org policy', () => {
+    expect(allowedActionsNote('off')).toMatch(/Tools your organization locks always wait\.$/);
+    expect(allowedActionsNote('all')).toMatch(
+      /^Your organization requires a person to accept every/
+    );
+    expect(allowedActionsNote('externally_triggered')).toMatch(
+      /Runs started by an email, a message or an API call still wait for you/
     );
   });
 

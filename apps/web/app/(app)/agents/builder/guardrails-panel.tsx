@@ -33,8 +33,8 @@ export function GuardrailsPanel({
     <section className="rounded-lg border border-gray-200 p-4 dark:border-gray-800">
       <h2 className="text-sm font-semibold">Guardrails</h2>
       <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-        Standing rules the agent always follows — they win where they and the instructions
-        disagree. Sent with every model call in full; longer documents cost more per call.
+        Standing rules the agent always follows — they win where they and the instructions disagree.
+        Sent with every model call in full; longer documents cost more per call.
       </p>
       <textarea
         value={guardrails}

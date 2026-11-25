@@ -84,6 +84,11 @@ import {
 } from './tool-config';
 import { getDefaultChatTools } from './tool-prefs';
 import { getChatToolPermissionPrefs } from './permission-prefs';
+import { NO_CHAT_TOOL_ANSWERS } from './chat-permissions';
+import { NO_PROJECT_TOOL_SETTINGS } from './project-permissions';
+import { sessionKindOf } from './session-kind';
+import { decideTool } from './tool-decision';
+import { DEFAULT_HIGH_RISK_PREFS, getHighRiskPrefs, highRiskTest } from '@renkei/user-prefs';
 import { resolveChatToolSurface, type DiscoverableTool } from './tool-surface';
 import { createLocalToolSet, type LocalTool } from './local-tools';
 import { findToolsTool, recallDiscoveredTools } from './tool-discovery';
@@ -683,12 +688,27 @@ async function executeTurnBody(
     // never their chat default (tool-prefs.ts keeps the two apart).
     // fresh: "always allow" clicked in another chat a moment ago, or a tool
     // just blocked on the Preferences page, must hold for this turn too.
-    const [userDefault, permissionPrefs] = await Promise.all([
+    // Auto mode's high-risk list (fresh, like the permissions: a list just
+    // saved under Preferences › Code projects holds from the next Send).
+    const autoWanted =
+      project?.kind === 'code' && input.chat.autoMode && !(input.settings?.readOnly ?? false);
+    const [userDefault, permissionPrefs, codeHighRisk] = await Promise.all([
       input.chat.toolConfig || project?.toolConfig
         ? null
         : getDefaultChatTools(input.session.subject, { kind: defaultsKind }),
-      getChatToolPermissionPrefs(input.session.subject, { fresh: true }),
+      // The person's lists for this kind of chat: ordinary, chat project, code project.
+      getChatToolPermissionPrefs(input.session.subject, {
+        fresh: true,
+        kind: sessionKindOf(project),
+      }),
+      autoWanted ? getHighRiskPrefs(input.session.subject, 'code', { fresh: true }) : null,
     ]);
+    // The layers that decide every call (tool-decision.ts): the
+    // organization's locks, the person's lists for this kind of chat, the
+    // project's settings, this chat's own answers.
+    const lockedTools = new Set(input.settings?.lockedHighRiskTools ?? []);
+    const chatAnswers = input.chat.toolAnswers ?? NO_CHAT_TOOL_ANSWERS;
+    const projectSettings = project ? (project.toolSettings ?? NO_PROJECT_TOOL_SETTINGS) : null;
     // A code project's chats always carry the Bitbucket connector on top
     // of whatever was chosen (tool-config.ts): the code_* tools push, the
     // connector's tools open the pull request.
@@ -709,7 +729,7 @@ async function executeTurnBody(
     // The token must outlive the longest the turn can run: its wall clock
     // plus every minute it may spend parked behind a permission ask.
     const permissionWaitMs = limits?.permissionWaitMs ?? DEFAULT_TURN_LIMITS.permissionWaitMs;
-    const denied = new Set(permissionPrefs.alwaysDeny);
+    const denied = new Set([...permissionPrefs.alwaysDeny, ...chatAnswers.deny]);
     // The slowest read of the lot — a token minted, then the app's own MCP
     // endpoint asked three times over HTTP — so it runs while the rest of
     // the turn's context is read. The release is taken the moment it is
@@ -1109,22 +1129,53 @@ async function executeTurnBody(
         concurrentTools: new Set(localTools.concurrentNames()),
         widgetResourceUris: surface.widgetResourceUris,
         discoverableTools: discoverable.map((entry) => entry.def),
-        // Every call that acts asks first, unless this person has said
-        // "always" for that tool (permission-prefs.ts) — or the chat is in
-        // auto mode, where nothing asks and only a blocked tool refuses.
+        // Every call is decided by the layers (tool-decision.ts): blocked
+        // ones refused, the organization's locked ones asked, then this
+        // chat's own answers, its project's settings and the person's lists
+        // for this kind of chat; with nothing said, a read tool runs and an
+        // act tool asks — or, in Auto mode, runs unless the person marks it
+        // high risk for code projects.
         permissions: {
-          // A message the person addressed to an agent is their say-so for
-          // handing it that task (agent-ask-tool.ts refuses any other agent).
-          alwaysAllowed: new Set([
-            ...permissionPrefs.alwaysAllow,
-            ...(addressedAgentId && askAgent ? [CHAT_ASK_AGENT_TOOL] : []),
-          ]),
+          decide: (name, kind) =>
+            decideTool(
+              {
+                locked: lockedTools,
+                user: {
+                  allow: new Set(permissionPrefs.alwaysAllow),
+                  deny: new Set(permissionPrefs.alwaysDeny),
+                },
+                project: projectSettings
+                  ? { allow: new Set(projectSettings.allow), ask: new Set(projectSettings.ask) }
+                  : null,
+                session: {
+                  // A message the person addressed to an agent is their say-so for
+                  // handing it that task (agent-ask-tool.ts refuses any other agent).
+                  allow: new Set([
+                    ...chatAnswers.allow,
+                    ...(addressedAgentId && askAgent ? [CHAT_ASK_AGENT_TOOL] : []),
+                  ]),
+                  deny: new Set(chatAnswers.deny),
+                  ask: new Set(chatAnswers.ask),
+                },
+                auto: auto
+                  ? {
+                      highRisk: highRiskTest(
+                        codeHighRisk ?? DEFAULT_HIGH_RISK_PREFS,
+                        'code',
+                        lockedTools
+                      ),
+                    }
+                  : null,
+              },
+              name,
+              kind
+            ),
+          locked: lockedTools,
           // A blocked tool's preview card is blocked with it.
           denied: new Set([...denied, ...surface.blockedPreviews]),
           previewOnly: surface.previewOnly,
           // A temporary chat's memory tools: refused, never asked about.
           ...(input.chat.temporary ? { unavailable: temporaryUnavailableTools() } : {}),
-          ...(auto ? { allowAll: true } : {}),
         },
         ...(auto
           ? {

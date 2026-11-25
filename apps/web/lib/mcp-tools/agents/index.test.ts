@@ -230,7 +230,7 @@ const AGENT = {
   enabled: true,
   guardrails: 'Never invent numbers.',
   canAskQuestions: false,
-  autoAcceptActions: false,
+  allowedActions: [],
   createdAt: '2026-01-01T00:00:00Z',
   updatedAt: '2026-01-01T00:00:00Z',
   triggers: [],
@@ -247,7 +247,7 @@ const NORMALIZED = {
   enabled: false,
   guardrails: null,
   canAskQuestions: false,
-  autoAcceptActions: false,
+  allowedActions: [],
 };
 
 /** The AgentAccess shape resolveAgentAccess returns for the caller's own agent. */
@@ -667,7 +667,7 @@ describe('how agents work is discoverable', () => {
       }
       expect(instructions).toContain('staged for acceptance');
     }
-    expect(described('agent_create', 'autoAcceptActions')).toContain('high-risk');
+    expect(described('agent_create', 'allowedActions')).toContain('high risk');
   });
 
   it("is told by agent_list_tools, with the org's live limits", async () => {

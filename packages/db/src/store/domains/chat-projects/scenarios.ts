@@ -131,6 +131,31 @@ export const chatProjectScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'chatProjects.update',
+    name: 'tool settings for its chats, set and read back, then cleared, updatedAt kept',
+    fixture,
+    run: async (store) => {
+      const before = (
+        await store.chatProjects.listByIds([PROJECT.annChat], { orderBy: 'name' })
+      )[0]?.updatedAt.toISOString();
+      await store.chatProjects.update(PROJECT.annChat, {
+        toolPermissions: { allow: ['jira_create_issue'], ask: ['jira_search'] },
+        keepUpdatedAt: true,
+      });
+      const [set] = await store.chatProjects.listByIds([PROJECT.annChat], { orderBy: 'name' });
+      await store.chatProjects.update(PROJECT.annChat, {
+        toolPermissions: null,
+        keepUpdatedAt: true,
+      });
+      const [cleared] = await store.chatProjects.listByIds([PROJECT.annChat], { orderBy: 'name' });
+      return [
+        set?.toolPermissions,
+        set?.updatedAt.toISOString() === before,
+        cleared?.toolPermissions,
+      ];
+    },
+  },
+  {
+    method: 'chatProjects.update',
     name: 'a model of its own, set and then cleared',
     fixture: {
       ...fixture,

@@ -10,6 +10,8 @@ import IdentityForm from './identity-form';
 import { observedIdpGroups } from '@/lib/identity';
 import { getTenantOidcSummary } from '@/lib/tenant-operations';
 import CoachTarget from '@/components/coach-marks/anchor';
+import { listHighRiskToolGroups } from '@/lib/chat/permission-catalog';
+import HighRiskForm from '../../preferences/high-risk-form';
 
 /**
  * The org's operating settings — everything adjustable that has no more
@@ -19,15 +21,19 @@ import CoachTarget from '@/components/coach-marks/anchor';
  * limits) and says where the others went instead of duplicating them.
  */
 export default async function SettingsPage(): Promise<React.ReactNode> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const access = await checkAccess([ROLE_OPERATOR]);
+  if (!access) {
     redirect(`/admin`);
   }
 
-  const [settingsResult, oidcResult, observedGroups, sizeRequests] = await Promise.all([
+  const [settingsResult, oidcResult, observedGroups, sizeRequests, toolGroups] = await Promise.all([
     getOrgSettings(),
     getTenantOidcSummary(),
     observedIdpGroups('', 10_000),
     listSizeRequests(),
+    // Every act tool this operator can see: the locked list names tools
+    // across connectors, and one locked elsewhere is still said below it.
+    listHighRiskToolGroups(access.subject, access.roles, 'org').catch(() => []),
   ]);
   if (!settingsResult.ok || !oidcResult.ok) {
     return (
@@ -99,6 +105,10 @@ export default async function SettingsPage(): Promise<React.ReactNode> {
       </p>
 
       <SettingsForm initial={initial} />
+
+      <div id="locked-high-risk-tools" className="mt-6 scroll-mt-20">
+        <HighRiskForm kind="org" groups={toolGroups} locked={settings.lockedHighRiskTools} />
+      </div>
 
       <SizeRequests requests={sizeRequests} />
 

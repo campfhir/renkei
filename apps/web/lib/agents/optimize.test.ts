@@ -57,7 +57,7 @@ const AGENT: StoredAgent = {
   enabled: true,
   guardrails: null,
   canAskQuestions: false,
-  autoAcceptActions: false,
+  allowedActions: [],
   createdAt: '2026-08-01T00:00:00.000Z',
   updatedAt: '2026-08-01T00:00:00.000Z',
   triggers: [],

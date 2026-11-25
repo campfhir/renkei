@@ -49,8 +49,11 @@ describe('parseDraftReply tool and question checks', () => {
 
   it('carries canAskQuestions, and flags ask_person without it', () => {
     expect(
-      parse({ instructions: instructions('Ask with ask_person.'), tools: [], canAskQuestions: true })
-        .draft.canAskQuestions
+      parse({
+        instructions: instructions('Ask with ask_person.'),
+        tools: [],
+        canAskQuestions: true,
+      }).draft.canAskQuestions
     ).toBe(true);
     const parsed = parse({ instructions: instructions('Ask with ask_person.'), tools: [] });
     expect(parsed.draft.canAskQuestions).toBeUndefined();

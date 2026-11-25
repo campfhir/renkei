@@ -53,6 +53,37 @@ export function parseChatToolPermissionPrefs(stored: unknown): ChatToolPermissio
   return { alwaysAllow, alwaysDeny };
 }
 
+/**
+ * The person's lists are kept per kind of chat session: an ordinary chat,
+ * a chat project's chat, a code project's chat (tool-decision.ts). An
+ * agent keeps its own allowed actions instead.
+ */
+export const CHAT_SESSION_KINDS = ['chat', 'project', 'code'] as const;
+export type ChatSessionKind = (typeof CHAT_SESSION_KINDS)[number];
+
+export function isChatSessionKind(value: unknown): value is ChatSessionKind {
+  return value === 'chat' || value === 'project' || value === 'code';
+}
+
+export type ChatToolPermissionDoc = Record<ChatSessionKind, ChatToolPermissionPrefs>;
+
+/**
+ * The stored document, one pair of lists per kind. A document from before
+ * the kinds were kept apart is one pair at the top: it applies to every
+ * kind, so nobody's decisions change the day the kinds split.
+ */
+export function parseChatToolPermissionDoc(stored: unknown): ChatToolPermissionDoc {
+  const record =
+    typeof stored === 'object' && stored !== null && !Array.isArray(stored) ? stored : null;
+  const legacy =
+    record !== null && (Reflect.has(record, 'alwaysAllow') || Reflect.has(record, 'alwaysDeny'));
+  const of = (kind: ChatSessionKind) =>
+    parseChatToolPermissionPrefs(
+      record === null ? null : legacy ? record : Reflect.get(record, kind)
+    );
+  return { chat: of('chat'), project: of('project'), code: of('code') };
+}
+
 /** What the person decided for one tool. */
 export function ruleFor(prefs: ChatToolPermissionPrefs, name: string): ToolPermissionRule {
   if (prefs.alwaysDeny.includes(name)) return 'deny';
@@ -84,6 +115,12 @@ export function withRule(
 export interface ActToolEntry {
   name: string;
   label: string;
+  /**
+   * A tool that only reads: it never asks, so Allow means nothing for it,
+   * but it can still be blocked (here or always) from Preferences or the
+   * chat's Tools dialog. Absent for a tool that acts.
+   */
+  read?: true;
 }
 
 export interface ActToolGroup {

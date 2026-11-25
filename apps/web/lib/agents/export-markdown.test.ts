@@ -17,7 +17,7 @@ const agent: AgentExportInput = {
   triggers: [],
   guardrails: 'Never invent numbers.',
   canAskQuestions: true,
-  autoAcceptActions: false,
+  allowedActions: [],
   limits: { minutes: 30, toolCalls: 150 },
 };
 
@@ -40,8 +40,8 @@ describe('agentMarkdown', () => {
     expect(markdown).toContain('150 tool calls, 30 minutes of active time');
     expect(markdown).toContain('- jira_add_comment');
     expect(markdown).toContain('Staged actions: accepted by the owner');
-    expect(agentMarkdown({ ...agent, autoAcceptActions: true })).toContain(
-      'accepted automatically where the organization allows it'
+    expect(agentMarkdown({ ...agent, allowedActions: ['jira_add_comment'] })).toContain(
+      'jira_add_comment run without asking where the organization allows it'
     );
   });
 

@@ -106,6 +106,7 @@ export function memoryChats(tables: MemoryTables): ChatStore {
         ...newChatValues(chat),
         id: globalThis.crypto.randomUUID(),
         tool_config: toolConfigOf(chat.toolConfig),
+        tool_permissions: null,
         title: null,
         archived_at: null,
         last_message_at: null,
@@ -180,6 +181,12 @@ export function memoryChats(tables: MemoryTables): ChatStore {
     async setRequestOverhead(id, tokens) {
       const wanted = id;
       tables.update('chats', (r) => r.id === wanted, { request_overhead_tokens: tokens });
+    },
+    async setToolPermissions(id, value) {
+      const wanted = id;
+      tables.update('chats', (r) => r.id === wanted, {
+        tool_permissions: toolConfigOf(value),
+      });
     },
     async setWorkspace(id, workspaceId) {
       const wanted = id;

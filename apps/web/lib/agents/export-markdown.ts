@@ -25,7 +25,7 @@ export interface AgentExportInput {
   triggers: { draft: TriggerDraft; enabled: boolean }[];
   guardrails: string | null;
   canAskQuestions: boolean;
-  autoAcceptActions: boolean;
+  allowedActions: string[];
   /** The org's limits, as the run's frame states them. */
   limits: { minutes: number; toolCalls: number };
 }
@@ -37,7 +37,7 @@ export function agentMarkdown(agent: AgentExportInput): string {
     ...(agent.description ? [agent.description, ''] : []),
     `- Status: ${agent.enabled ? 'on' : 'off'}`,
     `- Limits per run: ${agent.limits.toolCalls} tool calls, ${agent.limits.minutes} minutes of active time`,
-    `- Staged actions: ${agent.autoAcceptActions ? 'accepted automatically where the organization allows it' : 'accepted by the owner'}`,
+    `- Staged actions: ${agent.allowedActions.length > 0 ? `${agent.allowedActions.join(', ')} run without asking where the organization allows it; anything else is accepted by the owner` : 'accepted by the owner'}`,
     `- Can ask the owner questions: ${agent.canAskQuestions ? 'yes' : 'no'}`,
     '',
     'The system prompt below is rendered by the same code the engine runs, word for word.',

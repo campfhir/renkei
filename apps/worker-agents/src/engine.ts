@@ -888,7 +888,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
         agent,
         guardrails: agentRow.guardrails ?? '',
         canAsk,
-        autoAccept: agentRow.autoAcceptActions,
+        // The actions this agent runs without asking its owner, read live:
+        // a batch holding anything else waits, as does one with a tool the
+        // organization locks (act-approval.ts).
+        allowedActions: new Set(agentRow.allowedActions),
+        lockedTools: new Set(settings.lockedHighRiskTools),
         externallyTriggered: await runIsExternallyTriggered(run),
         actPolicy: settings.agentActStepsRequireApproval,
         approvalWaitCapHours: settings.agentApprovalMaxWaitDays * 24,
@@ -919,7 +923,10 @@ export function createAgentRunHandler(deps: EngineDeps) {
     agent: AgentFields;
     guardrails: string;
     canAsk: boolean;
-    autoAccept: boolean;
+    /** The agent's allowed actions: they run without asking its owner. */
+    allowedActions: ReadonlySet<string>;
+    /** The organization's locked high-risk tools: a batch holding one always waits. */
+    lockedTools: ReadonlySet<string>;
     externallyTriggered: boolean;
     actPolicy: 'externally_triggered' | 'all' | 'off';
     approvalWaitCapHours: number;
@@ -2090,7 +2097,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
     ): Promise<void> {
       const reason = actApprovalReason({
         tools: actions.map((action) => action.tool),
-        autoAccept: this.input.autoAccept,
+        isLocked: (tool) => this.input.lockedTools.has(tool),
+        isAllowed: (tool) => this.input.allowedActions.has(tool),
         policy: this.input.actPolicy,
         externallyTriggered: this.input.externallyTriggered,
       });

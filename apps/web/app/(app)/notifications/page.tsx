@@ -71,7 +71,10 @@ export default async function NotificationsPage(): Promise<React.ReactNode> {
         What your agents and batch jobs did, and what happened to your deployments — the things that
         changed something, not every step they took.{' '}
         <CoachTarget name="notifications-preferences-link" as="span">
-          <Link href={`/preferences`} className="text-blue-600 hover:underline dark:text-blue-400">
+          <Link
+            href={`/preferences/notifications`}
+            className="text-blue-600 hover:underline dark:text-blue-400"
+          >
             Choose what appears here
           </Link>
         </CoachTarget>

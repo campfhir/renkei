@@ -1,6 +1,6 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '../../../db.types';
-import { chatFromRow, chatPatchValues, newChatValues } from './record';
+import { chatFromRow, chatPatchValues, jsonOrNull, newChatValues } from './record';
 import type { ChatStore } from './types';
 
 export function postgresChats(db: () => Kysely<DB>): ChatStore {
@@ -161,6 +161,13 @@ export function postgresChats(db: () => Kysely<DB>): ChatStore {
       await db()
         .updateTable('chats')
         .set({ request_overhead_tokens: tokens })
+        .where('id', '=', chatId)
+        .execute();
+    },
+    async setToolPermissions(chatId, value) {
+      await db()
+        .updateTable('chats')
+        .set({ tool_permissions: jsonOrNull(value) })
         .where('id', '=', chatId)
         .execute();
     },

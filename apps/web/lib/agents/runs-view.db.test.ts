@@ -66,7 +66,7 @@ maybe('run detail with sealed attempt content', () => {
       enabled: true,
       guardrails: null,
       canAskQuestions: false,
-      autoAcceptActions: false,
+      allowedActions: [],
     });
     agentsCreated.push({ ownerSubject, agentId });
     await store.agentRuns.createQueued({

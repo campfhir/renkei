@@ -135,8 +135,28 @@ export interface ProjectArtifactListItem extends AttachmentView {
   createdAt: string;
 }
 
-/** What a person answers a permission ask with. */
-export type ToolPermissionDecision = 'once' | 'always' | 'deny';
+/**
+ * What a person answers a permission ask with: allow this call ('once'),
+ * every call to the tool in this chat ('chat'), or everywhere from now on
+ * ('always'); refuse this call ('deny'), refuse the tool for the rest of
+ * this chat ('deny-chat'), or block it everywhere ('deny-always').
+ */
+export type ToolPermissionDecision =
+  'once' | 'chat' | 'always' | 'deny' | 'deny-chat' | 'deny-always';
+
+export const TOOL_PERMISSION_DECISIONS: readonly ToolPermissionDecision[] = [
+  'once',
+  'chat',
+  'always',
+  'deny',
+  'deny-chat',
+  'deny-always',
+];
+
+/** The answers that refuse the call in front of the person. */
+export function isRefusal(decision: ToolPermissionDecision): boolean {
+  return decision === 'deny' || decision === 'deny-chat' || decision === 'deny-always';
+}
 
 /**
  * The tool call a running turn is parked behind: the runner asked, the
@@ -151,6 +171,12 @@ export interface PendingToolPermission {
   messageId: string;
   name: string;
   requestedAt: string;
+  /**
+   * The organization locks this tool as high risk: the card offers no
+   * answer that would stop it asking (in this chat, or always), and the
+   * route refuses one. Absent on asks from before the lock existed.
+   */
+  locked?: boolean;
 }
 
 export interface TurnView {

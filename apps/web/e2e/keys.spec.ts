@@ -184,7 +184,7 @@ async function expectChatReadable(page: Page, chatId: string, title: string): Pr
 
 /** Preferences → "Forget this device": the browser no longer holds the key. */
 async function forgetDevice(page: Page): Promise<void> {
-  await page.goto(`/preferences`);
+  await page.goto(`/preferences/security`);
   const section = page.getByTestId('encryption-key').filter({ visible: true }).first();
   await section.getByRole('button', { name: 'Forget this device' }).click();
   await expect(section.getByTestId('encryption-key-device')).toContainText(
@@ -227,7 +227,7 @@ test('a first sign-in enrolls the browser, shows the key once, and keeps it on t
   await expect(page.getByTestId('key-modal-write-down')).toHaveCount(0);
 
   // The preferences section says what the person now has.
-  await page.goto(`/preferences`);
+  await page.goto(`/preferences/security`);
   const section = page.getByTestId('encryption-key').filter({ visible: true }).first();
   await expect(section.getByTestId('encryption-key-mode')).toContainText('You hold your own key');
   await expect(section.getByTestId('encryption-key-state')).toContainText(
@@ -304,7 +304,7 @@ test('a chat follows the key: a rotation, a lost delegation, the new key typed b
 
     // Rotation (WebCrypto re-wraps under a new key, sealed afresh): shown
     // once, and the chat still opens through the new delegation.
-    await page.goto(`/preferences`);
+    await page.goto(`/preferences/security`);
     const section = page.getByTestId('encryption-key').filter({ visible: true }).first();
     await section.getByTestId('encryption-key-rotate-start').click();
     await section.getByTestId('encryption-key-rotate-confirm').click();
@@ -400,7 +400,7 @@ test('the key dialog and the section at phone width', async ({ page, request }, 
   await expect(page.getByTestId('key-reveal-text')).toBeVisible();
   await shot(page, testInfo, 'keys-mobile-01-dialog');
   await page.getByTestId('key-reveal-confirm').click();
-  await page.goto(`/preferences`);
+  await page.goto(`/preferences/security`);
   const section = page.getByTestId('encryption-key').filter({ visible: true }).first();
   await expect(section.getByTestId('encryption-key-mode')).toContainText('You hold your own key');
   const sectionBox = await section.boundingBox();

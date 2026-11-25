@@ -12,6 +12,12 @@ export interface ChatRecord {
   llmModelId: string | null;
   /** The stored JSON, unparsed (the caller validates it). */
   toolConfig: unknown;
+  /**
+   * The owner's per-chat tool answers from the permission card, stored
+   * JSON unparsed (apps/web/lib/chat/chat-permissions.ts reads it); null
+   * when there are none.
+   */
+  toolPermissions: unknown;
   thinkingEnabled: boolean;
   autoMode: boolean;
   autoTitleAsked: boolean;
@@ -96,6 +102,12 @@ export interface ChatStore {
   setRequestOverhead(chatId: string, tokens: number): Promise<void>;
   /** Record the chat's worktree on the sandbox worker. */
   setWorkspace(chatId: string, workspaceId: string | null): Promise<void>;
+  /**
+   * Replace the chat's per-chat tool answers (JSON-serializable, or null to
+   * clear). Leaves `updatedAt` alone: answering a card is not activity
+   * that should reorder the person's chat list.
+   */
+  setToolPermissions(chatId: string, value: unknown): Promise<void>;
 
   /**
    * Delete everyone's chats never written in (no last message) and created

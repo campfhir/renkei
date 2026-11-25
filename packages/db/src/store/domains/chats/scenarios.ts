@@ -223,6 +223,26 @@ export const chatScenarios: Scenario<DataStore>[] = [
     },
   },
   {
+    method: 'chats.setToolPermissions',
+    name: 'set, read back, clear, and leave updatedAt alone',
+    fixture,
+    run: async (store) => {
+      const before = (await store.chats.get(CHAT.annA))?.updatedAt.toISOString();
+      await store.chats.setToolPermissions(CHAT.annA, {
+        allow: ['jira_create_issue'],
+        deny: ['outlook_send_mail'],
+      });
+      const set = await store.chats.get(CHAT.annA);
+      await store.chats.setToolPermissions(CHAT.annA, null);
+      const cleared = await store.chats.get(CHAT.annA);
+      return [
+        set?.toolPermissions,
+        set?.updatedAt.toISOString() === before,
+        cleared?.toolPermissions,
+      ];
+    },
+  },
+  {
     method: 'chats.setWorkspace',
     name: 'set and clear',
     fixture,

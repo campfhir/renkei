@@ -16,6 +16,12 @@ export interface ChatProjectRecord {
   instructions: string | null;
   /** The stored JSON, unparsed. */
   toolConfig: unknown;
+  /**
+   * The project's own tool settings for its chats (Allow, Ask), stored JSON
+   * unparsed (apps/web/lib/chat/project-permissions.ts reads it); null when
+   * there are none.
+   */
+  toolPermissions: unknown;
   repoProvider: string | null;
   repoFullName: string | null;
   repoBranch: string | null;
@@ -44,6 +50,8 @@ export interface ChatProjectPatch {
   /** Sealed instructions, or null to clear. */
   instructions?: string | null;
   toolConfig?: unknown;
+  /** JSON-serializable, or null to clear. */
+  toolPermissions?: unknown;
   repo?: { provider: string; fullName: string; branch: string | null };
   workspaceId?: string | null;
   /** The project's model, or null for none of its own. */

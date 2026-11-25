@@ -33,11 +33,17 @@ export function agentFromRow(row: Selectable<Agents>, triggers: AgentTriggerReco
     enabled: row.enabled,
     guardrails: row.guardrails,
     canAskQuestions: row.can_ask_questions,
-    autoAcceptActions: row.auto_accept_actions,
+    allowedActions: actionNames(row.allowed_actions),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     triggers,
   };
+}
+
+/** The stored allowed actions, whatever jsonb hands back: names only, sorted, unique. */
+export function actionNames(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return [...new Set(raw.filter((entry): entry is string => typeof entry === 'string'))].sort();
 }
 
 /** The definition as agents columns (tools as JSON text, as pg wants jsonb). */
@@ -50,7 +56,7 @@ export function definitionColumns(values: AgentDefinitionValues) {
     enabled: values.enabled,
     guardrails: values.guardrails,
     can_ask_questions: values.canAskQuestions,
-    auto_accept_actions: values.autoAcceptActions,
+    allowed_actions: JSON.stringify([...new Set(values.allowedActions)].sort()),
   };
 }
 

@@ -74,6 +74,7 @@ export function memoryChatProjects(tables: MemoryTables): ChatProjectStore {
         updated_at: now,
         ...newProjectValues(project),
         tool_config: project.toolConfig == null ? null : toJson(project.toolConfig),
+        tool_permissions: null,
       }).id;
     },
     async update(id, patch) {
@@ -83,6 +84,12 @@ export function memoryChatProjects(tables: MemoryTables): ChatProjectStore {
           ...projectPatchValues(patch),
           ...(patch.toolConfig !== undefined
             ? { tool_config: patch.toolConfig == null ? null : toJson(patch.toolConfig) }
+            : {}),
+          ...(patch.toolPermissions !== undefined
+            ? {
+                tool_permissions:
+                  patch.toolPermissions == null ? null : toJson(patch.toolPermissions),
+              }
             : {}),
           ...(patch.keepUpdatedAt ? {} : { updated_at: new Date() }),
         }).length > 0

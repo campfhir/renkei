@@ -676,21 +676,38 @@ export function milestoneCardView(
 // ── The permission card ─────────────────────────────────────────────────
 
 /**
- * The ask, inline where the reply stopped. Allow once is the plain yes;
- * Always allow is the same yes plus "stop asking me about this tool";
- * Deny hands the model a refusal. While an answer is on its way every
- * button is off and the one pressed says so; a refused answer puts the
- * buttons back and says why. On success the stream takes the card away.
+ * The ask, inline where the reply stopped, as two split buttons. "Allow
+ * once" is the plain yes; its arrow opens "Allow in this chat" (stop
+ * asking about this tool here) and "Always allow" (stop asking anywhere).
+ * "Deny" hands the model a refusal; its arrow opens "Block in this chat"
+ * and "Block always", which also keep the tool from being offered again.
+ * A tool the organization locks as high risk can only be allowed once,
+ * so its allow arrow is gone and the card says why.
+ *
+ * One menu open at a time; choosing from it, or pressing a main button,
+ * closes it. While an answer is on its way every button is off and the
+ * one pressed says so; a refused answer puts the buttons back and says
+ * why. On success the stream takes the card away.
  */
+export type PermissionSide = 'allow' | 'deny';
+
 export interface PermissionCardState {
   busy: ToolPermissionDecision | null;
   error: string | null;
+  menu: PermissionSide | null;
 }
 
 export type PermissionCardAction =
-  { type: 'decide'; decision: ToolPermissionDecision } | { type: 'refused'; error: string };
+  | { type: 'decide'; decision: ToolPermissionDecision }
+  | { type: 'refused'; error: string }
+  | { type: 'toggle-menu'; side: PermissionSide }
+  | { type: 'close-menu' };
 
-export const initialPermissionCardState: PermissionCardState = { busy: null, error: null };
+export const initialPermissionCardState: PermissionCardState = {
+  busy: null,
+  error: null,
+  menu: null,
+};
 
 export function permissionCardReducer(
   state: PermissionCardState,
@@ -699,38 +716,115 @@ export function permissionCardReducer(
   switch (action.type) {
     case 'decide':
       // One answer at a time: a second press while one is in flight is nothing.
-      return state.busy ? state : { busy: action.decision, error: null };
+      return state.busy ? state : { busy: action.decision, error: null, menu: null };
     case 'refused':
-      return { busy: null, error: action.error };
+      return { busy: null, error: action.error, menu: null };
+    case 'toggle-menu':
+      if (state.busy) return state;
+      return { ...state, menu: state.menu === action.side ? null : action.side };
+    case 'close-menu':
+      return state.menu === null ? state : { ...state, menu: null };
   }
 }
 
 const DECISION_LABELS: Record<ToolPermissionDecision, [idle: string, busy: string]> = {
   once: ['Allow once', 'Allowing…'],
+  chat: ['Allow in this chat', 'Allowing…'],
   always: ['Always allow', 'Allowing…'],
   deny: ['Deny', 'Denying…'],
+  'deny-chat': ['Block in this chat', 'Blocking…'],
+  'deny-always': ['Block always', 'Blocking…'],
 };
 
-/** The answers, in order, each with what its button says right now. */
+/** What each lasting answer does, for its menu line. */
+export const DECISION_HINTS: Partial<Record<ToolPermissionDecision, string>> = {
+  chat: 'Only here',
+  always: 'Every chat · change in Preferences',
+  'deny-chat': 'Only here · undo in Tools',
+  'deny-always': 'Every chat · change in Preferences',
+};
+
+/**
+ * Each lasting answer's glyph: one tick here, two ticks everywhere; a
+ * do-not-enter sign here, and the solid raised hand — the loudest of the
+ * four — for blocking everywhere.
+ */
+export type PermissionGlyph = 'check' | 'double-check' | 'hand' | 'ban';
+
+const DECISION_GLYPHS: Partial<Record<ToolPermissionDecision, PermissionGlyph>> = {
+  chat: 'check',
+  always: 'double-check',
+  'deny-chat': 'ban',
+  'deny-always': 'hand',
+};
+
+export interface PermissionChoice {
+  decision: ToolPermissionDecision;
+  label: string;
+  hint: string | null;
+  glyph: PermissionGlyph;
+}
+
+export interface PermissionSplitButton {
+  side: PermissionSide;
+  main: { decision: ToolPermissionDecision; label: string };
+  /** What the arrow opens; empty when there is no arrow. */
+  more: PermissionChoice[];
+  menuOpen: boolean;
+  disabled: boolean;
+}
+
+/** The two split buttons, each with what its main button and its menu say right now. */
 export function permissionButtons(
-  state: PermissionCardState
-): { decision: ToolPermissionDecision; label: string; disabled: boolean }[] {
-  return (['once', 'always', 'deny'] as const).map((decision) => ({
+  state: PermissionCardState,
+  locked = false
+): PermissionSplitButton[] {
+  const label = (decision: ToolPermissionDecision) =>
+    DECISION_LABELS[decision][state.busy === decision ? 1 : 0];
+  const choice = (decision: ToolPermissionDecision): PermissionChoice => ({
     decision,
-    label: DECISION_LABELS[decision][state.busy === decision ? 1 : 0],
-    disabled: state.busy !== null,
-  }));
+    label: label(decision),
+    hint: DECISION_HINTS[decision] ?? null,
+    glyph: DECISION_GLYPHS[decision] ?? 'check',
+  });
+  const disabled = state.busy !== null;
+  // The lasting answers live in the menus; while one is on its way the
+  // main button says so, since the menu that held it has closed.
+  const mainLabel = (main: ToolPermissionDecision, side: ToolPermissionDecision[]) => {
+    const pressed = side.find((decision) => decision === state.busy);
+    return pressed ? DECISION_LABELS[pressed][1] : label(main);
+  };
+  const allowMore: ToolPermissionDecision[] = locked ? [] : ['chat', 'always'];
+  const denyMore: ToolPermissionDecision[] = ['deny-chat', 'deny-always'];
+  return [
+    {
+      side: 'allow',
+      main: { decision: 'once', label: mainLabel('once', ['once', ...allowMore]) },
+      more: allowMore.map(choice),
+      menuOpen: !disabled && state.menu === 'allow' && allowMore.length > 0,
+      disabled,
+    },
+    {
+      side: 'deny',
+      main: { decision: 'deny', label: mainLabel('deny', ['deny', ...denyMore]) },
+      more: denyMore.map(choice),
+      menuOpen: !disabled && state.menu === 'deny',
+      disabled,
+    },
+  ];
 }
 
 /** The card's words: the owner is asked; anyone else is told who decides. */
 export function permissionCardText(
   name: string,
   canDecide: boolean,
-  call: ToolUseBlock | null
-): { lead: string; action: string; input: string | null } {
+  call: ToolUseBlock | null,
+  locked = false
+): { lead: string; action: string; input: string | null; locked: string | null } {
   return {
     lead: canDecide ? 'Allow this?' : 'Waiting for the owner',
     action: toolLabel(name).toLowerCase(),
     input: call ? JSON.stringify(call.input, null, 2) : null,
+    locked: locked ? 'Locked by your organization: asks every time' : null,
   };
 }

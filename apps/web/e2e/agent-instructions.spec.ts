@@ -112,7 +112,8 @@ test('builder: write, pick a tool, save, and read it back', async ({
   await page.setViewportSize(MOBILE_VIEWPORT);
   await page.goto(`/agents/${agentId}/edit`);
   await expect(page.getByRole('textbox', { name: 'Instructions' })).toHaveValue(INSTRUCTIONS);
-  await page.getByLabel('Accept proposed actions automatically').check();
+  // What it may run without asking sits on the editor too.
+  await expect(page.getByRole('group', { name: 'Runs without asking' })).toBeVisible();
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth
   );

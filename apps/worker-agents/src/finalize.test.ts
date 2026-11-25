@@ -41,7 +41,7 @@ maybe('finalize hook', () => {
       enabled: true,
       guardrails: null,
       canAskQuestions: false,
-      autoAcceptActions: false,
+      allowedActions: [],
     });
     return agentId;
   }

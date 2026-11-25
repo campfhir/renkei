@@ -145,12 +145,14 @@ export interface AgentDraft {
   /** Unlocks the free `ask_person` tool: the agent may pause to ask its owner. */
   canAskQuestions: boolean;
   /**
-   * Staged action batches are accepted without a person — unless the
-   * org's policy or the fixed high-risk list says this one needs one
-   * (act-approval.ts). Off by default: a new agent proposes, a person
+   * The actions (act tool names, from `tools`) a staged batch may carry
+   * without waiting for the owner: "runs without asking", per tool. A
+   * batch holding anything else waits, as does one holding a tool the
+   * organization locks as high risk, or one the org's policy holds
+   * (act-approval.ts). Empty by default: a new agent proposes, a person
    * accepts.
    */
-  autoAcceptActions: boolean;
+  allowedActions: string[];
 }
 
 export interface ValidationIssue {
@@ -177,7 +179,12 @@ export function normalizeAgentDraft(draft: AgentDraft): AgentDraft {
     tools: [...new Set(draft.tools.map((tool) => tool.trim()).filter(Boolean))],
     guardrails,
     canAskQuestions: draft.canAskQuestions === true,
-    autoAcceptActions: draft.autoAcceptActions === true,
+    // Only tools the agent has: an allowed action it was later stripped of means nothing.
+    allowedActions: [
+      ...new Set((draft.allowedActions ?? []).map((tool) => tool.trim()).filter(Boolean)),
+    ]
+      .filter((tool) => draft.tools.map((entry) => entry.trim()).includes(tool))
+      .sort(),
   };
 }
 

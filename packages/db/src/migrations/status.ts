@@ -219,6 +219,10 @@ export const EXPECTED_MIGRATIONS = [
   '193-ci-health-checkins',
   '194-ci-health-announced',
   '195-chat-agents',
+  '196-locked-high-risk-tools',
+  '197-chat-tool-permissions',
+  '198-chat-project-tool-permissions',
+  '199-agent-allowed-actions',
 ];
 
 export interface MigrationStatus {

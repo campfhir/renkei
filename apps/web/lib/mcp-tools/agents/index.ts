@@ -84,7 +84,6 @@ import {
   agentDefinitionOf,
   flattenFormFields,
   friendlyToolName,
-  isAlwaysApprovalTool,
   triggerVariableDescriptors,
   type ApiTriggerInput,
   type QuestionField,
@@ -357,10 +356,11 @@ function nativeCapabilities(limits: { minutes: number; toolCalls: number }): str
     '- It READS freely with its [read] tools. It NEVER calls an [act] tool itself: it stages ' +
       'the changes as ONE batch (its built-in stage_actions call: an ordered list of ' +
       '{tool, args, reason}), and the run pauses. The owner accepts or declines the WHOLE ' +
-      'batch on one card — or, when the agent has `autoAcceptActions: true`, it is accepted ' +
-      "automatically wherever the org's policy allows (by default not on runs an event or " +
-      'webhook started) and never for the fixed high-risk tools (sending mail, merging a pull ' +
-      'request, deleting or sharing a document, directory writes). A separate process then ' +
+      "batch on one card — or, when every action in it is one of the agent's `allowedActions` " +
+      '(the [act] tools it runs without asking), it is accepted automatically wherever the ' +
+      "org's policy allows (by default not on runs an event or webhook started) and never " +
+      'when it holds a tool the organization locks as high risk (by default sending mail, ' +
+      'merging a pull request, deleting or sharing a document, directory writes). A separate process then ' +
       'carries the batch out in order, stops at the first failure, and reports each outcome ' +
       'back to the agent, which carries on. So give an agent the [act] tools its changes need, ' +
       'and say in its instructions exactly what each change must contain. ' +
@@ -525,7 +525,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
               triggers: agent.triggers,
               guardrails: agent.guardrails,
               canAskQuestions: agent.canAskQuestions,
-              autoAcceptActions: agent.autoAcceptActions,
+              allowedActions: agent.allowedActions,
               llmModelId: agent.llmModelId,
             }),
           },
@@ -573,7 +573,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         ...(agent.guardrails ? ['', 'Standing guardrails:', agent.guardrails] : []),
         '',
         `Can ask you questions: ${agent.canAskQuestions ? 'yes' : 'no'}`,
-        `Staged changes: ${agent.autoAcceptActions ? 'accepted automatically where the org allows it (never the high-risk tools)' : 'wait for you to accept them'}`,
+        `Staged changes: ${agent.allowedActions.length > 0 ? `${agent.allowedActions.join(', ')} run without asking where the org allows it (never a tool it locks); anything else waits for you` : 'wait for you to accept them'}`,
         '',
         ...valueLines(agent.triggers.map((trigger) => trigger.draft)),
         '',
@@ -2238,14 +2238,14 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         'Default false. When true, the agent gains the free ask_person call — see ' +
           'agent_list_tools for how agents work.'
       ),
-    autoAcceptActions: z
-      .boolean()
+    allowedActions: z
+      .array(z.string())
       .optional()
       .describe(
-        "Default false. When true, the agent's staged changes are accepted without a person " +
-          "wherever the org's policy allows (by default not on runs an event or webhook " +
-          'started) — never for the fixed high-risk tools (sending mail, merging, deleting or ' +
-          'sharing documents, directory writes).'
+        'Default none. Of its [act] tools, the ones it runs without asking you: a staged batch ' +
+          "made only of these is accepted without a person wherever the org's policy allows (by " +
+          'default not on runs an event or webhook started) — never one holding a tool the ' +
+          'organization locks as high risk. Anything else waits for you.'
       ),
     confirm: z
       .boolean()
@@ -2273,7 +2273,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       llmModelId: typeof args.llmModelId === 'string' ? args.llmModelId : null,
       guardrails: typeof args.guardrails === 'string' ? args.guardrails : null,
       canAskQuestions: args.canAskQuestions === true,
-      autoAcceptActions: args.autoAcceptActions === true,
+      allowedActions: Array.isArray(args.allowedActions) ? args.allowedActions : [],
     });
   }
 
@@ -2322,11 +2322,12 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
    */
   async function hintLines(draft: {
     tools: string[];
-    autoAcceptActions: boolean;
+    allowedActions: string[];
   }): Promise<string[]> {
     if (!context.subject) return [];
     let policy: ActApprovalPolicy = DEFAULT_ORG_SETTINGS.agentActStepsRequireApproval;
     let kinds: Map<string, 'read' | 'act'>;
+    let locked: Set<string>;
     try {
       const [settings, catalog] = await Promise.all([
         getOrgSettings(),
@@ -2334,6 +2335,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       ]);
       if (settings.ok) policy = settings.val.agentActStepsRequireApproval;
       kinds = new Map(catalog.map((tool) => [tool.name, tool.kind]));
+      locked = new Set(settings.ok ? settings.val.lockedHighRiskTools : []);
     } catch (error) {
       logger.warn(
         "the approval hints for {caller}'s agent save could not be read (org settings or the tool catalog); the reply omits them: {error}",
@@ -2349,25 +2351,28 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     if (acts.length === 0) {
       return ['', 'This agent has no act tools: it can read and report, but stage no changes.'];
     }
-    const highRisk = acts.filter(isAlwaysApprovalTool);
+    const allowed = acts.filter((tool) => draft.allowedActions.includes(tool) && !locked.has(tool));
+    const lockedActs = acts.filter((tool) => locked.has(tool));
     const lines = [
       '',
       `Changes it can stage (accepted before anything happens): ${acts.join(', ')}.`,
     ];
-    if (!draft.autoAcceptActions) {
+    if (allowed.length === 0) {
       lines.push('Every batch it stages waits for you to accept it.');
     } else {
       lines.push(
         policy === 'all'
-          ? "Auto-accept is on, but the org's policy has a person accept every batch anyway."
+          ? `It may run ${allowed.join(', ')} without asking, but the org's policy has a person accept every batch anyway.`
           : policy === 'externally_triggered'
-            ? 'Batches are accepted automatically on runs started by hand or on a schedule; ' +
-              'runs an event or webhook started still wait for you.'
-            : 'Batches are accepted automatically.'
+            ? `A batch of only ${allowed.join(', ')} runs without asking on runs started by hand or on a schedule; ` +
+              'runs an event or webhook started still wait for you. Anything else waits for you.'
+            : `A batch of only ${allowed.join(', ')} runs without asking; anything else waits for you.`
       );
-      if (highRisk.length > 0) {
-        lines.push(`A batch holding ${highRisk.join(', ')} always waits for you.`);
-      }
+    }
+    if (lockedActs.length > 0) {
+      lines.push(
+        `A batch holding ${lockedActs.join(', ')} always waits for you: your organization locks it.`
+      );
     }
     return lines;
   }
@@ -2530,12 +2535,12 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           .boolean()
           .optional()
           .describe('Whether the agent may pause and ask you a question (ask_person)'),
-        autoAcceptActions: z
-          .boolean()
+        allowedActions: z
+          .array(z.string())
           .optional()
           .describe(
-            "Whether its staged changes are accepted without a person where the org's policy " +
-              'allows (never for the fixed high-risk tools)'
+            'The [act] tools it runs without asking you, replacing the list it has (where the ' +
+              "org's policy allows; never a tool the organization locks)"
           ),
         keepEnabled: z
           .boolean()
@@ -2572,7 +2577,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         'triggers',
         'guardrails',
         'canAskQuestions',
-        'autoAcceptActions',
+        'allowedActions',
         'llmModelId',
       ];
       if (!fields.some(given) && args.keepEnabled === undefined) {
@@ -2626,9 +2631,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           llmModelId: given('llmModelId') ? args.llmModelId : agent.llmModelId,
           guardrails: given('guardrails') ? args.guardrails : agent.guardrails,
           canAskQuestions: given('canAskQuestions') ? args.canAskQuestions : agent.canAskQuestions,
-          autoAcceptActions: given('autoAcceptActions')
-            ? args.autoAcceptActions
-            : agent.autoAcceptActions,
+          allowedActions: given('allowedActions') ? args.allowedActions : agent.allowedActions,
         },
         enabled
       );
@@ -2641,7 +2644,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         ...(given('triggers') ? ['triggers'] : []),
         ...(given('guardrails') ? ['guardrails'] : []),
         ...(given('canAskQuestions') ? ['canAskQuestions'] : []),
-        ...(given('autoAcceptActions') ? ['autoAcceptActions'] : []),
+        ...(given('allowedActions') ? ['allowedActions'] : []),
         ...(given('llmModelId') ? ['model'] : []),
         ...(agent.enabled && !enabled ? ['turned off'] : []),
       ].join(', ');
@@ -2664,9 +2667,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
               : []),
             ...(toolsChanged ? ['', 'Tools:', ...toolListLines(result.normalized.tools)] : []),
             ...triggerLines(triggers),
-            ...(toolsChanged || given('autoAcceptActions')
-              ? await hintLines(result.normalized)
-              : []),
+            ...(toolsChanged || given('allowedActions') ? await hintLines(result.normalized) : []),
             '',
             `It stays ${enabled ? 'ENABLED' : 'disabled'}. Nothing was saved. Call again with confirm:true to apply.`,
           ].join('\n')
@@ -2687,7 +2688,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         [
           `Updated "${result.normalized.name}" (${enabled ? 'still enabled' : 'disabled'}): ${changed}.`,
           ...triggerLines(triggers),
-          ...(toolsChanged || given('autoAcceptActions') ? await hintLines(result.normalized) : []),
+          ...(toolsChanged || given('allowedActions') ? await hintLines(result.normalized) : []),
           ...(result.apiKeys.length > 0
             ? [
                 '',

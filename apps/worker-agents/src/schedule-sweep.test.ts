@@ -43,7 +43,7 @@ maybe('schedule sweep', () => {
       enabled: true,
       guardrails: null,
       canAskQuestions: false,
-      autoAcceptActions: false,
+      allowedActions: [],
     });
     const triggerId = randomUUID();
     await store.applyTriggerChanges(agentId, {

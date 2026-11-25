@@ -130,7 +130,8 @@ export const APP_PAGES: readonly AppPage[] = [
   {
     title: 'Preferences',
     href: '/preferences',
-    about: 'Appearance, notifications, voice, default tools and tool permissions.',
+    about:
+      'Appearance, voice, models, chats, tool permissions, high-risk tools for agents and code projects, notifications, security and your data — one section each.',
     keywords: 'settings options theme',
   },
   {

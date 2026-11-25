@@ -5,6 +5,7 @@
  */
 
 import { getDataStore, type ChatProjectRecord } from '@renkei/db';
+import { parseProjectToolSettings, type ProjectToolSettings } from './project-permissions';
 import { isUuid } from '@/lib/uuid';
 import { parseToolConfig, toolConfigJson, type ChatToolConfig } from './tool-config';
 import { openText, resourceCipher, sealText, type ContentCipher } from './content-crypto';
@@ -39,6 +40,8 @@ export interface ProjectRow {
    */
   sealedInstructions: string | null;
   toolConfig: ChatToolConfig | null;
+  /** The project's own tool settings for its chats (project-permissions.ts). */
+  toolSettings?: ProjectToolSettings;
   /** A code project's repository; null on a chat project. */
   repo: ProjectRepo | null;
   /** A code project's base clone on the sandbox worker, once cloned; each chat works in a worktree of it (chats.workspace_id). */
@@ -61,6 +64,7 @@ function rowOf(raw: ChatProjectRecord): ProjectRow {
     description: raw.description,
     sealedInstructions: raw.instructions,
     toolConfig: parseToolConfig(raw.toolConfig),
+    toolSettings: parseProjectToolSettings(raw.toolPermissions),
     repo:
       raw.kind === 'code' && raw.repoProvider && raw.repoFullName
         ? {

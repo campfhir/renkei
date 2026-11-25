@@ -91,9 +91,7 @@ export {
   type QuestionAnswersResult,
 } from './question-answers';
 export {
-  ALWAYS_APPROVAL_TOOLS,
   actApprovalReason,
-  isAlwaysApprovalTool,
   isExternallyTriggered,
   type ActApprovalInput,
   type ActApprovalReason,

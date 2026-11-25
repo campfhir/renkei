@@ -30,6 +30,8 @@ export interface BuilderData {
   runLimits: { minutes: number; toolCalls: number };
   /** The org's policy on when a person must accept staged actions anyway. */
   actApprovalPolicy: 'externally_triggered' | 'all' | 'off';
+  /** The organization's locked high-risk tools: they always wait, whatever the agent is allowed. */
+  lockedTools: string[];
   /**
    * The org's holiday calendars, DATES INCLUDED: the schedule editor's
    * live next-run preview computes client-side with the same function the
@@ -82,6 +84,7 @@ export async function loadBuilderData(
       .map((model) => ({ id: model.id, label: model.label, isDefault: model.isDefault })),
     runLimits: { minutes: org.agentRunTimeoutMinutes, toolCalls: org.agentRunToolCallBudget },
     actApprovalPolicy: org.agentActStepsRequireApproval,
+    lockedTools: org.lockedHighRiskTools,
     calendars,
   };
 }

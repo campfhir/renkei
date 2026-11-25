@@ -13,12 +13,13 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
-import type {
-  PendingToolPermission,
-  ToolPermissionDecision,
-  TurnKind,
-  TurnStatus,
-  TurnView,
+import {
+  TOOL_PERMISSION_DECISIONS,
+  type PendingToolPermission,
+  type ToolPermissionDecision,
+  type TurnKind,
+  type TurnStatus,
+  type TurnView,
 } from './views';
 
 /**
@@ -33,7 +34,7 @@ export interface ToolPermissionRecord extends PendingToolPermission {
 }
 
 export function isToolPermissionDecision(value: unknown): value is ToolPermissionDecision {
-  return value === 'once' || value === 'always' || value === 'deny';
+  return typeof value === 'string' && TOOL_PERMISSION_DECISIONS.some((known) => known === value);
 }
 
 /** Whatever jsonb hands back, or null when it is not an ask at all. */
@@ -49,6 +50,7 @@ export function parseToolPermission(raw: unknown): ToolPermissionRecord | null {
     name: record.name,
     requestedAt:
       typeof record.requestedAt === 'string' ? record.requestedAt : new Date(0).toISOString(),
+    ...(record.locked === true ? { locked: true } : {}),
     decision: isToolPermissionDecision(record.decision) ? record.decision : null,
     decidedAt: typeof record.decidedAt === 'string' ? record.decidedAt : null,
   };
@@ -79,8 +81,7 @@ export function parseTurnRunnerContext(raw: unknown): TurnRunnerContext | null {
     voice: record.voice === true,
     timeZone: typeof record.timeZone === 'string' ? record.timeZone : null,
     origin: typeof record.origin === 'string' ? record.origin : null,
-    addressedAgentId:
-      typeof record.addressedAgentId === 'string' ? record.addressedAgentId : null,
+    addressedAgentId: typeof record.addressedAgentId === 'string' ? record.addressedAgentId : null,
   };
 }
 
@@ -195,6 +196,7 @@ export function toTurnView(turn: TurnRow): TurnView {
           messageId: pending.messageId,
           name: pending.name,
           requestedAt: pending.requestedAt,
+          ...(pending.locked ? { locked: true } : {}),
         }
       : null,
   };

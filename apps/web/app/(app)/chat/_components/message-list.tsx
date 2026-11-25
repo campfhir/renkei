@@ -81,6 +81,7 @@ import {
   permissionButtons,
   permissionCardReducer,
   permissionCardText,
+  type PermissionGlyph,
   replyCopies,
   replyEndNote,
   resultRowsById,
@@ -1187,27 +1188,23 @@ function MilestoneCard({
   );
 }
 
-const DECISION_CLASSES: Record<ToolPermissionDecision, string> = {
-  once: 'bg-blue-600 text-white hover:bg-blue-700',
-  always:
-    'border border-gray-300 bg-white text-gray-800 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800',
-  deny: 'text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/40',
-};
-
-const DECISION_TITLES: Record<ToolPermissionDecision, string | undefined> = {
-  once: undefined,
-  always: 'Runs this tool without asking from now on. Change your mind under Preferences.',
-  deny: undefined,
+/** The menu items' glyphs (message-list.model.ts's PermissionGlyph). */
+const GLYPHS: Record<PermissionGlyph, string> = {
+  check: ICONS.check,
+  'double-check': ICONS.doubleCheck,
+  hand: ICONS.stopHand,
+  ban: ICONS.ban,
 };
 
 /**
  * The ask, inline where the reply stopped: what the assistant wants to
- * call, with what, and the three answers. Allow once is the plain yes;
- * Always allow is the same yes plus "stop asking me about this tool" —
- * kept on the preferences page, where it can be taken back; Deny hands
- * the model a refusal so it can say what it was going to do instead. A
- * viewer of a shared chat sees the ask but not the buttons: only the
- * owner can let the chat act.
+ * call, with what, and two split buttons — Allow once ▾ (in this chat,
+ * always) and Deny ▾ (block in this chat, block always). The lasting
+ * answers are kept where they can be taken back: the chat's own list, or
+ * the person's under Preferences. A tool the organization locks can only
+ * be allowed once. A viewer of a shared chat sees the ask but not the
+ * buttons: only the owner can let the chat act. The rules are
+ * message-list.model.ts's (permissionCardReducer, permissionButtons).
  */
 function PermissionCard({
   prompt,
@@ -1218,7 +1215,9 @@ function PermissionCard({
 }) {
   const [state, dispatch] = useReducer(permissionCardReducer, initialPermissionCardState);
   const name = prompt.pending.name;
-  const text = permissionCardText(name, prompt.canDecide, call);
+  const locked = prompt.pending.locked === true;
+  const text = permissionCardText(name, prompt.canDecide, call, locked);
+  const groupRef = useRef<HTMLDivElement>(null);
   const decide = async (decision: ToolPermissionDecision) => {
     if (state.busy) return;
     dispatch({ type: 'decide', decision });
@@ -1227,9 +1226,39 @@ function PermissionCard({
     // On success the stream's tool_permission_decided event takes the
     // card away; nothing to reset here.
   };
-  const buttonClass =
-    'rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-50 disabled:cursor-default';
+  // An open menu shuts on Escape or a press anywhere outside the buttons.
+  useEffect(() => {
+    if (state.menu === null) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') dispatch({ type: 'close-menu' });
+    };
+    const onPointer = (event: PointerEvent) => {
+      if (event.target instanceof Node && !groupRef.current?.contains(event.target)) {
+        dispatch({ type: 'close-menu' });
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onPointer);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onPointer);
+    };
+  }, [state.menu]);
   const cardAnchor = useCoachAnchor('chat-permission-card');
+  const segment = 'px-3 py-1.5 text-xs font-medium disabled:cursor-default disabled:opacity-50';
+  const tones = {
+    allow: {
+      main: 'rounded-l-md bg-blue-600 text-white hover:bg-blue-700',
+      arrow: 'rounded-r-md border-l border-blue-500 bg-blue-600 text-white hover:bg-blue-700',
+      alone: 'rounded-md bg-blue-600 text-white hover:bg-blue-700',
+    },
+    deny: {
+      main: 'rounded-l-md border border-gray-300 bg-white text-red-700 hover:bg-red-50 dark:border-gray-700 dark:bg-gray-900 dark:text-red-300 dark:hover:bg-red-950/40',
+      arrow:
+        'rounded-r-md border border-l-0 border-gray-300 bg-white text-red-700 hover:bg-red-50 dark:border-gray-700 dark:bg-gray-900 dark:text-red-300 dark:hover:bg-red-950/40',
+      alone: 'rounded-md border border-gray-300 bg-white text-red-700 dark:border-gray-700',
+    },
+  } as const;
   return (
     <div
       role="group"
@@ -1249,6 +1278,12 @@ function PermissionCard({
             This changes something outside the conversation, so it waits for a yes. Tool:{' '}
             <code className="font-mono">{name}</code>
           </p>
+          {text.locked ? (
+            <p className="mt-1 flex items-center gap-1 text-xs text-amber-800 dark:text-amber-300">
+              <Icon path={ICONS.lock} className="h-3 w-3 shrink-0" />
+              {text.locked}
+            </p>
+          ) : null}
           {text.input ? (
             <details className="chat-fold mt-1">
               <summary>
@@ -1262,19 +1297,83 @@ function PermissionCard({
             </details>
           ) : null}
           {prompt.canDecide ? (
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              {permissionButtons(state).map(({ decision, label, disabled }) => (
-                <button
-                  key={decision}
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => void decide(decision)}
-                  title={DECISION_TITLES[decision]}
-                  className={`${buttonClass} ${DECISION_CLASSES[decision]}`}
-                >
-                  {label}
-                </button>
-              ))}
+            <div ref={groupRef} className="mt-2 flex flex-wrap items-center gap-2">
+              {permissionButtons(state, locked).map((button) => {
+                const tone = tones[button.side];
+                const menuId = `permission-menu-${prompt.pending.toolUseId}-${button.side}`;
+                return (
+                  <div key={button.side} className="relative inline-flex">
+                    <button
+                      type="button"
+                      disabled={button.disabled}
+                      onClick={() => void decide(button.main.decision)}
+                      className={`${segment} ${button.more.length > 0 ? tone.main : tone.alone}`}
+                    >
+                      {button.main.label}
+                    </button>
+                    {button.more.length > 0 ? (
+                      <button
+                        type="button"
+                        disabled={button.disabled}
+                        aria-haspopup="menu"
+                        aria-expanded={button.menuOpen}
+                        aria-controls={button.menuOpen ? menuId : undefined}
+                        aria-label={
+                          button.side === 'allow' ? 'More ways to allow' : 'More ways to deny'
+                        }
+                        onClick={() => dispatch({ type: 'toggle-menu', side: button.side })}
+                        className={`${segment} px-1.5 ${tone.arrow}`}
+                      >
+                        <Icon path={ICONS.chevron} className="h-3.5 w-3.5 rotate-90" />
+                      </button>
+                    ) : null}
+                    {button.menuOpen ? (
+                      <div
+                        id={menuId}
+                        role="menu"
+                        aria-label={button.side === 'allow' ? 'Allow' : 'Deny'}
+                        className="absolute bottom-full left-0 z-20 mb-1 w-56 rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-800 dark:bg-gray-950"
+                      >
+                        {button.more.map((choice) => (
+                          <button
+                            key={choice.decision}
+                            type="button"
+                            role="menuitem"
+                            onClick={() => void decide(choice.decision)}
+                            className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-gray-100 focus-visible:bg-gray-100 dark:hover:bg-gray-900 dark:focus-visible:bg-gray-900"
+                          >
+                            <Icon
+                              path={GLYPHS[choice.glyph]}
+                              solid={choice.glyph === 'hand'}
+                              className={`mt-0.5 h-4 w-4 shrink-0 ${
+                                button.side === 'deny'
+                                  ? 'text-red-600 dark:text-red-400'
+                                  : 'text-green-600 dark:text-green-400'
+                              }`}
+                            />
+                            <span className="min-w-0">
+                              <span
+                                className={`block text-sm font-medium ${
+                                  button.side === 'deny'
+                                    ? 'text-red-700 dark:text-red-300'
+                                    : 'text-gray-900 dark:text-gray-100'
+                                }`}
+                              >
+                                {choice.label}
+                              </span>
+                              {choice.hint ? (
+                                <span className="block text-xs text-gray-500 dark:text-gray-400">
+                                  {choice.hint}
+                                </span>
+                              ) : null}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">

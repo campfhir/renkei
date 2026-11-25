@@ -12,6 +12,8 @@ export const generalPages: CrawlPage[] = [
   { path: '/home?archived=1', expectText: 'The full history, archived cards included.' },
   { path: '/knowledge', expectText: 'Knowledge search' },
   { path: '/logs', expectText: 'Every account in this tenant' },
+  // Preferences' sections no spec opens on its own.
+  { path: '/preferences/appearance', expectText: 'Show line numbers in code blocks' },
   {
     // A desktop client registers itself (RFC 7591) and sends the person to
     // authorize it; the authorize route parks the request and redirects

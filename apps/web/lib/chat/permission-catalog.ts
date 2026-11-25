@@ -44,33 +44,40 @@ export {
   type ActToolGroup,
 } from './permission-rules';
 
-function actNamesOf(tools: LocalTool[]): ActToolEntry[] {
+function actNamesOf(tools: LocalTool[], reads = false): ActToolEntry[] {
   return tools
-    .filter((tool) => tool.readOnly !== true)
-    .map((tool) => ({ name: tool.def.name, label: friendlyToolName(tool.def.name, null) }));
+    .filter((tool) => reads || tool.readOnly !== true)
+    .map((tool) => ({
+      name: tool.def.name,
+      label: friendlyToolName(tool.def.name, null),
+      ...(tool.readOnly === true ? { read: true as const } : {}),
+    }));
 }
 
-/** The chat's in-process act tools: files, memory, compaction, staging, and Renkei's own (platform-tools/). */
-export function chatOwnActTools(): ActToolEntry[] {
+/** The chat's in-process act tools — and its read tools too, with `reads` — : files, memory, compaction, staging, and Renkei's own (platform-tools/). */
+export function chatOwnActTools(reads = false): ActToolEntry[] {
   // Listed by name whether or not this org has an image model: the catalog is of tools that exist.
   const imageTool = imageGenerationTool({ models: [{ id: '', label: '', model: '' }] });
   return dedupe([
-    ...actNamesOf(compactionTools()),
-    ...actNamesOf(attachmentTools()),
-    ...actNamesOf(sandboxFileTools()),
-    ...actNamesOf(fileTools()),
-    ...actNamesOf(imageTool ? [imageTool] : []),
-    ...actNamesOf(memoryTools()),
-    ...actNamesOf(userMemoryTools()),
+    ...actNamesOf(compactionTools(), reads),
+    ...actNamesOf(attachmentTools(), reads),
+    ...actNamesOf(sandboxFileTools(), reads),
+    ...actNamesOf(fileTools(), reads),
+    ...actNamesOf(imageTool ? [imageTool] : [], reads),
+    ...actNamesOf(memoryTools(), reads),
+    ...actNamesOf(userMemoryTools(), reads),
     // Handing one of the person's agents a task (agent-asks.ts).
-    ...actNamesOf([chatAskAgentTool({ chat: { id: '', title: null }, addressedAgentId: null })]),
+    ...actNamesOf(
+      [chatAskAgentTool({ chat: { id: '', title: null }, addressedAgentId: null })],
+      reads
+    ),
     // Listed whether or not this person has a git host connected: the catalog is of tools that exist.
-    ...actNamesOf(platformToolsFor({ operator: false, codeHosts: CODE_HOSTS })),
+    ...actNamesOf(platformToolsFor({ operator: false, codeHosts: CODE_HOSTS }), reads),
   ]);
 }
 
-/** A code project's act tools, delegation included. */
-export function codeActTools(): ActToolEntry[] {
+/** A code project's act tools, delegation included (and its read tools, with `reads`). */
+export function codeActTools(reads = false): ActToolEntry[] {
   const bound = codeTools({
     target: { subject: '' },
     workspaceId: '',
@@ -78,7 +85,7 @@ export function codeActTools(): ActToolEntry[] {
     repoProvider: '',
     origin: '',
   });
-  return dedupe(actNamesOf([...bound, codeDelegateTool(bound)]));
+  return dedupe(actNamesOf([...bound, codeDelegateTool(bound)], reads));
 }
 
 function dedupe(entries: ActToolEntry[]): ActToolEntry[] {
@@ -97,22 +104,89 @@ export async function listChatActToolGroups(
   subject: string,
   roles: string[]
 ): Promise<ActToolGroup[]> {
+  return listActToolGroups(subject, roles, {
+    previews: false,
+    chatOwn: true,
+    code: true,
+    reads: false,
+  });
+}
+
+/**
+ * Every tool a chat can be offered, reading ones included and flagged
+ * (`read`): what Preferences › Tool permissions and a chat's Tools dialog
+ * list, since a reading tool can be blocked too even though it never asks.
+ */
+export async function listChatToolGroups(
+  subject: string,
+  roles: string[]
+): Promise<ActToolGroup[]> {
+  return listActToolGroups(subject, roles, {
+    previews: false,
+    chatOwn: true,
+    code: true,
+    reads: true,
+  });
+}
+
+/**
+ * The tools a high-risk list is about (@renkei/user-prefs' high-risk.ts):
+ *
+ *  - 'agents': what an agent can stage — every connector's act tools,
+ *    preview tools included (an agent stages a directory write through its
+ *    preview), and none of a chat's own;
+ *  - 'code': what a code project's chat can call — the chat's own list
+ *    (connectors without previews, the chat's own tools, the checkout's);
+ *  - 'org': everything either can, for the organization's locked list.
+ */
+export async function listHighRiskToolGroups(
+  subject: string,
+  roles: string[],
+  kind: 'agents' | 'code' | 'org'
+): Promise<ActToolGroup[]> {
+  return listActToolGroups(subject, roles, {
+    previews: kind !== 'code',
+    chatOwn: kind !== 'agents',
+    code: kind !== 'agents',
+    reads: false,
+  });
+}
+
+async function listActToolGroups(
+  subject: string,
+  roles: string[],
+  include: { previews: boolean; chatOwn: boolean; code: boolean; reads: boolean }
+): Promise<ActToolGroup[]> {
   const catalog = await listAvailableTools(subject, { roles });
   const byConnector = new Map<string, ActToolEntry[]>();
   for (const descriptor of catalog) {
-    if (descriptor.kind !== 'act' || descriptor.appOnly) continue;
-    if (descriptor.name.endsWith('_preview') || !descriptor.connector) continue;
+    if (descriptor.appOnly || !descriptor.connector) continue;
+    if (descriptor.kind !== 'act' && !include.reads) continue;
+    if (!include.previews && descriptor.name.endsWith('_preview')) continue;
     const list = byConnector.get(descriptor.connector) ?? [];
     list.push({
       name: descriptor.name,
       label: friendlyToolName(descriptor.name, descriptor.title),
+      ...(descriptor.kind !== 'act' ? { read: true as const } : {}),
     });
     byConnector.set(descriptor.connector, list);
   }
   const groups: ActToolGroup[] = [...byConnector.entries()]
     .map(([key, tools]) => ({ key, label: connectorLabel(key), tools: dedupe(tools) }))
     .sort((a, b) => a.label.localeCompare(b.label));
-  groups.push({ key: CHAT_OWN_TOOLS_KEY, label: 'The chat itself', tools: chatOwnActTools() });
-  groups.push({ key: CODE_TOOLS_KEY, label: 'Code projects', tools: codeActTools() });
+  if (include.chatOwn) {
+    groups.push({
+      key: CHAT_OWN_TOOLS_KEY,
+      label: 'The chat itself',
+      tools: chatOwnActTools(include.reads),
+    });
+  }
+  if (include.code) {
+    groups.push({
+      key: CODE_TOOLS_KEY,
+      label: 'Code projects',
+      tools: codeActTools(include.reads),
+    });
+  }
   return groups.filter((group) => group.tools.length > 0);
 }

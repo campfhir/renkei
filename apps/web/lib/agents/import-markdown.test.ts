@@ -22,7 +22,7 @@ const agent: AgentExportInput = {
   triggers: [{ draft: trigger, enabled: true }],
   guardrails: 'Never invent numbers.',
   canAskQuestions: true,
-  autoAcceptActions: true,
+  allowedActions: ['jira_add_comment'],
   limits: { minutes: 30, toolCalls: 150 },
 };
 
@@ -38,7 +38,7 @@ describe('markdown round trip', () => {
     expect(extracted.definition.triggers).toEqual([{ draft: trigger, enabled: true }]);
     expect(extracted.definition.guardrails).toBe('Never invent numbers.');
     expect(extracted.definition.canAskQuestions).toBe(true);
-    expect(extracted.definition.autoAcceptActions).toBe(true);
+    expect(extracted.definition.allowedActions).toEqual(['jira_add_comment']);
 
     const parsed = parseAgentPayload({ ...extracted.definition, enabled: false });
     expect('error' in parsed).toBe(false);

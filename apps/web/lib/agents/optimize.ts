@@ -281,7 +281,7 @@ export function buildOptimizationPrompt(
     triggers: agent.triggers,
     guardrails: agent.guardrails,
     canAskQuestions: agent.canAskQuestions,
-    autoAcceptActions: agent.autoAcceptActions,
+    allowedActions: agent.allowedActions,
     limits: evidence.limits,
   });
   return [

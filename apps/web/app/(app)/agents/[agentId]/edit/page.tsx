@@ -62,6 +62,7 @@ export default async function EditAgentPage({
         models={data.models}
         runLimits={data.runLimits}
         actApprovalPolicy={data.actApprovalPolicy}
+        lockedTools={data.lockedTools}
         existing={agent}
       />
     </div>

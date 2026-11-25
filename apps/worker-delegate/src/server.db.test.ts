@@ -300,7 +300,7 @@ describeDb('worker-delegate', () => {
       enabled: true,
       guardrails: null,
       canAskQuestions: false,
-      autoAcceptActions: false,
+      allowedActions: [],
     });
     expect(createdAgent).toBe('CREATED');
     // A run started by hand, as the run route queues it.

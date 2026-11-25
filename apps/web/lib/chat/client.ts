@@ -268,15 +268,38 @@ export const chatClient = {
       { toolUseId, decision }
     ),
 
+  /** Every decision that applies to tools in this chat: its own, the person's always-lists, and the locks. */
+  toolAnswers: (chatId: string) => getJson<unknown>(`${base()}/chats/${chatId}/tool-answers`),
+
+  /** Block a tool, a reading one included: on this chat's lists, or on the person's own (every chat). */
+  setTool: (
+    chatId: string,
+    tool: string,
+    rule: 'allow' | 'ask' | 'deny',
+    scope: 'chat' | 'always'
+  ) =>
+    sendJsonFull<unknown>(`${base()}/chats/${chatId}/tool-answers`, 'PUT', { tool, rule, scope }),
+
+  /** Take one decision back: off this chat's lists, or off the person's own for this kind of chat. */
+  resetToolAnswer: (chatId: string, tool: string, scope: 'chat' | 'always') =>
+    sendJsonFull<unknown>(`${base()}/chats/${chatId}/tool-answers`, 'PUT', {
+      tool,
+      rule: 'clear',
+      scope,
+    }),
+
   /** What this person decided ahead of time about the chat's act tools (permission-prefs.ts). */
   toolPermissions: () =>
     getJson<{ alwaysAllow: string[]; alwaysDeny: string[] }>(`${base()}/tool-permissions`),
 
-  setToolPermissions: (prefs: { alwaysAllow: string[]; alwaysDeny: string[] }) =>
+  setToolPermissions: (
+    prefs: { alwaysAllow: string[]; alwaysDeny: string[] },
+    kind: 'chat' | 'project' | 'code' = 'chat'
+  ) =>
     sendJsonFull<{ alwaysAllow: string[]; alwaysDeny: string[] }>(
       `${base()}/tool-permissions`,
       'PUT',
-      prefs
+      { ...prefs, kind }
     ),
 
   /** Force a compaction pass now — /compact, or "compact this chat" picked from the prompt picker. */

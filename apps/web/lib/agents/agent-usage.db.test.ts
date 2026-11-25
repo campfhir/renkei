@@ -33,7 +33,7 @@ maybe('token usage by model and by run', () => {
       enabled: true,
       guardrails: null,
       canAskQuestions: false,
-      autoAcceptActions: false,
+      allowedActions: [],
     });
 
     const big = { provider: 'anthropic', model: bigModel, llmModelId: null };
