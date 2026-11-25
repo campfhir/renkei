@@ -17,7 +17,7 @@ export type AdminAreaIcon =
   | 'clock'
   | 'fileText'
   | 'layers'
-  | 'step'
+  | 'puzzle'
   | 'deploy'
   | 'chart'
   | 'chip'
@@ -138,7 +138,7 @@ export function adminSections(): AdminSection[] {
         },
         {
           href: `${admin}/ci-blocks`,
-          icon: 'step',
+          icon: 'puzzle',
           label: 'Building blocks',
           detail:
             'The pipeline steps code projects build from — written once, for Bitbucket Pipelines and GitHub Actions.',
