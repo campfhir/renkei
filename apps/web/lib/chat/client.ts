@@ -280,6 +280,14 @@ export const chatClient = {
       { tool, rule: 'ask' }
     ),
 
+  /** Put every tool decided in this chat back to asking. */
+  resetAllToolAnswers: (chatId: string) =>
+    sendJsonFull<{ allow: string[]; deny: string[] }>(
+      `${base()}/chats/${chatId}/tool-answers`,
+      'PUT',
+      { all: true, rule: 'ask' }
+    ),
+
   /** What this person decided ahead of time about the chat's act tools (permission-prefs.ts). */
   toolPermissions: () =>
     getJson<{ alwaysAllow: string[]; alwaysDeny: string[] }>(`${base()}/tool-permissions`),

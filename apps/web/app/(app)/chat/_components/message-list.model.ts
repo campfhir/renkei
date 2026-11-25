@@ -738,12 +738,10 @@ const DECISION_LABELS: Record<ToolPermissionDecision, [idle: string, busy: strin
 
 /** What each lasting answer does, for its menu line. */
 export const DECISION_HINTS: Partial<Record<ToolPermissionDecision, string>> = {
-  chat: 'Stops asking about this tool in this chat.',
-  always: 'Stops asking about this tool in every chat. Change it under Preferences.',
-  'deny-chat':
-    'Refuses this call and keeps the tool out of this chat. Undo it from this chat’s Tools.',
-  'deny-always':
-    'Refuses this call and blocks the tool in every chat. Change it under Preferences.',
+  chat: 'Only here',
+  always: 'Every chat · change in Preferences',
+  'deny-chat': 'Only here · undo in Tools',
+  'deny-always': 'Every chat · change in Preferences',
 };
 
 export interface PermissionChoice {
@@ -811,8 +809,6 @@ export function permissionCardText(
     lead: canDecide ? 'Allow this?' : 'Waiting for the owner',
     action: toolLabel(name).toLowerCase(),
     input: call ? JSON.stringify(call.input, null, 2) : null,
-    locked: locked
-      ? 'Your organization locks this tool as high risk, so it asks every time.'
-      : null,
+    locked: locked ? 'Locked by your organization: asks every time' : null,
   };
 }

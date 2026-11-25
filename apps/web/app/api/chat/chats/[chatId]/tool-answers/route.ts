@@ -4,7 +4,8 @@
  * chat-permissions.ts): read by the chat's Tools dialog, and taken back
  * from there. PUT `{ tool, rule: 'ask' }` puts one tool back to asking —
  * the way out of "Block in this chat", since a blocked tool is never
- * offered to the chat again and so never raises a card to answer. Owner
+ * offered to the chat again and so never raises a card to answer.
+ * `{ all: true, rule: 'ask' }` takes back every answer at once. Owner
  * only, like the card. Applies from the chat's next turn.
  */
 
@@ -12,7 +13,11 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { getChatForOwner } from '@/lib/chat/store';
-import { readChatToolAnswers, rememberChatToolAnswer } from '@/lib/chat/chat-permissions';
+import {
+  clearChatToolAnswers,
+  readChatToolAnswers,
+  rememberChatToolAnswer,
+} from '@/lib/chat/chat-permissions';
 import { logger } from '@/lib/logger';
 import { who } from '@/lib/log-actor';
 
@@ -42,6 +47,16 @@ export async function PUT(
   const body = await readJsonBody(request);
   // Only taking a decision back: allowing goes through the card, which
   // knows whether the organization locks the tool.
+  if (body.all === true && body.rule === 'ask') {
+    await clearChatToolAnswers(chat.id);
+    logger.info('{actor} put every tool back to asking in chat "{chat}"', {
+      component: 'api/chat/tool-answers',
+      ...who(session),
+      chat: chat.title ?? 'Untitled chat',
+      chatId: chat.id,
+    });
+    return NextResponse.json({ allow: [], deny: [] });
+  }
   if (typeof body.tool !== 'string' || body.rule !== 'ask') {
     return jsonError(400, 'invalid-answer', "Expected tool and rule 'ask'");
   }

@@ -1,4 +1,7 @@
 import {
+  chatToolAnswerGroups,
+  chatToolAnswersCount,
+  resetAllView,
   chatToolAnswerRows,
   chatToolAnswersReducer,
   initialChatToolAnswersState,
@@ -22,13 +25,33 @@ describe('Decided in this chat', () => {
     );
   });
 
-  it('lists each decided tool, blocked ones first, each with Reset', () => {
-    const rows = chatToolAnswerRows(fold(decided));
-    expect(rows.map((row) => [row.name, row.decided, row.reset.label])).toEqual([
-      ['chat_memory_remember', 'Blocked in this chat', 'Reset'],
-      ['jira_create_issue', 'Allowed in this chat', 'Reset'],
+  it('lists each decided tool, blocked ones first, and counts them in the heading', () => {
+    const state = fold(decided);
+    const rows = chatToolAnswerRows(state);
+    expect(rows.map((row) => [row.name, row.blocked])).toEqual([
+      ['chat_memory_remember', true],
+      ['jira_create_issue', false],
     ]);
     expect(rows[0].label).not.toBe('');
+    expect(chatToolAnswersCount(state)).toBe('1 blocked · 1 allowed');
+    expect(
+      chatToolAnswersCount(fold({ type: 'loaded', answers: { allow: [], deny: ['a', 'b'] } }))
+    ).toBe('2 blocked');
+  });
+
+  it('Reset all is offered from two decisions up, and turns every undo off while it runs', () => {
+    expect(resetAllView(fold(decided))).toEqual({ shown: true, disabled: false });
+    expect(resetAllView(fold({ type: 'loaded', answers: { allow: [], deny: ['a'] } })).shown).toBe(
+      false
+    );
+    const running = fold(decided, { type: 'reset-all-started' });
+    expect(resetAllView(running).disabled).toBe(true);
+    expect(chatToolAnswerRows(running).every((row) => row.busy && row.disabled)).toBe(true);
+    const done = chatToolAnswersReducer(running, {
+      type: 'reset-succeeded',
+      answers: { allow: [], deny: [] },
+    });
+    expect(showsChatToolAnswers(done)).toBe(false);
   });
 
   it('one reset at a time: every Reset is off while it is on its way, the pressed one saying so', () => {
@@ -38,9 +61,9 @@ describe('Decided in this chat', () => {
       { type: 'reset-started', tool: 'jira_create_issue' }
     );
     expect(state.resetting).toBe('chat_memory_remember');
-    expect(chatToolAnswerRows(state).map((row) => row.reset)).toEqual([
-      { label: 'Resetting…', disabled: true },
-      { label: 'Reset', disabled: true },
+    expect(chatToolAnswerRows(state).map((row) => [row.busy, row.disabled])).toEqual([
+      [true, true],
+      [false, true],
     ]);
   });
 
@@ -69,5 +92,22 @@ describe('Decided in this chat', () => {
   it('reads whatever the route answered, leaving out what is not a name', () => {
     const state = fold({ type: 'loaded', answers: { allow: [3], deny: ['b', 'a'] } });
     expect(state.answers).toEqual({ allow: [], deny: ['a', 'b'] });
+  });
+
+  it('groups the rows by kind of tool, so two short labels that read alike stay apart', () => {
+    const state = fold({
+      type: 'loaded',
+      answers: {
+        allow: ['card_update'],
+        deny: ['card_create', 'agent_create', 'github_merge_pull_request'],
+      },
+    });
+    expect(
+      chatToolAnswerGroups(state).map((group) => [group.label, group.rows.map((row) => row.name)])
+    ).toEqual([
+      ['Agent', ['agent_create']],
+      ['Card', ['card_create', 'card_update']],
+      ['GitHub', ['github_merge_pull_request']],
+    ]);
   });
 });

@@ -763,7 +763,7 @@ describe('the permission card', () => {
     expect(allow.menuOpen).toBe(false);
     expect(deny.more).toHaveLength(2);
     expect(permissionCardText('outlook_send_mail', true, null, true).locked).toMatch(
-      /locks this tool/
+      /Locked by your organization/
     );
     expect(permissionCardText('outlook_send_mail', true, null).locked).toBeNull();
   });

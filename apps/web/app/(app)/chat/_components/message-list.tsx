@@ -1323,7 +1323,7 @@ function PermissionCard({
                         id={menuId}
                         role="menu"
                         aria-label={button.side === 'allow' ? 'Allow' : 'Deny'}
-                        className="absolute left-0 top-full z-20 mt-1 w-64 rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-800 dark:bg-gray-950"
+                        className="absolute bottom-full left-0 z-20 mb-1 w-56 rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-800 dark:bg-gray-950"
                       >
                         {button.more.map((choice) => (
                           <button
@@ -1331,22 +1331,32 @@ function PermissionCard({
                             type="button"
                             role="menuitem"
                             onClick={() => void decide(choice.decision)}
-                            className="block w-full px-3 py-2 text-left hover:bg-gray-100 focus-visible:bg-gray-100 dark:hover:bg-gray-900 dark:focus-visible:bg-gray-900"
+                            className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-gray-100 focus-visible:bg-gray-100 dark:hover:bg-gray-900 dark:focus-visible:bg-gray-900"
                           >
-                            <span
-                              className={`block text-sm font-medium ${
+                            <Icon
+                              path={button.side === 'deny' ? ICONS.ban : ICONS.check}
+                              className={`mt-0.5 h-4 w-4 shrink-0 ${
                                 button.side === 'deny'
-                                  ? 'text-red-700 dark:text-red-300'
-                                  : 'text-gray-900 dark:text-gray-100'
+                                  ? 'text-red-600 dark:text-red-400'
+                                  : 'text-green-600 dark:text-green-400'
                               }`}
-                            >
-                              {choice.label}
-                            </span>
-                            {choice.hint ? (
-                              <span className="block text-xs text-gray-500 dark:text-gray-400">
-                                {choice.hint}
+                            />
+                            <span className="min-w-0">
+                              <span
+                                className={`block text-sm font-medium ${
+                                  button.side === 'deny'
+                                    ? 'text-red-700 dark:text-red-300'
+                                    : 'text-gray-900 dark:text-gray-100'
+                                }`}
+                              >
+                                {choice.label}
                               </span>
-                            ) : null}
+                              {choice.hint ? (
+                                <span className="block text-xs text-gray-500 dark:text-gray-400">
+                                  {choice.hint}
+                                </span>
+                              ) : null}
+                            </span>
                           </button>
                         ))}
                       </div>

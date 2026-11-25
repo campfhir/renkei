@@ -60,6 +60,15 @@ describe('a chat’s own tool answers', () => {
     expect(await (await get(chatId)).json()).toEqual({ allow: ['jira_create_issue'], deny: [] });
   });
 
+  it('Reset all takes back every answer at once', async () => {
+    const chatId = await chatOf(me);
+    await rememberChatToolAnswer(chatId, 'outlook_send_mail', 'deny');
+    await rememberChatToolAnswer(chatId, 'jira_create_issue', 'allow');
+    const reset = await put(chatId, { all: true, rule: 'ask' });
+    expect(await reset.json()).toEqual({ allow: [], deny: [] });
+    expect((await getDataStore().chats.get(chatId))?.toolPermissions).toBeNull();
+  });
+
   it('only takes decisions back: allowing here, or a name that is not a tool, is refused', async () => {
     const chatId = await chatOf(me);
     expect((await put(chatId, { tool: 'outlook_send_mail', rule: 'allow' })).status).toBe(400);

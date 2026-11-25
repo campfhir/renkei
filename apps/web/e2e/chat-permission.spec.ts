@@ -192,8 +192,8 @@ test('Block in this chat refuses the call and keeps it out of the chat, until Re
 
     // Taken back from the chat's Tools dialog: Reset sends "ask" for the tool.
     await page.getByRole('button', { name: 'Tools', exact: true }).click();
-    const decided = page.getByRole('region', { name: 'Decided in this chat' });
-    await expect(decided).toContainText('Blocked in this chat');
+    const decided = page.getByRole('region', { name: 'Decided here' });
+    await expect(decided).toContainText('1 blocked');
     await shot(page, testInfo, 'chat-tools-decided.png');
     const reset = page.waitForRequest(
       (request) => request.method() === 'PUT' && request.url().endsWith('/tool-answers')

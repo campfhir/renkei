@@ -170,6 +170,10 @@ export const ICONS = {
   mockup: 'M3 5h18v14H3zM3 9h18M6 7h.01M9 7h.01',
   // Preferences' Appearance section.
   sun: 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5 19 19M5 19l1.5-1.5M17.5 6.5 19 5',
+  // A tool blocked (the chat's Tools dialog, the permission card).
+  ban: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM5.6 5.6l12.8 12.8',
+  // Take a decision back.
+  undo: 'M9 14 4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3',
   // Preferences' Tool permissions section.
   shield: 'M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z',
 };

@@ -80,6 +80,14 @@ export async function rememberChatToolAnswer(
   return next;
 }
 
+/** Take back every answer on a chat (the Tools dialog's Reset all); false when the chat is gone. */
+export async function clearChatToolAnswers(chatId: string): Promise<boolean> {
+  const chat = await getDataStore().chats.get(chatId);
+  if (!chat) return false;
+  await getDataStore().chats.setToolPermissions(chatId, null);
+  return true;
+}
+
 /** A chat's answers as stored; none when the chat is gone. */
 export async function readChatToolAnswers(chatId: string): Promise<ChatToolAnswers> {
   const chat = await getDataStore().chats.get(chatId);
