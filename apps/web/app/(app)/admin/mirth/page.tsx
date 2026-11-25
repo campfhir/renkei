@@ -16,7 +16,7 @@ export default async function AdminMirthPage(): Promise<React.ReactNode> {
   }
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="max-w-3xl">
       <h1 className="mb-1 text-xl font-bold">Mirth Connect</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         The Mirth Connect (NextGen Connect 4.5) servers your organization runs. Register where each

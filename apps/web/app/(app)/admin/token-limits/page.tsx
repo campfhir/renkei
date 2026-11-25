@@ -25,7 +25,7 @@ export default async function TokenLimitsPage(): Promise<React.ReactNode> {
     );
   }
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="max-w-4xl">
       <h1 className="mb-1 text-xl font-bold">Token limits</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         The most tokens one person may spend, counting their chats and their agents together. At a

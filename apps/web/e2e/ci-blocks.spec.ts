@@ -46,7 +46,10 @@ test('building blocks: draft with AI, preview both hosts, save, publish @smoke',
   try {
     // --- From the Organization page to the catalogue. ---
     await page.goto('/admin');
-    await page.getByRole('main').getByRole('link', { name: 'Building blocks' }).click();
+    await page
+      .getByRole('navigation', { name: 'Organization areas' })
+      .getByRole('link', { name: 'Building blocks' })
+      .click();
     await expect(page.getByRole('heading', { name: 'Building blocks', level: 1 })).toBeVisible();
 
     // --- A new block, drafted from a description. ---

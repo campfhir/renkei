@@ -98,7 +98,11 @@ test.describe('code services', () => {
 
       // ── The organization page lists the area ──
       await page.goto(`/admin`);
-      await expect(page.getByRole('link', { name: /Code services/ })).toBeVisible();
+      await expect(
+        page
+          .getByRole('navigation', { name: 'Organization areas' })
+          .getByRole('link', { name: 'Code services' })
+      ).toBeVisible();
 
       // ── Phone width: the list and the form still fit ──
       await page.setViewportSize({ width: 390, height: 844 });

@@ -83,8 +83,8 @@ test('targets: connect both hosts, make targets from runners @smoke', async ({
   try {
     await page.goto('/admin');
     await page
-      .getByRole('main')
-      .getByRole('link', { name: /^Targets\b/ })
+      .getByRole('navigation', { name: 'Organization areas' })
+      .getByRole('link', { name: 'Targets' })
       .click();
     await expect(page.getByRole('heading', { name: 'Targets', level: 1 })).toBeVisible();
 

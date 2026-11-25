@@ -5,6 +5,7 @@ import { useReducer, useState } from 'react';
 import { sendJsonFull } from '@/lib/fetch-json';
 import CoachTarget, { useCoachAnchor } from '@/components/coach-marks/anchor';
 import type { CoachAnchor } from '@/lib/coach-marks/anchors';
+import type { SettingsPart } from '../admin-nav.model';
 import {
   ACT_APPROVAL_POLICIES,
   LOG_LEVELS,
@@ -74,7 +75,8 @@ function Section({
   anchor,
   children,
 }: {
-  title: string;
+  /** One of the parts the console's sidebar lists under Settings. */
+  title: SettingsPart;
   /** The coach-mark anchor this section carries, for the settings tour. */
   anchor?: CoachAnchor;
   children: React.ReactNode;

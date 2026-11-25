@@ -45,7 +45,7 @@ export default async function AdminAgentRunsPage({
   };
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="max-w-3xl">
       <div className="mb-4 flex items-center gap-2">
         <BackLink href={`/admin/agents`} label="Agent oversight" />
         <h1 className="min-w-0 truncate text-xl font-bold">Runs of “{agent.name}”</h1>

@@ -20,7 +20,7 @@ export default async function AdminPage(): Promise<React.ReactNode> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (access) {
     return (
-      <div className="mx-auto max-w-4xl">
+      <div className="max-w-4xl">
         <h1 className="mb-1 text-xl font-bold">Organization</h1>
         <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
           Everything an operator configures for this organization. Activity for the whole
@@ -57,7 +57,7 @@ export default async function AdminPage(): Promise<React.ReactNode> {
     redirect(signInUrl(`/admin`));
   }
   return (
-    <div className="mx-auto max-w-lg">
+    <div className="max-w-lg">
       <h2 className="mb-2 text-lg font-semibold">Operator access required</h2>
       <p className="text-sm text-gray-600 dark:text-gray-400">
         You are signed in, but your account does not carry the operator role for this organization.

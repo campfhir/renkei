@@ -17,7 +17,7 @@ export default async function AdminProjectTemplatesPage(): Promise<React.ReactNo
   }
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="max-w-3xl">
       <h1 className="mb-1 text-xl font-bold">Project templates</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         What the instructions field offers to start from when someone creates a code project. Add,

@@ -16,7 +16,7 @@ export default async function AdminCalendarsPage(): Promise<React.ReactNode> {
   }
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="max-w-3xl">
       <h1 className="mb-1 text-xl font-bold">Holiday calendars</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         Named sets of blackout dates for agent schedules. A schedule that opts into a calendar skips

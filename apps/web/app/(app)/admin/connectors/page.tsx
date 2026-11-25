@@ -53,7 +53,7 @@ export default async function AdminConnectorsPage(): Promise<React.ReactNode> {
   }));
 
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="max-w-4xl">
       <h1 className="mb-1 text-xl font-bold">Connector setup</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         What your organization runs, with what credentials. Open a connector to register its app and

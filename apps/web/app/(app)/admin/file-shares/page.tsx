@@ -16,7 +16,7 @@ export default async function AdminFileSharesPage(): Promise<React.ReactNode> {
   }
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="max-w-3xl">
       <h1 className="mb-1 text-xl font-bold">File shares</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         Network file shares reachable over SMB or SFTP with a service credential you manage here.

@@ -64,7 +64,7 @@ export default async function AdminAgentsPage(): Promise<React.ReactNode> {
     : DEFAULT_ORG_SETTINGS.agentRunRetentionDays;
 
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="max-w-4xl">
       <h1 className="mb-1 text-xl font-bold">Agent oversight</h1>
       <p className="mb-2 text-sm text-gray-600 dark:text-gray-400">
         Every user-drafted agent in this organization. You can view run statuses (step content only

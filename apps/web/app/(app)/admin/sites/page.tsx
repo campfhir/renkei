@@ -87,7 +87,7 @@ export default async function SitesPage(): Promise<React.ReactNode> {
   }
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="max-w-3xl">
       <h1 className="mb-1 text-xl font-bold">Sites</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         The external places this organization reaches — derived from connected accounts and content

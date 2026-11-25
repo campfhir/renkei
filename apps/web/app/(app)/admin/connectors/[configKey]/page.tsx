@@ -63,7 +63,7 @@ export default async function AdminConnectorPage({
     }));
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="max-w-3xl space-y-6">
       <div>
         <div className="mb-1 flex items-center gap-2">
           <BackLink href={`/admin/connectors`} label="All connectors" />

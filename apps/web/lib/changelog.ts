@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-25',
     entries: [
       {
+        kind: 'changed',
+        title: 'The Organization console, behind a sidebar',
+        detail:
+          "Every page of the Organization console now lists the console's areas in a sidebar beside it, the current one marked, with Settings listing its parts underneath; on a phone the Organization page is the list and each area links back to it. Project templates and Code services sit in a Code projects group with Building blocks and Targets.",
+      },
+      {
         kind: 'added',
         title: 'Instructions for another tool to report deploys and health',
         detail:

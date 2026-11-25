@@ -94,7 +94,7 @@ export default async function SettingsPage(): Promise<React.ReactNode> {
   };
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="max-w-3xl">
       <h1 className="mb-1 text-xl font-bold">Settings</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         Organization-wide controls. Changes take effect within a minute and are recorded in the{' '}

@@ -128,6 +128,8 @@ export const ICONS = {
   /** The account menu's rows. */
   /** Three sliders — Preferences. */
   sliders: 'M4 7h16M4 12h16M4 17h16M15 5v4M9 10v4M13 15v4',
+  /** A puzzle piece, a tab on top and one on the side — a pipeline's building blocks. */
+  puzzle: 'M4 8h3.5a2.5 2.5 0 1 1 5 0H16v3.5a2.5 2.5 0 1 1 0 5V20H4z',
   /** A plug — Connectors. */
   plug: 'M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4',
   /** A table of rows and a column — Microsoft Fabric's workspaces and lakehouses. */
