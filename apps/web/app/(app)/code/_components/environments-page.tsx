@@ -25,6 +25,7 @@ import { LoadingLine } from '@/components/skeleton';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import ActionsPage from './actions-page';
 import { DOT, PILL, card } from './deploy-tones';
+import DeploymentInstructions from './deployment-instructions';
 import HealthCheckins from './health-checkins';
 import {
   TABS,
@@ -179,6 +180,13 @@ export default function EnvironmentsPage({
           <LoadingLine label="Reading the environments…" />
         ) : (
           <>
+            <DeploymentInstructions
+              projectId={projectId}
+              projectName={projectName}
+              repoFullName={repoFullName}
+              host={host}
+              environments={state.data.environments.map((e) => e.name)}
+            />
             <nav aria-label="Environments" className="flex flex-wrap items-stretch gap-2">
               {tabs.map((tab) => (
                 <button
