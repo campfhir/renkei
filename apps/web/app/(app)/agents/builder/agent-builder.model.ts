@@ -595,7 +595,7 @@ export interface AllowedActionRow {
  */
 export function allowedActionRows(
   state: BuilderState,
-  catalog: ToolDescriptor[],
+  catalog: readonly Pick<ToolDescriptor, 'name' | 'title' | 'kind'>[],
   locked: readonly string[]
 ): AllowedActionRow[] {
   return state.tools

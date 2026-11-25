@@ -634,7 +634,7 @@ describe('the switches', () => {
       { name: 'jira_search', title: 'Search Jira', kind: 'read' },
       { name: 'jira_add_comment', title: 'Comment on an issue', kind: 'act' },
       { name: 'outlook_send_mail', title: 'Send mail', kind: 'act' },
-    ] as unknown as ToolDescriptor[];
+    ] satisfies Pick<ToolDescriptor, 'name' | 'title' | 'kind'>[];
     const state = fold([
       { type: 'toolsChanged', tools: ['jira_search', 'jira_add_comment', 'outlook_send_mail'] },
       { type: 'actionAllowed', tool: 'jira_add_comment', allowed: true },
