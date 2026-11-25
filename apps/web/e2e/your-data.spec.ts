@@ -25,7 +25,7 @@ test('pasted memories import, show on the memory page, and leave in the download
   await page.goto('/preferences');
   await page
     .getByRole('main')
-    .getByRole('link', { name: /^Your data/ })
+    .getByRole('link', { name: /^Your data.*Export or import/ })
     .click();
   await expect(page).toHaveURL(/\/preferences\/data$/);
   await expect(page.getByRole('heading', { level: 2, name: 'Your data' })).toBeVisible();

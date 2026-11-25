@@ -57,20 +57,20 @@ for (const size of WIDTHS) {
     for (const group of ['General', 'Tools & automation', 'Notifications', 'Account']) {
       await expect(main.getByRole('heading', { level: 2, name: group })).toBeVisible();
     }
-    await expect(main.getByRole('link', { name: /^Agents/ }).last()).toContainText(
-      'Nothing waits when an agent accepts its own actions'
+    // The person's own state, not the organization's (the locked list is shared).
+    await expect(main.getByRole('link', { name: /^Chats/ }).last()).toContainText(
+      'Never archived automatically'
     );
     expect(await overflows(page)).toBe(false);
     await shot(page, testInfo, `prefs-${size.name}-sections.png`);
 
     if (size.width >= WIDE) {
       // A wide screen: the sidebar beside the section, the current one marked.
-      await sidebar.getByRole('link', { name: 'Notifications' }).click();
+      await sidebar.getByRole('link', { name: 'Notifications', exact: true }).click();
       await expect(page).toHaveURL(/\/preferences\/notifications$/);
-      await expect(sidebar.getByRole('link', { name: 'Notifications' })).toHaveAttribute(
-        'aria-current',
-        'page'
-      );
+      await expect(
+        sidebar.getByRole('link', { name: 'Notifications', exact: true })
+      ).toHaveAttribute('aria-current', 'page');
       // Its cards listed under it, a link to each.
       await expect(sidebar.getByRole('link', { name: 'Pop-ups' })).toHaveAttribute(
         'href',
