@@ -67,6 +67,15 @@ describe('Preferences’ sections', () => {
     expect(set.chats).toBe('Archived after 1 day unused');
     expect(set.permissions).toBe('2 allowed, 1 blocked');
     expect(set.agents).toBe('49 high-risk tools still wait for you');
+    expect(
+      sectionSummaries({
+        theme: { mode: 'auto', codeLineNumbers: false },
+        archiveAfterDays: null,
+        permissions: { allowed: 0, blocked: 0 },
+        agentHighRisk: 1,
+        codeChanges: 0,
+      }).agents
+    ).toBe('1 high-risk tool still waits for you');
     expect(set.code).toBe('Auto mode: 1 tool changed from the default');
   });
 });

@@ -179,7 +179,7 @@ export function sectionSummaries(state: SectionState): Record<PreferencesSection
     agents:
       state.agentHighRisk === 0
         ? 'Nothing waits when an agent accepts its own actions'
-        : `${plural(state.agentHighRisk, 'high-risk tool')} still wait for you`,
+        : `${plural(state.agentHighRisk, 'high-risk tool')} still ${state.agentHighRisk === 1 ? 'waits' : 'wait'} for you`,
     code:
       state.codeChanges === 0
         ? 'Auto mode asks before anything outside the checkout'
