@@ -12,7 +12,7 @@ import BlocksList from './blocks-list';
 export default async function AdminCiBlocksPage(): Promise<React.ReactNode> {
   if (!(await checkAccess([ROLE_OPERATOR]))) redirect('/admin');
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="max-w-5xl">
       <div className="mb-5 flex flex-wrap items-end gap-3">
         <div className="min-w-0 flex-[1_1_420px]">
           <h1 className="mb-1 text-xl font-bold">Building blocks</h1>

@@ -62,7 +62,7 @@ export default async function AdminTutorialsPage(): Promise<React.ReactNode> {
     whole === 0 ? '—' : `${Math.round((part / whole) * 100)}%`;
 
   return (
-    <div className="mx-auto max-w-6xl">
+    <div className="max-w-6xl">
       <h1 className="mb-1 text-xl font-bold">Tutorials</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         Who has taken the guided tours, who finished them, and who skipped. A person counts once per

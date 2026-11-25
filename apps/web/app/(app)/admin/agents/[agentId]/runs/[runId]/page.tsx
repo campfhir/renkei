@@ -29,7 +29,7 @@ export default async function AdminRunDetailPage({
   if (!run) notFound();
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="max-w-3xl">
       <AdminRunLive
         agentId={agentId}
         runId={runId}

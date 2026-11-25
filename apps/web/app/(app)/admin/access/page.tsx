@@ -124,7 +124,7 @@ export default async function AccessPage(): Promise<React.ReactNode> {
   const linked = grants.length;
 
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="max-w-4xl">
       <h1 className="mb-1 text-xl font-bold">Access</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         Who is connected to what: everyone who has signed in or linked an account, and each

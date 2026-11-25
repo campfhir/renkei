@@ -3,7 +3,7 @@ import { LoadingRegion, Skeleton, SkeletonHeading } from '@/components/skeleton'
 /** The Organization page: its sections of link tiles. */
 export default function AdminLoading() {
   return (
-    <LoadingRegion label="Loading…" className="mx-auto max-w-4xl">
+    <LoadingRegion label="Loading…" className="max-w-4xl">
       <SkeletonHeading />
       {[5, 2, 1, 3, 3].map((tiles, section) => (
         <div key={section} aria-hidden="true" className="mb-8">

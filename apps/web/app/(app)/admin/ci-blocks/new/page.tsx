@@ -12,7 +12,7 @@ export default async function NewCiBlockPage({
   if (!(await checkAccess([ROLE_OPERATOR]))) redirect('/admin');
   const { draft } = await searchParams;
   return (
-    <div className="mx-auto max-w-6xl">
+    <div className="max-w-6xl">
       <BlockEditor blockId={null} askFirst={draft === 'ai'} />
     </div>
   );

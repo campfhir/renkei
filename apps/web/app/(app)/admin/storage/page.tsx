@@ -15,7 +15,7 @@ export default async function StoragePage(): Promise<React.ReactNode> {
   }
   const view = await readStorage();
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="max-w-3xl">
       <h1 className="mb-1 text-xl font-bold">Storage</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         Where files live: what people attach to chats and projects, and what the assistant&apos;s

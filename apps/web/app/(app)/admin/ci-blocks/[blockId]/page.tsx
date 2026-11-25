@@ -14,7 +14,7 @@ export default async function CiBlockPage({
   const { blockId } = await params;
   if (!isUuid(blockId)) notFound();
   return (
-    <div className="mx-auto max-w-6xl">
+    <div className="max-w-6xl">
       <BlockEditor blockId={blockId} askFirst={false} />
     </div>
   );

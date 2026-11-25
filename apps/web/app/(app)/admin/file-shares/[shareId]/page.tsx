@@ -26,7 +26,7 @@ export default async function AdminFileSharePage({
 
   const summary = share.val.summary;
   return (
-    <div className="mx-auto max-w-3xl space-y-8">
+    <div className="max-w-3xl space-y-8">
       <div>
         <Link
           href={`/admin/file-shares`}

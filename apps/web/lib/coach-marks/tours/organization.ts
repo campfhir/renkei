@@ -23,7 +23,7 @@ export const ORGANIZATION_TOURS: CoachMarkTour[] = [
         title: 'Everything an operator configures',
         target: 'admin-sections',
         placement: 'top',
-        body: 'Connections hold app registrations and credentials; Agents oversees every agent in the organization; Usage and the records below show who is doing what. Tutorials, under People and records, reports on who has taken these tours.',
+        body: 'The same areas are in the sidebar on every page of the console. Connections hold app registrations and credentials; Agents oversees every agent in the organization; Usage and the records below show who is doing what. Tutorials, under People and records, reports on who has taken these tours.',
       },
     ],
   },

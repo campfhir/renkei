@@ -18,13 +18,13 @@ export default async function AdminAdManagerPage(): Promise<React.ReactNode> {
   }
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="max-w-3xl">
       <h1 className="mb-1 text-xl font-bold">ADManager Plus</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
-        The ManageEngine ADManager Plus servers your organization runs. Register where each one
-        is; people connect it with their own ADManager Plus authtoken from the Connectors page, and
-        the server&apos;s own token scope and the technician&apos;s delegated rights decide what
-        that account may do.
+        The ManageEngine ADManager Plus servers your organization runs. Register where each one is;
+        people connect it with their own ADManager Plus authtoken from the Connectors page, and the
+        server&apos;s own token scope and the technician&apos;s delegated rights decide what that
+        account may do.
       </p>
       <InstanceList />
     </div>

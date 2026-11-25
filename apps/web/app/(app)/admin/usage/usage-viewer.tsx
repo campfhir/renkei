@@ -194,7 +194,7 @@ export default function OrgUsageViewer({ initial }: { initial: OrgUsageReport })
   const stop = blocked(report);
   if (stop) {
     return (
-      <div className="mx-auto max-w-lg">
+      <div className="max-w-lg">
         <h2 className="mb-2 text-lg font-semibold">{stop.heading}</h2>
         <p className="text-sm text-gray-600 dark:text-gray-400">{stop.message}</p>
       </div>

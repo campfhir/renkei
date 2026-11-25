@@ -19,7 +19,7 @@ export default async function AdminCodeServicesPage(): Promise<React.ReactNode> 
   const enabled = await sandboxServicesEnabled();
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="max-w-3xl">
       <h1 className="mb-1 text-xl font-bold">Code services</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         The container images a code project&rsquo;s chat may start beside its checkout &mdash; a

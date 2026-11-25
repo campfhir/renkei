@@ -17,7 +17,7 @@ export default async function AdminLlmModelsPage(): Promise<React.ReactNode> {
   }
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="max-w-3xl">
       <h1 className="mb-1 text-xl font-bold">Agent models</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         The models user-drafted agents run on, with your organization&apos;s own API keys. Agents

@@ -11,7 +11,7 @@ import TargetsPage from './targets-page';
 export default async function AdminCiTargetsPage(): Promise<React.ReactNode> {
   if (!(await checkAccess([ROLE_OPERATOR]))) redirect('/admin');
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="max-w-5xl">
       <h1 className="mb-1 text-xl font-bold">Targets</h1>
       <p className="mb-6 max-w-3xl text-sm text-gray-600 dark:text-gray-400">
         Where deploy blocks run. Runners are read from your Bitbucket workspace and GitHub

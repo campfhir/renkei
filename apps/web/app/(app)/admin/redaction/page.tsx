@@ -18,7 +18,7 @@ export default async function AdminRedactionPage(): Promise<React.ReactNode> {
   }
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="max-w-3xl">
       <h1 className="mb-1 text-xl font-bold">Sensitive data</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         Identifiers found in tool results are replaced before they reach a model. Replacement is

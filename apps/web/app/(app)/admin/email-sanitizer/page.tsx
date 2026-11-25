@@ -30,7 +30,7 @@ export default async function AdminEmailSanitizerPage(): Promise<React.ReactNode
   const hasOrgModel = modelRead.ok && modelRead.val;
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="max-w-3xl">
       <h1 className="mb-1 text-xl font-bold">Email sanitizer</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         Sender policy for mail cleaned before embedding: which domains, addresses, or subject

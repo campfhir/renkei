@@ -16,7 +16,7 @@ export default async function SandboxesPage(): Promise<React.ReactNode> {
   }
   const view = await readSandboxes();
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="max-w-3xl">
       <h1 className="mb-1 text-xl font-bold">Sandboxes</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         Each person, agent and project works in a sandbox of its own, made the first time it is

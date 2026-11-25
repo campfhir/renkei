@@ -52,7 +52,7 @@ export default async function OrgQueuePage({
   };
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="max-w-5xl">
       <div className="mb-1 flex items-center gap-2">
         <BackLink href="/admin/agents" label="Agent oversight" />
         <h1 className="text-xl font-bold">Agent queue</h1>
