@@ -110,7 +110,15 @@ describe('removing a model', () => {
   ];
   const listed = run([{ type: 'loaded', models: roster }]);
   const asked = run([{ type: 'removeAsked', row: roster[0]! }], listed);
-  const usage = { people: 3, names: [], preferences: 1, projects: 2, chats: 5, agents: 1 };
+  const usage = {
+    people: 3,
+    names: [],
+    preferences: 1,
+    codePreferences: 2,
+    projects: 2,
+    chats: 5,
+    agents: 1,
+  };
   const counted = run([{ type: 'usageLoaded', usage }], asked);
 
   it('Remove opens a dialog that waits to hear who is on the model', () => {
@@ -123,7 +131,7 @@ describe('removing a model', () => {
   it('says who is on it and what of theirs, and that they will be told', () => {
     const view = removalView(counted);
     expect(view?.summary).toBe(
-      '3 people are on this model: 1 preferred chat model, 2 projects, 5 chats and 1 agent.'
+      '3 people are on this model: 1 preferred chat model, 2 preferred code project models, 2 projects, 5 chats and 1 agent.'
     );
     expect(view?.inUse).toBe(true);
     expect(view?.confirmLabel).toBe('Remove and notify 3 people');
@@ -135,7 +143,15 @@ describe('removing a model', () => {
       [
         {
           type: 'usageLoaded',
-          usage: { people: 1, names: [], preferences: 0, projects: 0, chats: 1, agents: 0 },
+          usage: {
+            people: 1,
+            names: [],
+            preferences: 0,
+            codePreferences: 0,
+            projects: 0,
+            chats: 1,
+            agents: 0,
+          },
         },
       ],
       asked
@@ -179,7 +195,15 @@ describe('removing a model', () => {
       [
         {
           type: 'usageLoaded',
-          usage: { people: 0, names: [], preferences: 0, projects: 0, chats: 0, agents: 0 },
+          usage: {
+            people: 0,
+            names: [],
+            preferences: 0,
+            codePreferences: 0,
+            projects: 0,
+            chats: 0,
+            agents: 0,
+          },
         },
       ],
       asked

@@ -1,6 +1,6 @@
 import { modelRemovedHeadline, modelRemovedUses } from './model-removed-notification';
 
-const none = { preference: false, projects: 0, chats: 0, agents: 0 };
+const none = { preference: false, codePreference: false, projects: 0, chats: 0, agents: 0 };
 
 describe('the "your model changed" note', () => {
   it('names what was removed, what replaced it and for what of theirs', () => {
@@ -9,12 +9,13 @@ describe('the "your model changed" note', () => {
         label: 'Fable',
         replacementLabel: 'Opus',
         preference: true,
+        codePreference: true,
         projects: 2,
         chats: 3,
         agents: 1,
       })
     ).toBe(
-      'An administrator removed the model "Fable". "Opus" replaced it for your preferred chat model, 2 projects, 3 chats and 1 agent.'
+      'An administrator removed the model "Fable". "Opus" replaced it for your preferred chat model, your preferred code project model, 2 projects, 3 chats and 1 agent.'
     );
   });
 
@@ -35,6 +36,19 @@ describe('the "your model changed" note', () => {
     );
   });
 
+  it('names the code project preference on its own', () => {
+    expect(
+      modelRemovedHeadline({
+        ...none,
+        label: 'Fable',
+        replacementLabel: 'Opus',
+        codePreference: true,
+      })
+    ).toBe(
+      'An administrator removed the model "Fable". "Opus" replaced it for your preferred code project model.'
+    );
+  });
+
   it("says the organization's default when no replacement was picked", () => {
     expect(
       modelRemovedHeadline({ ...none, label: 'Fable', replacementLabel: null, preference: true })
@@ -52,12 +66,14 @@ describe('who a removal touches', () => {
           { subject: 'bob', projects: 1, chats: 0, agents: 0 },
           { subject: 'ann', projects: 0, chats: 2, agents: 1 },
         ],
-        ['cat', 'ann']
+        ['cat', 'ann'],
+        ['dee', 'bob']
       )
     ).toEqual([
-      { subject: 'ann', projects: 0, chats: 2, agents: 1, preference: true },
-      { subject: 'bob', projects: 1, chats: 0, agents: 0, preference: false },
-      { subject: 'cat', projects: 0, chats: 0, agents: 0, preference: true },
+      { subject: 'ann', projects: 0, chats: 2, agents: 1, preference: true, codePreference: false },
+      { subject: 'bob', projects: 1, chats: 0, agents: 0, preference: false, codePreference: true },
+      { subject: 'cat', projects: 0, chats: 0, agents: 0, preference: true, codePreference: false },
+      { subject: 'dee', projects: 0, chats: 0, agents: 0, preference: false, codePreference: true },
     ]);
   });
 });

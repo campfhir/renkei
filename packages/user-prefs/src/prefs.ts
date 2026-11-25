@@ -719,6 +719,27 @@ export function parseChatModelPrefs(stored: unknown): ChatModelPrefs {
 }
 
 /**
+ * Which model a person's new chats in a code project start on, when the
+ * org offers several. A model row id; null means "no preference": the
+ * chat then takes the person's preferred chat model (CHAT_MODEL_KEY), else
+ * the organization's default. A code project with a model of its own
+ * comes first. Checked against the org's live chat models where it is
+ * used, never here.
+ */
+export const CODE_MODEL_KEY = 'code_model';
+
+export interface CodeModelPrefs {
+  modelId: string | null;
+}
+
+export const DEFAULT_CODE_MODEL_PREFS: CodeModelPrefs = { modelId: null };
+
+/** Survives whatever jsonb hands back; anything unrecognisable is the default. */
+export function parseCodeModelPrefs(stored: unknown): CodeModelPrefs {
+  return parseImagePrefs(stored);
+}
+
+/**
  * Whether the coach marks — the guided tours that walk somebody through a
  * workflow (apps/web/lib/coach-marks) — may start on their own when this
  * person lands on a page with one they have not seen. A fifth scope, read
@@ -821,6 +842,16 @@ export function parseChatModelPatch(raw: unknown): PrefsPatch<ChatModelPrefs> {
     DEFAULT_CHAT_MODEL_PREFS,
     parseChatModelPrefs,
     'chat model preference'
+  );
+}
+
+/** Some code project model preferences (see parsePrefsPatch). */
+export function parseCodeModelPatch(raw: unknown): PrefsPatch<CodeModelPrefs> {
+  return parsePrefsPatch(
+    raw,
+    DEFAULT_CODE_MODEL_PREFS,
+    parseCodeModelPrefs,
+    'code project model preference'
   );
 }
 

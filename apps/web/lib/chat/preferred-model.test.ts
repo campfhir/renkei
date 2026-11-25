@@ -1,10 +1,11 @@
 /**
- * The model a new chat starts on: its project's own, else its owner's
+ * The model a new chat starts on: its project's own, else (in a code
+ * project) its owner's preferred code project model, else its owner's
  * preferred chat model, else none (the organization's default).
  */
 
 import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
-import { patchChatModelPrefs } from '@renkei/user-prefs';
+import { patchChatModelPrefs, patchCodeModelPrefs } from '@renkei/user-prefs';
 import { firstOffered, preferredChatModelId } from './preferred-model';
 
 const HAIKU = '00000000-0000-4000-8000-000000000a01';
@@ -39,6 +40,18 @@ async function projectOn(llmModelId: string | null): Promise<string> {
     toolConfig: null,
   });
   if (llmModelId) await store.chatProjects.update(id, { llmModelId });
+  return id;
+}
+
+async function codeProjectOn(llmModelId: string | null): Promise<string> {
+  const id = await memory.chatProjects.create({
+    ownerSubject: subject,
+    name: 'c',
+    description: null,
+    toolConfig: null,
+    repo: { provider: 'github', fullName: 'acme/app', branch: null },
+  });
+  if (llmModelId) await memory.chatProjects.update(id, { llmModelId });
   return id;
 }
 
@@ -93,5 +106,38 @@ describe('a new chat with no model picked for it', () => {
     expect(await preferredChatModelId(subject, await projectOn(OFF))).toBe(OPUS);
     await patchChatModelPrefs(subject, { modelId: PAINTER });
     expect(await preferredChatModelId(subject, null)).toBeNull();
+  });
+});
+
+describe('a new chat in a code project', () => {
+  it("starts on its owner's preferred code project model, ahead of their chat model", async () => {
+    await patchChatModelPrefs(subject, { modelId: HAIKU });
+    await patchCodeModelPrefs(subject, { modelId: OPUS });
+    expect(await preferredChatModelId(subject, await codeProjectOn(null))).toBe(OPUS);
+  });
+
+  it("starts on the project's own model, whatever its owner prefers for code", async () => {
+    await patchCodeModelPrefs(subject, { modelId: HAIKU });
+    expect(await preferredChatModelId(subject, await codeProjectOn(OPUS))).toBe(OPUS);
+  });
+
+  it('falls back to the chat model preference, then to the organization default', async () => {
+    const project = await codeProjectOn(null);
+    expect(await preferredChatModelId(subject, project)).toBeNull();
+    await patchChatModelPrefs(subject, { modelId: OPUS });
+    expect(await preferredChatModelId(subject, project)).toBe(OPUS);
+  });
+
+  it('passes over a code project preference the organization no longer offers', async () => {
+    await patchChatModelPrefs(subject, { modelId: OPUS });
+    await patchCodeModelPrefs(subject, { modelId: OFF });
+    expect(await preferredChatModelId(subject, await codeProjectOn(null))).toBe(OPUS);
+  });
+
+  it('leaves chats outside a code project to the chat model preference', async () => {
+    await patchChatModelPrefs(subject, { modelId: HAIKU });
+    await patchCodeModelPrefs(subject, { modelId: OPUS });
+    expect(await preferredChatModelId(subject, null)).toBe(HAIKU);
+    expect(await preferredChatModelId(subject, await projectOn(null))).toBe(HAIKU);
   });
 });

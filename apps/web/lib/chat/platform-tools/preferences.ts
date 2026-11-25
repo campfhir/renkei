@@ -260,6 +260,17 @@ export function preferenceTools(): LocalTool[] {
                 },
               },
             },
+            codeModel: {
+              type: 'object',
+              description:
+                'The model new chats in a code project start on, unless the project names its own.',
+              properties: {
+                modelId: {
+                  type: ['string', 'null'],
+                  description: 'null is the preferred chat model, else the organization default.',
+                },
+              },
+            },
             coachMarks: {
               type: 'object',
               description: 'The guided tours.',

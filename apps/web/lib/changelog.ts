@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-25',
     entries: [
       {
+        kind: 'added',
+        title: 'A preferred model for code projects',
+        detail:
+          "Preferences › Code projects has a Code project model: the model your new chats in a code project start on. A project's own model still comes first; with none picked here they start on your preferred chat model, else the organization default.",
+      },
+      {
         kind: 'changed',
         title: 'Preferences, in sections',
         detail:

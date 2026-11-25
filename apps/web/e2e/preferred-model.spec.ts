@@ -7,11 +7,14 @@
  *   - the picker — what a search keeps, what the arrow keys and Enter act
  *     on, when a pick closes the menu, where the menu sits and how tall it
  *     may be — is chat/_components/model-select.model.test.ts;
- *   - which model a new chat starts on (its project's, else its owner's
- *     preferred one, else the organization default; a pick no longer on
- *     offer passed over) is lib/chat/preferred-model.test.ts, and the two
- *     pickers that set them are preferences/chat-model-form.model.test.ts
- *     and chat/_components/project-model.model.test.ts;
+ *   - which model a new chat starts on (its project's, else in a code
+ *     project its owner's preferred code project model, else its owner's
+ *     preferred chat model, else the organization default; a pick no
+ *     longer on offer passed over) is lib/chat/preferred-model.test.ts,
+ *     and the pickers that set them are
+ *     preferences/chat-model-form.model.test.ts,
+ *     preferences/code-model-form.model.test.ts and
+ *     chat/_components/project-model.model.test.ts;
  *   - the removal dialog's wording, options and request are
  *     admin/llm-models/model-forms.model.test.ts; what the server moves,
  *     refuses and writes to each person is
@@ -33,6 +36,12 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { createPerson, signIn } from './support/person';
 import { addStubModel, removeModel } from './support/stub-model';
+import {
+  connectBitbucket,
+  createChat,
+  createCodeProject,
+  prepareCodeHost,
+} from './support/code-host';
 
 test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
@@ -162,6 +171,53 @@ test('chat: a new chat starts on the preferred model, and on its project’s own
   await page.getByRole('main').getByRole('link', { name: 'New chat', exact: true }).click();
   await page.waitForURL(/\/chat\/[0-9a-f-]{36}/);
   await expect(modelButton(page)).toContainText(projects.label);
+});
+
+test('code: a new chat in a code project starts on the preferred code project model', async ({
+  page,
+  request,
+  person: _person,
+}) => {
+  const chats = await addModel(page, 'Chats');
+  const code = await addModel(page, 'Code');
+  await prepareCodeHost(request);
+  await connectBitbucket(page);
+  const projectId = await createCodeProject(page.request, {
+    name: `Model code project ${tag}`,
+    repository: `acme/model-${tag}`,
+    branch: 'main',
+  });
+  const preferring = await page.request.patch('/api/preferences', {
+    data: { chatModel: { modelId: chats.id } },
+  });
+  expect(preferring.ok(), await preferring.text()).toBe(true);
+
+  // With no code project model picked, a code chat takes the chat model.
+  await page.goto(`/chat/${await createChat(page.request, { projectId })}`);
+  await expect(modelButton(page)).toContainText(chats.label);
+
+  // Preferences › Code projects: "same as my chat model" names it; pick another.
+  await page.goto('/preferences/code');
+  const section = page.getByRole('region', { name: 'Code project model' });
+  const picker = section.getByLabel('Preferred code project model');
+  await expect(picker.locator('option').first()).toHaveText(
+    `Same as my chat model (${chats.label})`
+  );
+  await picker.selectOption(code.id);
+  const saved = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/api/preferences') && response.request().method() === 'PATCH'
+  );
+  await section.getByRole('button', { name: 'Save' }).click();
+  expect((await saved).request().postDataJSON()).toEqual({ codeModel: { modelId: code.id } });
+  await expect(section.getByText('Saved.')).toBeVisible();
+
+  // The next chat in the code project starts on it; a chat outside one does not.
+  await page.goto(`/chat/${await createChat(page.request, { projectId })}`);
+  await expect(modelButton(page)).toContainText(code.label);
+  await page.goto('/chat/new');
+  await page.waitForURL(/\/chat\/[0-9a-f-]{36}/);
+  await expect(modelButton(page)).toContainText(chats.label);
 });
 
 test('admin: removing a model moves the people on it to a replacement and tells them', async ({

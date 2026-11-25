@@ -80,7 +80,7 @@ export const PREFERENCES_GROUPS: readonly PreferencesGroup[] = [
         id: 'code',
         label: 'Code projects',
         icon: 'code',
-        blurb: 'Default tools and Auto mode',
+        blurb: 'Default model, tools and Auto mode',
       },
     ],
   },
