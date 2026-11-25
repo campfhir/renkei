@@ -199,7 +199,7 @@ test('Block in this chat refuses the call and keeps it out of the chat, until Re
       (request) => request.method() === 'PUT' && request.url().endsWith('/tool-answers')
     );
     await decided.getByRole('button', { name: new RegExp(`^Reset .*\\(${TOOL}\\)$`) }).click();
-    expect((await reset).postDataJSON()).toEqual({ tool: TOOL, rule: 'ask', scope: 'chat' });
+    expect((await reset).postDataJSON()).toEqual({ tool: TOOL, rule: 'clear', scope: 'chat' });
     await expect(decided.getByRole('button', { name: 'Blocked here' })).toBeHidden();
     await page.keyboard.press('Escape');
 
@@ -251,11 +251,13 @@ test('a reading tool, which never asks, can be blocked from the chat’s Tools d
     const permissions = page.getByRole('region', { name: 'Permissions' });
     await expect(permissions).toContainText('Anything not listed asks first.');
 
-    // Its own small dialog: search, pick one, where, Save.
-    await permissions.getByRole('button', { name: 'Block a tool' }).click();
-    const blockDialog = page.getByRole('dialog', { name: 'Block a tool' });
-    await blockDialog.getByLabel('Search tools to block').fill('chat_memory_list');
+    // Its own small dialog: search, pick one, what it may do, Save.
+    await permissions.getByRole('button', { name: 'Set a tool' }).click();
+    const blockDialog = page.getByRole('dialog', { name: 'Set a tool' });
+    await blockDialog.getByLabel('Search tools').fill('chat_memory_list');
     await blockDialog.getByRole('radio', { name: /\(chat_memory_list\)$/ }).check();
+    // A reading tool: this chat can make it ask, or block it.
+    await blockDialog.getByText('Block', { exact: true }).click();
     const blocked = page.waitForRequest(
       (request) => request.method() === 'PUT' && request.url().endsWith('/tool-answers')
     );

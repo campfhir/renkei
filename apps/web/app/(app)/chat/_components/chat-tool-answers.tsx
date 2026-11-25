@@ -5,7 +5,7 @@
  * applies to tools in this chat — allowed or blocked here, always allowed
  * or always blocked — one row per tool with its tag and a Reset. Each tag
  * explains itself in a tip floating beside it (hover, or press to pin).
- * "Block a tool" opens a small dialog of its own: search, pick a tool,
+ * "Set a tool" opens a small dialog of its own: search, pick a tool,
  * this chat or every chat, Save — the tool joins the list. That is how a
  * tool that only reads gets blocked: it never asks, so no card offers it.
  * Loaded each time the dialog opens. The rules are
@@ -19,6 +19,8 @@ import { Icon, ICONS } from '@/components/icons';
 import { chatClient } from '@/lib/chat/client';
 import {
   blockSave,
+  kindPhrase,
+  setOptions,
   chatToolAnswerGroups,
   chatToolAnswersCount,
   chatToolAnswersReducer,
@@ -27,6 +29,7 @@ import {
   showsChatToolAnswers,
   type ChatToolAnswerRow,
   type TagGlyph,
+  type TagTone,
 } from './chat-tool-answers.model';
 
 const GLYPHS: Record<TagGlyph, string> = {
@@ -35,12 +38,17 @@ const GLYPHS: Record<TagGlyph, string> = {
   check: ICONS.check,
   'double-check': ICONS.doubleCheck,
   lock: ICONS.lock,
+  question: ICONS.question,
+};
+
+const TONE_CLASSES: Record<TagTone, string> = {
+  blocked: 'bg-red-50 text-red-700 dark:bg-red-950/50 dark:text-red-300',
+  asks: 'bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300',
+  allowed: 'bg-green-50 text-green-700 dark:bg-green-950/50 dark:text-green-300',
 };
 
 function tagClass(row: ChatToolAnswerRow): string {
-  if (row.blocked) return 'bg-red-50 text-red-700 dark:bg-red-950/50 dark:text-red-300';
-  if (row.locked) return 'bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300';
-  return 'bg-green-50 text-green-700 dark:bg-green-950/50 dark:text-green-300';
+  return TONE_CLASSES[row.tag.tone];
 }
 
 const smallButton =
@@ -143,7 +151,7 @@ export default function ChatToolAnswers({ chatId }: { chatId: string }) {
   }, [pinned]);
 
   async function reset(row: ChatToolAnswerRow) {
-    if (state.resetting) return;
+    if (state.resetting || !row.scope) return;
     dispatch({ type: 'reset-started', tool: row.name });
     const result = await chatClient.resetToolAnswer(chatId, row.name, row.scope);
     if (result.error === null) dispatch({ type: 'reset-succeeded', answers: result.data });
@@ -152,9 +160,10 @@ export default function ChatToolAnswers({ chatId }: { chatId: string }) {
 
   async function saveBlock() {
     const tool = state.picker.selected;
-    if (!tool || state.resetting) return;
+    const choice = state.picker.choice;
+    if (!tool || !choice || state.resetting) return;
     dispatch({ type: 'block-started', tool });
-    const result = await chatClient.blockTool(chatId, tool, state.picker.scope);
+    const result = await chatClient.setTool(chatId, tool, choice.rule, choice.scope);
     if (result.error === null) dispatch({ type: 'reset-succeeded', answers: result.data });
     else dispatch({ type: 'reset-failed', error: result.error });
   }
@@ -168,6 +177,8 @@ export default function ChatToolAnswers({ chatId }: { chatId: string }) {
     : null;
   const picker = state.picker.open ? pickerGroups(state) : null;
   const save = blockSave(state);
+  const options = setOptions(state);
+  const kind = state.answers?.kind ?? 'chat';
 
   return (
     <section
@@ -185,8 +196,8 @@ export default function ChatToolAnswers({ chatId }: { chatId: string }) {
           onClick={() => dispatch({ type: 'picker-opened' })}
           className="ml-auto inline-flex items-center gap-1 rounded-md border border-gray-300 px-1.5 py-0.5 text-xs text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
         >
-          <Icon path={ICONS.ban} className="h-3.5 w-3.5 text-red-600 dark:text-red-400" />
-          Block a tool
+          <Icon path={ICONS.plus} className="h-3.5 w-3.5" />
+          Set a tool
         </button>
       </div>
       {groups.length > 0 ? (
@@ -227,24 +238,31 @@ export default function ChatToolAnswers({ chatId }: { chatId: string }) {
                       />
                       {row.tag.text}
                     </button>
-                    <button
-                      type="button"
-                      disabled={row.disabled}
-                      onClick={() => void reset(row)}
-                      aria-label={`Reset ${row.label} (${row.name})`}
-                      title={
-                        row.scope === 'chat'
-                          ? 'Take this back in this chat'
-                          : 'Take this back in every chat (changes Preferences)'
-                      }
-                      className={smallButton}
-                    >
-                      <Icon
-                        path={ICONS.undo}
-                        className={`h-3.5 w-3.5 ${row.busy ? 'motion-safe:animate-pulse' : ''}`}
-                      />
-                      Reset
-                    </button>
+                    {row.scope ? (
+                      <button
+                        type="button"
+                        disabled={row.disabled}
+                        onClick={() => void reset(row)}
+                        aria-label={`Reset ${row.label} (${row.name})`}
+                        title={
+                          row.scope === 'chat'
+                            ? 'Take this back in this chat'
+                            : 'Take this back for every chat of this kind (changes Preferences)'
+                        }
+                        className={smallButton}
+                      >
+                        <Icon
+                          path={ICONS.undo}
+                          className={`h-3.5 w-3.5 ${row.busy ? 'motion-safe:animate-pulse' : ''}`}
+                        />
+                        Reset
+                      </button>
+                    ) : (
+                      // The project's and the organization's are changed where they live.
+                      <span className="w-[4.25rem] shrink-0 text-center text-[11px] text-gray-400">
+                        {row.by === 'locked' ? 'Org' : 'Project'}
+                      </span>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -270,21 +288,21 @@ export default function ChatToolAnswers({ chatId }: { chatId: string }) {
       ) : null}
 
       {picker ? (
-        <Modal title="Block a tool" onClose={() => dispatch({ type: 'picker-closed' })}>
+        <Modal title="Set a tool" onClose={() => dispatch({ type: 'picker-closed' })}>
           <div className="flex max-h-[70vh] flex-col gap-3 text-sm">
             <input
               type="search"
               value={state.picker.filter}
               onChange={(event) => dispatch({ type: 'picker-filter', filter: event.target.value })}
               placeholder="Search tools"
-              aria-label="Search tools to block"
+              aria-label="Search tools"
               autoComplete="off"
               autoFocus
               className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
             />
             <div
               role="radiogroup"
-              aria-label="Tool to block"
+              aria-label="Tool"
               className="min-h-0 flex-1 overflow-y-auto rounded-md border border-gray-200 p-1 dark:border-gray-800"
             >
               {picker.groups.length === 0 ? (
@@ -332,38 +350,66 @@ export default function ChatToolAnswers({ chatId }: { chatId: string }) {
                 </p>
               ) : null}
             </div>
-            <fieldset className="flex flex-wrap gap-2">
-              <legend className="sr-only">Where</legend>
-              {(
-                [
-                  { scope: 'chat', label: 'This chat', glyph: ICONS.ban, solid: false },
-                  { scope: 'always', label: 'Every chat', glyph: ICONS.stopHand, solid: true },
-                ] as const
-              ).map((option) => (
-                <label
-                  key={option.scope}
-                  className={`flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-xs ${
-                    state.picker.scope === option.scope
-                      ? 'border-red-300 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950/50 dark:text-red-200'
-                      : 'border-gray-300 text-gray-700 dark:border-gray-700 dark:text-gray-300'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name={`block-scope-${chatId}`}
-                    className="sr-only"
-                    checked={state.picker.scope === option.scope}
-                    onChange={() => dispatch({ type: 'picker-scope', scope: option.scope })}
-                  />
-                  <Icon
-                    path={option.glyph}
-                    solid={option.solid}
-                    className="h-3.5 w-3.5 text-red-600 dark:text-red-400"
-                  />
-                  {option.label}
-                </label>
-              ))}
-            </fieldset>
+            {options.chat.length > 0 ? (
+              <div className="space-y-2">
+                {(
+                  [
+                    { key: 'chat', title: 'This chat', items: options.chat },
+                    {
+                      key: 'always',
+                      title: `Always, in ${kindPhrase(kind)}`,
+                      items: options.always,
+                    },
+                  ] as const
+                ).map((row) => (
+                  <fieldset key={row.key} className="flex flex-wrap items-center gap-2">
+                    <legend className="mb-1 w-full text-xs font-medium text-gray-600 dark:text-gray-400">
+                      {row.title}
+                    </legend>
+                    {row.items.map((option) => (
+                      <label
+                        key={`${option.scope}-${option.rule}`}
+                        className={`flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-xs ${
+                          option.chosen
+                            ? 'border-blue-400 bg-blue-50 text-blue-800 dark:border-blue-700 dark:bg-blue-950/50 dark:text-blue-200'
+                            : 'border-gray-300 text-gray-700 dark:border-gray-700 dark:text-gray-300'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name={`set-tool-${chatId}`}
+                          className="sr-only"
+                          checked={option.chosen}
+                          onChange={() =>
+                            dispatch({
+                              type: 'picker-choice',
+                              scope: option.scope,
+                              rule: option.rule,
+                            })
+                          }
+                        />
+                        <Icon
+                          path={GLYPHS[option.glyph]}
+                          solid={option.glyph === 'hand'}
+                          className={`h-3.5 w-3.5 ${
+                            option.rule === 'deny'
+                              ? 'text-red-600 dark:text-red-400'
+                              : option.rule === 'ask'
+                                ? 'text-amber-600 dark:text-amber-400'
+                                : 'text-green-600 dark:text-green-400'
+                          }`}
+                        />
+                        {option.label}
+                      </label>
+                    ))}
+                  </fieldset>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Pick a tool to choose what it may do.
+              </p>
+            )}
             {state.error ? (
               <p className="text-xs text-red-600 dark:text-red-400" role="alert">
                 {state.error}

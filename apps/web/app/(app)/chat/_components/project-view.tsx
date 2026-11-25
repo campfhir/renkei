@@ -20,6 +20,7 @@ import { useCallback, useEffect, useId, useReducer, useRef, useState, type React
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import Modal from '@/components/modal';
+import ProjectToolSettings from './project-tool-settings';
 import LocalTime from '@/components/local-time';
 import { Icon, ICONS } from '@/components/icons';
 import { sendJsonFull } from '@/lib/fetch-json';
@@ -712,6 +713,8 @@ export default function ProjectView({
             </section>
 
             {variant === 'code' ? null : chatsSection}
+
+            <ProjectToolSettings projectId={project.id} className={sectionClass} />
 
             {role === 'owner' ? (
               <section className={sectionClass}>

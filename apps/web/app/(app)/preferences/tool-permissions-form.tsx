@@ -55,7 +55,10 @@ export default function ToolPermissionsForm({
   groups,
   initial,
   locked = [],
+  kind = 'chat',
 }: {
+  /** Which kind of chat these lists are for (ordinary, chat project, code project). */
+  kind?: 'chat' | 'project' | 'code';
   groups: ActToolGroup[];
   initial: ChatToolPermissionPrefs;
   /** The organization's locked high-risk tools: Allow is not offered for them. */
@@ -70,7 +73,7 @@ export default function ToolPermissionsForm({
 
   async function save() {
     dispatch({ type: 'save-started' });
-    const result = await chatClient.setToolPermissions(saveBody(state));
+    const result = await chatClient.setToolPermissions(saveBody(state), kind);
     if (result.data) dispatch({ type: 'save-succeeded', stored: result.data });
     else dispatch({ type: 'save-failed' });
   }
@@ -254,7 +257,7 @@ export default function ToolPermissionsForm({
           <span className="text-sm text-red-600 dark:text-red-400">Could not save.</span>
         ) : null}
         <p className="text-xs text-gray-500 dark:text-gray-400">
-          Applies from the next message you send, in every chat of yours.
+          Applies from the next message you send, in every chat of this kind.
         </p>
       </div>
     </section>

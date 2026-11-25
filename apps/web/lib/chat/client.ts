@@ -272,18 +272,19 @@ export const chatClient = {
   toolAnswers: (chatId: string) => getJson<unknown>(`${base()}/chats/${chatId}/tool-answers`),
 
   /** Block a tool, a reading one included: on this chat's lists, or on the person's own (every chat). */
-  blockTool: (chatId: string, tool: string, scope: 'chat' | 'always') =>
-    sendJsonFull<unknown>(`${base()}/chats/${chatId}/tool-answers`, 'PUT', {
-      tool,
-      rule: 'deny',
-      scope,
-    }),
+  setTool: (
+    chatId: string,
+    tool: string,
+    rule: 'allow' | 'ask' | 'deny',
+    scope: 'chat' | 'always'
+  ) =>
+    sendJsonFull<unknown>(`${base()}/chats/${chatId}/tool-answers`, 'PUT', { tool, rule, scope }),
 
-  /** Take one decision back to asking: off this chat's lists, or off the person's own (every chat). */
+  /** Take one decision back: off this chat's lists, or off the person's own for this kind of chat. */
   resetToolAnswer: (chatId: string, tool: string, scope: 'chat' | 'always') =>
     sendJsonFull<unknown>(`${base()}/chats/${chatId}/tool-answers`, 'PUT', {
       tool,
-      rule: 'ask',
+      rule: 'clear',
       scope,
     }),
 
