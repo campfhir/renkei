@@ -1,42 +1,46 @@
 /**
- * "Decided in this chat", in the chat's Tools dialog, with no React: the
- * tools the owner allowed or blocked for this one chat from its
- * permission card, and Reset, which puts one back to asking. It is the
- * only way out of "Block in this chat": a blocked tool is never offered
- * to the chat again, so it never raises a card to answer.
+ * "Decided here", in the chat's Tools dialog, with no React: every
+ * decision that applies to tools in this chat, in one list. A tool on
+ * none of the lists asks every time, so it is not listed.
  *
- * Short on purpose: an icon says blocked or allowed, the heading counts
- * them, each row has an undo button, and Reset all clears the lot (a chat
- * can collect a dozen blocks). Loaded each time the dialog opens (the card
- * may have changed it since); one reset at a time; a refused reset keeps
- * the rows and says why; the server's answer replaces the list. chat-tool-answers.tsx renders from
- * this; tested in chat-tool-answers.model.test.ts.
+ * Four decisions, each with its glyph: allowed here (one tick), always
+ * allowed (two ticks), blocked here (do-not-enter), always blocked (the
+ * solid hand). One row per tool, saying the decision that actually
+ * applies, the way a turn reads them (start-turn.ts): a block beats an
+ * allow, and this chat's answer beats the person's always-lists. A tool
+ * the organization locks says so instead of "allowed": it asks whatever
+ * was allowed.
+ *
+ * Reset takes that row's decision back to asking — off this chat's
+ * lists, or off the person's own (every chat of theirs, as Preferences
+ * would); the next decision down, if any, then shows. Loaded each time
+ * the dialog opens; one reset at a time; a refused reset keeps the rows
+ * and says why; the server's answer replaces the lists.
+ * chat-tool-answers.tsx renders from this; tested beside it.
  */
 
 import { toolLabel } from './message-list.model';
 
-export interface ChatToolAnswersView {
-  allow: string[];
-  deny: string[];
+export interface ToolDecisionLists {
+  chat: { allow: string[]; deny: string[] };
+  always: { allow: string[]; deny: string[] };
+  /** The listed tools the organization locks as high risk. */
+  locked: string[];
 }
 
 export interface ChatToolAnswersState {
-  /** null until loaded; the same shape the route answers. */
-  answers: ChatToolAnswersView | null;
+  /** null until loaded. */
+  answers: ToolDecisionLists | null;
   failedToLoad: boolean;
-  /** The tool a reset is on its way for, or ALL for Reset all. */
+  /** The tool a reset is on its way for. */
   resetting: string | null;
   error: string | null;
 }
-
-/** `resetting` while Reset all is on its way. */
-export const ALL = '*';
 
 export type ChatToolAnswersAction =
   | { type: 'loaded'; answers: unknown }
   | { type: 'load-failed' }
   | { type: 'reset-started'; tool: string }
-  | { type: 'reset-all-started' }
   | { type: 'reset-succeeded'; answers: unknown }
   | { type: 'reset-failed'; error: string };
 
@@ -53,9 +57,20 @@ function listOf(raw: unknown): string[] {
     : [];
 }
 
-function read(raw: unknown): ChatToolAnswersView {
+function pair(raw: unknown): { allow: string[]; deny: string[] } {
   if (typeof raw !== 'object' || raw === null) return { allow: [], deny: [] };
   return { allow: listOf(Reflect.get(raw, 'allow')), deny: listOf(Reflect.get(raw, 'deny')) };
+}
+
+function read(raw: unknown): ToolDecisionLists {
+  if (typeof raw !== 'object' || raw === null) {
+    return { chat: pair(null), always: pair(null), locked: [] };
+  }
+  return {
+    chat: pair(Reflect.get(raw, 'chat')),
+    always: pair(Reflect.get(raw, 'always')),
+    locked: listOf(Reflect.get(raw, 'locked')),
+  };
 }
 
 export function chatToolAnswersReducer(
@@ -69,8 +84,6 @@ export function chatToolAnswersReducer(
       return { ...state, failedToLoad: true };
     case 'reset-started':
       return state.resetting ? state : { ...state, resetting: action.tool, error: null };
-    case 'reset-all-started':
-      return state.resetting ? state : { ...state, resetting: ALL, error: null };
     case 'reset-succeeded':
       return { ...state, answers: read(action.answers), resetting: null, error: null };
     case 'reset-failed':
@@ -78,33 +91,84 @@ export function chatToolAnswersReducer(
   }
 }
 
+export type ToolDecision = 'blocked-here' | 'always-blocked' | 'allowed-here' | 'always-allowed';
+
+/** What a row's tag says, and the glyph beside it. */
+export const DECISION_TAGS: Record<
+  ToolDecision | 'locked',
+  { text: string; glyph: 'ban' | 'hand' | 'check' | 'double-check' | 'lock' }
+> = {
+  'blocked-here': { text: 'Blocked here', glyph: 'ban' },
+  'always-blocked': { text: 'Always blocked', glyph: 'hand' },
+  'allowed-here': { text: 'Allowed here', glyph: 'check' },
+  'always-allowed': { text: 'Always allowed', glyph: 'double-check' },
+  locked: { text: 'Locked · asks', glyph: 'lock' },
+};
+
 export interface ChatToolAnswerRow {
   name: string;
   label: string;
+  decision: ToolDecision;
+  /** The organization locks it: an allow does nothing, it asks. */
+  locked: boolean;
+  /** The tag: the decision's, or "Locked · asks" for an allowed tool that is locked. */
+  tag: { text: string; glyph: 'ban' | 'hand' | 'check' | 'double-check' | 'lock' };
   blocked: boolean;
-  /** What happened to the tool here, as the row's tag says it beside its glyph. */
-  status: 'Blocked' | 'Allowed';
-  /** This row's undo is on its way. */
+  /** Which list Reset takes it off. */
+  scope: 'chat' | 'always';
+  /** This row's Reset is on its way; every Reset is off while any is. */
   busy: boolean;
-  /** Every undo is off while any reset is on its way. */
   disabled: boolean;
 }
 
-/** One row per decided tool, blocked ones first (they are what someone comes here to undo). */
+/** The decision that applies to a tool, as a turn reads them; null when it asks. */
+function decisionFor(lists: ToolDecisionLists, name: string): ToolDecision | null {
+  if (lists.chat.deny.includes(name)) return 'blocked-here';
+  if (lists.always.deny.includes(name)) return 'always-blocked';
+  if (lists.chat.allow.includes(name)) return 'allowed-here';
+  if (lists.always.allow.includes(name)) return 'always-allowed';
+  return null;
+}
+
+const ORDER: ToolDecision[] = ['blocked-here', 'always-blocked', 'allowed-here', 'always-allowed'];
+
+/** One row per decided tool: blocks first (what someone comes here to undo), here before always. */
 export function chatToolAnswerRows(state: ChatToolAnswersState): ChatToolAnswerRow[] {
-  if (!state.answers) return [];
-  const row = (name: string, blocked: boolean): ChatToolAnswerRow => ({
-    name,
-    label: toolLabel(name),
-    blocked,
-    status: blocked ? 'Blocked' : 'Allowed',
-    busy: state.resetting === name || state.resetting === ALL,
-    disabled: state.resetting !== null,
-  });
-  return [
-    ...state.answers.deny.map((name) => row(name, true)),
-    ...state.answers.allow.map((name) => row(name, false)),
+  const lists = state.answers;
+  if (!lists) return [];
+  const names = [
+    ...new Set([
+      ...lists.chat.deny,
+      ...lists.always.deny,
+      ...lists.chat.allow,
+      ...lists.always.allow,
+    ]),
   ];
+  return names
+    .flatMap((name): ChatToolAnswerRow[] => {
+      const decision = decisionFor(lists, name);
+      if (!decision) return [];
+      const blocked = decision === 'blocked-here' || decision === 'always-blocked';
+      const locked = !blocked && lists.locked.includes(name);
+      return [
+        {
+          name,
+          label: toolLabel(name),
+          decision,
+          locked,
+          tag: DECISION_TAGS[locked ? 'locked' : decision],
+          blocked,
+          scope: decision === 'blocked-here' || decision === 'allowed-here' ? 'chat' : 'always',
+          busy: state.resetting === name,
+          disabled: state.resetting !== null,
+        },
+      ];
+    })
+    .sort(
+      (a, b) =>
+        ORDER.indexOf(a.decision) - ORDER.indexOf(b.decision) ||
+        (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
+    );
 }
 
 export interface ChatToolAnswerGroup {
@@ -128,7 +192,7 @@ const PREFIX_LABELS: Record<string, string> = {
 /**
  * The rows grouped by the tools' prefix, so a short label stays plain
  * ("Create" under Agent and under Card are two different tools). Groups
- * in name order; within one, blocked first, as in the flat list.
+ * in name order; within one, in the flat list's order.
  */
 export function chatToolAnswerGroups(state: ChatToolAnswersState): ChatToolAnswerGroup[] {
   const groups = new Map<string, ChatToolAnswerRow[]>();
@@ -147,19 +211,12 @@ export function chatToolAnswerGroups(state: ChatToolAnswersState): ChatToolAnswe
 
 /** The heading's count: "12 blocked · 1 allowed", leaving out a zero. */
 export function chatToolAnswersCount(state: ChatToolAnswersState): string {
-  const blocked = state.answers?.deny.length ?? 0;
-  const allowed = state.answers?.allow.length ?? 0;
+  const rows = chatToolAnswerRows(state);
+  const blocked = rows.filter((row) => row.blocked).length;
+  const allowed = rows.length - blocked;
   return [blocked > 0 ? `${blocked} blocked` : null, allowed > 0 ? `${allowed} allowed` : null]
     .filter((part) => part !== null)
     .join(' · ');
-}
-
-/** Reset all: offered from two decisions up (one has its own undo), off while a reset is on its way. */
-export function resetAllView(state: ChatToolAnswersState): { shown: boolean; disabled: boolean } {
-  return {
-    shown: chatToolAnswerRows(state).length > 1,
-    disabled: state.resetting !== null,
-  };
 }
 
 /** Whether the section shows at all: only once loaded, and only with something decided. */

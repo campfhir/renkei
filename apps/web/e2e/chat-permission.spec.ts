@@ -193,13 +193,13 @@ test('Block in this chat refuses the call and keeps it out of the chat, until Re
     // Taken back from the chat's Tools dialog: Reset sends "ask" for the tool.
     await page.getByRole('button', { name: 'Tools', exact: true }).click();
     const decided = page.getByRole('region', { name: 'Decided here' });
-    await expect(decided).toContainText('1 blocked');
+    await expect(decided).toContainText('Blocked here');
     await shot(page, testInfo, 'chat-tools-decided.png');
     const reset = page.waitForRequest(
       (request) => request.method() === 'PUT' && request.url().endsWith('/tool-answers')
     );
     await decided.getByRole('button', { name: new RegExp(`^Reset .*\\(${TOOL}\\)$`) }).click();
-    expect((await reset).postDataJSON()).toEqual({ tool: TOOL, rule: 'ask' });
+    expect((await reset).postDataJSON()).toEqual({ tool: TOOL, rule: 'ask', scope: 'chat' });
     await expect(decided).toBeHidden();
     await page.keyboard.press('Escape');
 

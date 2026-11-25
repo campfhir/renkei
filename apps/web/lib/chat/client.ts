@@ -268,25 +268,16 @@ export const chatClient = {
       { toolUseId, decision }
     ),
 
-  /** What the owner decided for this one chat from its permission card (chat-permissions.ts). */
-  toolAnswers: (chatId: string) =>
-    getJson<{ allow: string[]; deny: string[] }>(`${base()}/chats/${chatId}/tool-answers`),
+  /** Every decision that applies to tools in this chat: its own, the person's always-lists, and the locks. */
+  toolAnswers: (chatId: string) => getJson<unknown>(`${base()}/chats/${chatId}/tool-answers`),
 
-  /** Put one tool back to asking in this chat: the way out of "Block in this chat". */
-  resetToolAnswer: (chatId: string, tool: string) =>
-    sendJsonFull<{ allow: string[]; deny: string[] }>(
-      `${base()}/chats/${chatId}/tool-answers`,
-      'PUT',
-      { tool, rule: 'ask' }
-    ),
-
-  /** Put every tool decided in this chat back to asking. */
-  resetAllToolAnswers: (chatId: string) =>
-    sendJsonFull<{ allow: string[]; deny: string[] }>(
-      `${base()}/chats/${chatId}/tool-answers`,
-      'PUT',
-      { all: true, rule: 'ask' }
-    ),
+  /** Take one decision back to asking: off this chat's lists, or off the person's own (every chat). */
+  resetToolAnswer: (chatId: string, tool: string, scope: 'chat' | 'always') =>
+    sendJsonFull<unknown>(`${base()}/chats/${chatId}/tool-answers`, 'PUT', {
+      tool,
+      rule: 'ask',
+      scope,
+    }),
 
   /** What this person decided ahead of time about the chat's act tools (permission-prefs.ts). */
   toolPermissions: () =>
