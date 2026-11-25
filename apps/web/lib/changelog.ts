@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'added',
+        title: 'Instructions for another tool to report deploys and health',
+        detail:
+          "Each code project's Environments page has an Instructions for another tool panel: a copyable Markdown page that explains how its deploys report to Renkei and how its application checks in, with no secrets in it.",
+      },
+      {
+        kind: 'added',
         title: 'A preferred model for code projects',
         detail:
           "Preferences › Code projects has a Code project model: the model your new chats in a code project start on. A project's own model still comes first; with none picked here they start on your preferred chat model, else the organization default.",
