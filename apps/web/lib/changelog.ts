@@ -46,6 +46,23 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-25',
+    entries: [
+      {
+        kind: 'changed',
+        title: 'Preferences, in sections',
+        detail:
+          'Preferences is grouped into sections with a sidebar on a wide screen and a section list on a phone.',
+      },
+      {
+        kind: 'changed',
+        title: 'You decide which tools ask first',
+        detail:
+          "Your organization can lock tools so they always ask, and everything else is yours to set per kind of chat: always allow, always block, or decide in a chat's permission card or its Tools dialog, where a project can allow tools for all its chats. Agents now list which actions run without asking.",
+      },
+    ],
+  },
+  {
     date: '2026-11-24',
     entries: [
       {
