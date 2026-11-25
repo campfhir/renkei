@@ -46,7 +46,7 @@ const existing = {
   enabled: true,
   guardrails: null,
   canAskQuestions: false,
-  autoAcceptActions: false,
+  allowedActions: [],
   triggers: [],
 };
 
@@ -60,7 +60,7 @@ function parsedWith(overrides: Partial<AgentDraft> = {}, refreshDescription = fa
     llmModelId: null,
     guardrails: null,
     canAskQuestions: false,
-    autoAcceptActions: false,
+    allowedActions: [],
     ...overrides,
   };
   return {
@@ -104,8 +104,8 @@ describe('saveAgent description regeneration', () => {
     expect(describeMock.generateAgentDescription).toHaveBeenCalledTimes(1);
   });
 
-  it('turning auto-accept on is a change worth re-describing', async () => {
-    await saveAgent('auth0|alice', parsedWith({ autoAcceptActions: true }), {
+  it('letting an action run without asking is a change worth re-describing', async () => {
+    await saveAgent('auth0|alice', parsedWith({ allowedActions: ['jira_search_issues'] }), {
       agentId: 'agent-1',
     });
     expect(describeMock.generateAgentDescription).toHaveBeenCalledTimes(1);

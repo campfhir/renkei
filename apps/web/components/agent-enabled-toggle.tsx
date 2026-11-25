@@ -32,7 +32,7 @@ function savePayloadOf(agent: StoredAgent, enabled: boolean) {
     llmModelId: agent.llmModelId,
     guardrails: agent.guardrails,
     canAskQuestions: agent.canAskQuestions,
-    autoAcceptActions: agent.autoAcceptActions,
+    allowedActions: agent.allowedActions,
   };
 }
 

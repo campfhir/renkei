@@ -32,7 +32,6 @@ import {
   type AgentDefinition,
 } from '@renkei/agents';
 import { setOrgSettings } from '@renkei/settings';
-import { setHighRiskPrefs } from '@renkei/user-prefs';
 import { resumeAgentRun } from '@renkei/agents/runs';
 import type { QueueMessageInput, QueueProducer } from '@renkei/queue';
 import { MessageReleased } from '@renkei/worker-loop';
@@ -239,7 +238,7 @@ maybe('agent run engine', () => {
       enabled: true,
       guardrails: null,
       canAskQuestions: options.canAsk === true,
-      autoAcceptActions: options.autoAccept === true,
+      allowedActions: options.autoAccept === true ? definition.tools : [],
     });
     const runId = randomUUID();
     await store.agentRuns.createQueued({
@@ -505,7 +504,7 @@ maybe('agent run engine', () => {
     expect(Number(run.activeMs)).toBeLessThan(activeBefore + 60_000);
   });
 
-  it('auto-accepts where the org allows it, but a high-risk tool still waits for a person', async () => {
+  it('runs a batch of allowed actions where the org allows it; a locked tool or an action not allowed waits', async () => {
     const { runId } = await seedRun({ autoAccept: true });
     const llm = stubLlm((_request, n) =>
       n === 0
@@ -542,18 +541,16 @@ maybe('agent run engine', () => {
       reviewReason: 'high-risk',
     });
 
-    // A tool the owner put on their own agents list waits too, though the org never locked it.
-    await setHighRiskPrefs(subject, 'agents', { marked: ['jira_add_comment'], unmarked: [] });
-    const marked = await seedRun({ autoAccept: true });
-    const markedLlm = stubLlm(() =>
+    // An action left off the agent's allowed list waits for its owner, though nothing locks it.
+    const notAllowed = await seedRun({ autoAccept: false });
+    const notAllowedLlm = stubLlm(() =>
       call('stage_actions', {
         summary: 'Comment',
         actions: [{ tool: 'jira_add_comment', args: {}, reason: 'r' }],
       })
     );
-    await harness(markedLlm).handler({ payload: { runId: marked.runId } });
-    expect((await batchOf(marked.runId)).reviewReason).toBe('high-risk');
-    await setHighRiskPrefs(subject, 'agents', { marked: [], unmarked: [] });
+    await harness(notAllowedLlm).handler({ payload: { runId: notAllowed.runId } });
+    expect((await batchOf(notAllowed.runId)).reviewReason).toBe('owner');
 
     // An event-started run ignores auto-accept under the default policy.
     const external = await seedRun({ autoAccept: true, triggerKind: 'event' });

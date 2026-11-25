@@ -19,7 +19,7 @@ const draft: AgentDraft = {
   llmModelId: null,
   guardrails: '   ',
   canAskQuestions: false,
-  autoAcceptActions: false,
+  allowedActions: [],
 };
 
 const tools = [
@@ -29,6 +29,15 @@ const tools = [
 ];
 
 describe('normalizeAgentDraft', () => {
+  it('keeps only allowed actions the agent has, trimmed, sorted and once each', () => {
+    const normalized = normalizeAgentDraft({
+      ...draft,
+      tools: ['jira_add_comment', 'jira_search'],
+      allowedActions: [' jira_add_comment', 'jira_add_comment', 'outlook_send_mail'],
+    });
+    expect(normalized.allowedActions).toEqual(['jira_add_comment']);
+  });
+
   it('trims, dedupes the tool list and drops blank guardrails', () => {
     const normalized = normalizeAgentDraft(draft);
     expect(normalized.name).toBe('Triage');

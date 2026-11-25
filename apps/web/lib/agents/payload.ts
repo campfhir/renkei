@@ -21,6 +21,8 @@ export function parseAgentPayload(
     llmModelId?: unknown;
     guardrails?: unknown;
     canAskQuestions?: unknown;
+    allowedActions?: unknown;
+    /** Before per-action allowing: true meant every action. Read as all of its tools. */
     autoAcceptActions?: unknown;
     refreshDescription?: unknown;
   } = body;
@@ -73,7 +75,11 @@ export function parseAgentPayload(
   const guardrails =
     typeof payload.guardrails === 'string' && payload.guardrails.trim() ? payload.guardrails : null;
   const canAskQuestions = payload.canAskQuestions === true;
-  const autoAcceptActions = payload.autoAcceptActions === true;
+  const allowedActions = Array.isArray(payload.allowedActions)
+    ? payload.allowedActions.filter((tool): tool is string => typeof tool === 'string')
+    : payload.autoAcceptActions === true
+      ? tools
+      : [];
 
   return {
     input: {
@@ -85,7 +91,7 @@ export function parseAgentPayload(
       llmModelId,
       guardrails,
       canAskQuestions,
-      autoAcceptActions,
+      allowedActions,
     },
     draft: {
       name: payload.name,
@@ -96,7 +102,7 @@ export function parseAgentPayload(
       llmModelId,
       guardrails,
       canAskQuestions,
-      autoAcceptActions,
+      allowedActions,
     },
     // The builder's Save sets this: an explicit save rewrites the summary
     // unconditionally, because the person is about to be shown it for

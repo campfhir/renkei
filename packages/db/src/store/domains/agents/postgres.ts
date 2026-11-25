@@ -1,6 +1,13 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '../../../db.types';
-import { agentFromRow, definitionColumns, escapeLike, isNameTaken, triggerFromRow } from './record';
+import {
+  actionNames,
+  agentFromRow,
+  definitionColumns,
+  escapeLike,
+  isNameTaken,
+  triggerFromRow,
+} from './record';
 import { postgresAgentSweeps } from './sweep-postgres';
 import type { AgentAdminRecord, AgentStore, AgentTriggerRecord } from './types';
 
@@ -540,7 +547,7 @@ export function postgresAgents(db: () => Kysely<DB>): AgentStore {
     async findRunSettings(agentId) {
       const row = await db()
         .selectFrom('agents')
-        .select(['enabled', 'name', 'guardrails', 'can_ask_questions', 'auto_accept_actions'])
+        .select(['enabled', 'name', 'guardrails', 'can_ask_questions', 'allowed_actions'])
         .where('id', '=', agentId)
         .executeTakeFirst();
       return row
@@ -549,7 +556,7 @@ export function postgresAgents(db: () => Kysely<DB>): AgentStore {
             enabled: row.enabled,
             guardrails: row.guardrails,
             canAskQuestions: row.can_ask_questions,
-            autoAcceptActions: row.auto_accept_actions,
+            allowedActions: actionNames(row.allowed_actions),
           }
         : null;
     },

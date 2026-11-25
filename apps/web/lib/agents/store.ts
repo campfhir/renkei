@@ -75,8 +75,11 @@ export interface StoredAgent {
   guardrails: string | null;
   /** Whether a run may pause and ask the owner a question (ask_person). */
   canAskQuestions: boolean;
-  /** Whether staged actions are accepted without a person, where the org allows it. */
-  autoAcceptActions: boolean;
+  /**
+   * The actions it runs without asking its owner, where the org allows it;
+   * anything else it stages waits, as does a tool the organization locks.
+   */
+  allowedActions: string[];
   createdAt: string;
   updatedAt: string;
   triggers: StoredTrigger[];
@@ -190,7 +193,7 @@ function toStored(record: AgentRecord): StoredAgent {
     enabled: record.enabled,
     guardrails: record.guardrails,
     canAskQuestions: record.canAskQuestions,
-    autoAcceptActions: record.autoAcceptActions,
+    allowedActions: record.allowedActions,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
     triggers: storedTriggers(record.triggers),
@@ -431,7 +434,7 @@ export interface SaveAgentInput {
   llmModelId: string | null;
   guardrails: string | null;
   canAskQuestions: boolean;
-  autoAcceptActions: boolean;
+  allowedActions: string[];
 }
 
 export async function createAgent(
@@ -458,7 +461,7 @@ function definitionOf(input: SaveAgentInput) {
     enabled: input.enabled,
     guardrails: input.guardrails,
     canAskQuestions: input.canAskQuestions,
-    autoAcceptActions: input.autoAcceptActions,
+    allowedActions: input.allowedActions,
   };
 }
 

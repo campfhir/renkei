@@ -28,6 +28,7 @@ import { getTurnChannel } from '@/lib/chat/turn-events';
 import { getOrgSettings } from '@renkei/settings';
 import { allowChatToolAlways, blockChatToolAlways } from '@/lib/chat/permission-prefs';
 import { rememberChatToolAnswer } from '@/lib/chat/chat-permissions';
+import { chatSession } from '@/lib/chat/session-kind';
 import { logger } from '@/lib/logger';
 import { who } from '@/lib/log-actor';
 import { markChatToolPermissionRead } from '@/lib/chat/permission-notification';
@@ -77,10 +78,12 @@ export async function POST(
   }
 
   if (decision === 'always' || decision === 'deny-always') {
+    // "Always" is for every chat of this kind: ordinary, chat project, code project.
+    const { kind } = await chatSession(chat);
     const remembered =
       decision === 'always'
-        ? await allowChatToolAlways(session.subject, pending.name)
-        : await blockChatToolAlways(session.subject, pending.name);
+        ? await allowChatToolAlways(session.subject, pending.name, kind)
+        : await blockChatToolAlways(session.subject, pending.name, kind);
     if (!remembered.ok) {
       return jsonError(
         remembered.err.type === 'INVALID_NAME' ? 400 : 500,

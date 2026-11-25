@@ -221,6 +221,8 @@ export const EXPECTED_MIGRATIONS = [
   '195-chat-agents',
   '196-locked-high-risk-tools',
   '197-chat-tool-permissions',
+  '198-chat-project-tool-permissions',
+  '199-agent-allowed-actions',
 ];
 
 export interface MigrationStatus {

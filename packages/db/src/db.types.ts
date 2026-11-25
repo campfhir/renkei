@@ -284,6 +284,7 @@ export interface AgentRunSteps {
 }
 
 export interface Agents {
+  allowed_actions: Generated<Json>;
   auto_accept_actions: Generated<boolean>;
   blocked_tools: Json | null;
   can_ask_questions: Generated<boolean>;
@@ -601,6 +602,7 @@ export interface ChatProjects {
   repo_full_name: string | null;
   repo_provider: string | null;
   tool_config: Json | null;
+  tool_permissions: Json | null;
   updated_at: Generated<Timestamp>;
   workspace_id: string | null;
 }

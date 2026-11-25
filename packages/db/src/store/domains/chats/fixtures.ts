@@ -41,6 +41,7 @@ export function projectRow(
     description: null,
     instructions: null,
     tool_config: null,
+    tool_permissions: null,
     repo_provider: null,
     repo_full_name: null,
     repo_branch: null,

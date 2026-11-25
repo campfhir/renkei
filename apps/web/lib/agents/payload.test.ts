@@ -100,10 +100,27 @@ describe('parseAgentPayload on the definition', () => {
     expect(badTools).toEqual({ error: 'tools must be a list of tool names' });
   });
 
-  it('carries auto-accept and questions through, off unless said', () => {
-    const parsed = parseAgentPayload({ ...body([]), autoAcceptActions: true });
+  it('carries allowed actions and questions through, none unless said', () => {
+    const parsed = parseAgentPayload({
+      ...body([]),
+      tools: ['jira_add_comment'],
+      allowedActions: ['jira_add_comment'],
+    });
     if ('error' in parsed) throw new Error(parsed.error);
-    expect(parsed.draft.autoAcceptActions).toBe(true);
+    expect(parsed.draft.allowedActions).toEqual(['jira_add_comment']);
     expect(parsed.draft.canAskQuestions).toBe(false);
+    const none = parseAgentPayload({ ...body([]), tools: ['jira_add_comment'] });
+    if ('error' in none) throw new Error(none.error);
+    expect(none.draft.allowedActions).toEqual([]);
+  });
+
+  it('reads an older caller’s autoAcceptActions: true as every one of its tools', () => {
+    const parsed = parseAgentPayload({
+      ...body([]),
+      tools: ['jira_add_comment'],
+      autoAcceptActions: true,
+    });
+    if ('error' in parsed) throw new Error(parsed.error);
+    expect(parsed.draft.allowedActions).toEqual(['jira_add_comment']);
   });
 });

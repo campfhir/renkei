@@ -26,6 +26,7 @@ import { NextRequest } from 'next/server';
 import { createMemoryDataStore, getDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { invalidateSettingsCache, setOrgSettings } from '@renkei/settings';
 import { rememberChatToolAnswer } from '@/lib/chat/chat-permissions';
+import { rememberProjectToolRule } from '@/lib/chat/project-permissions';
 import {
   getChatToolPermissionPrefs,
   setChatToolPermissionPrefs,
@@ -70,20 +71,21 @@ const put = (chatId: string, body: unknown) =>
     params(chatId)
   );
 
-describe('the decisions that apply to tools in a chat', () => {
-  it('reads this chat’s own, the person’s always-lists, and which of them the organization locks', async () => {
+describe('the layers that decide tools in a chat', () => {
+  it('reads this chat’s own, the person’s lists for this kind of chat, the locks and the tools', async () => {
     const chatId = await chatOf(me);
     await rememberChatToolAnswer(chatId, 'card_create', 'deny');
     await rememberChatToolAnswer(chatId, 'card_update', 'allow');
+    await rememberChatToolAnswer(chatId, 'chat_memory_list', 'ask');
     await setChatToolPermissionPrefs(me, {
       alwaysAllow: ['outlook_send_mail'],
       alwaysDeny: ['jira_delete_issue'],
     });
-    await setOrgSettings({
-      lockedHighRiskTools: ['outlook_send_mail', 'github_merge_pull_request'],
-    });
+    await setOrgSettings({ lockedHighRiskTools: ['outlook_send_mail'] });
     expect(await get(chatId)).toEqual({
-      chat: { allow: ['card_update'], deny: ['card_create'] },
+      kind: 'chat',
+      chat: { allow: ['card_update'], deny: ['card_create'], ask: ['chat_memory_list'] },
+      project: null,
       always: { allow: ['outlook_send_mail'], deny: ['jira_delete_issue'] },
       locked: ['outlook_send_mail'],
       tools: [
@@ -99,45 +101,82 @@ describe('the decisions that apply to tools in a chat', () => {
     });
   });
 
-  it('blocks a tool here or always, a reading one included (no card would ever offer it)', async () => {
+  it('a chat in a project reads that project’s settings, and the person’s project-chat lists', async () => {
+    const projectId = await getDataStore().chatProjects.create({
+      ownerSubject: me,
+      name: 'Sprint',
+      description: null,
+      toolConfig: null,
+    });
+    await rememberProjectToolRule(projectId, 'card_create', 'allow');
+    await setChatToolPermissionPrefs(
+      me,
+      { alwaysAllow: ['card_update'], alwaysDeny: [] },
+      'project'
+    );
+    const chatId = await getDataStore().chats.create({
+      ownerSubject: me,
+      projectId,
+      llmModelId: null,
+      toolConfig: null,
+      thinkingEnabled: false,
+      autoMode: false,
+    });
+    const answer = await get(chatId);
+    expect(answer.kind).toBe('project');
+    expect(answer.project).toEqual({ name: 'Sprint', allow: ['card_create'], ask: [] });
+    expect(answer.always).toEqual({ allow: ['card_update'], deny: [] });
+  });
+
+  it('this chat: allow, ask, block and clear one tool', async () => {
     const chatId = await chatOf(me);
-    const here = await put(chatId, { tool: 'chat_memory_list', rule: 'deny', scope: 'chat' });
-    expect((await here.json()).chat).toEqual({ allow: [], deny: ['chat_memory_list'] });
-    const always = await put(chatId, { tool: 'chat_memory_list', rule: 'deny', scope: 'always' });
-    expect((await always.json()).always).toEqual({ allow: [], deny: ['chat_memory_list'] });
+    const steps: [string, Record<string, string[]>][] = [
+      ['allow', { allow: ['card_update'], deny: [], ask: [] }],
+      ['ask', { allow: [], deny: [], ask: ['card_update'] }],
+      ['deny', { allow: [], deny: ['card_update'], ask: [] }],
+      ['clear', { allow: [], deny: [], ask: [] }],
+    ];
+    for (const [rule, chat] of steps) {
+      const response = await put(chatId, { tool: 'card_update', rule, scope: 'chat' });
+      expect(response.status).toBe(200);
+      expect((await response.json()).chat).toEqual(chat);
+    }
+  });
+
+  it('always: allow, block and clear on the person’s list for this kind of chat', async () => {
+    const chatId = await chatOf(me);
+    await put(chatId, { tool: 'chat_memory_list', rule: 'deny', scope: 'always' });
     expect(await getChatToolPermissionPrefs(me, { fresh: true })).toEqual({
       alwaysAllow: [],
       alwaysDeny: ['chat_memory_list'],
     });
-  });
-
-  it('a reset takes one decision back off the list it names: this chat’s, or the person’s own', async () => {
-    const chatId = await chatOf(me);
-    await rememberChatToolAnswer(chatId, 'card_create', 'deny');
-    await setChatToolPermissionPrefs(me, { alwaysAllow: [], alwaysDeny: ['jira_delete_issue'] });
-
-    const fromChat = await put(chatId, { tool: 'card_create', rule: 'ask', scope: 'chat' });
-    expect(fromChat.status).toBe(200);
-    expect((await fromChat.json()).chat).toEqual({ allow: [], deny: [] });
-
-    const fromAlways = await put(chatId, {
-      tool: 'jira_delete_issue',
-      rule: 'ask',
-      scope: 'always',
+    // Other kinds of chat keep their own lists.
+    expect(await getChatToolPermissionPrefs(me, { fresh: true, kind: 'code' })).toEqual({
+      alwaysAllow: [],
+      alwaysDeny: [],
     });
-    expect((await fromAlways.json()).always).toEqual({ allow: [], deny: [] });
+    await put(chatId, { tool: 'chat_memory_list', rule: 'clear', scope: 'always' });
     expect(await getChatToolPermissionPrefs(me, { fresh: true })).toEqual({
       alwaysAllow: [],
       alwaysDeny: [],
     });
   });
 
-  it('never allows (that is the card’s, which knows the locks), and needs to know which list', async () => {
+  it('allowing a tool the organization locks is refused, here or always', async () => {
+    const chatId = await chatOf(me);
+    await setOrgSettings({ lockedHighRiskTools: ['outlook_send_mail'] });
+    for (const scope of ['chat', 'always']) {
+      const refused = await put(chatId, { tool: 'outlook_send_mail', rule: 'allow', scope });
+      expect(refused.status).toBe(409);
+    }
+  });
+
+  it('refuses what it does not know: "ask" always (that is the project’s or the chat’s), a bad name, no scope', async () => {
     const chatId = await chatOf(me);
     for (const body of [
-      { tool: 'card_create', rule: 'allow', scope: 'chat' },
-      { tool: 'card_create', rule: 'ask' },
-      { tool: 'not a tool', rule: 'ask', scope: 'chat' },
+      { tool: 'card_create', rule: 'ask', scope: 'always' },
+      { tool: 'card_create', rule: 'clear' },
+      { tool: 'not a tool', rule: 'clear', scope: 'chat' },
     ]) {
       expect((await put(chatId, body)).status).toBe(400);
     }
@@ -146,7 +185,7 @@ describe('the decisions that apply to tools in a chat', () => {
   it('nobody but the owner finds the chat', async () => {
     const chatId = await chatOf(`bob-${randomUUID()}`);
     expect((await GET(new NextRequest('http://test.local/x'), params(chatId))).status).toBe(404);
-    expect((await put(chatId, { tool: 'card_create', rule: 'ask', scope: 'chat' })).status).toBe(
+    expect((await put(chatId, { tool: 'card_create', rule: 'clear', scope: 'chat' })).status).toBe(
       404
     );
   });

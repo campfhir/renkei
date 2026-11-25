@@ -57,7 +57,8 @@ export interface BuilderState {
   llmModelId: string | null;
   guardrails: string;
   canAskQuestions: boolean;
-  autoAcceptActions: boolean;
+  /** Of its act tools, the ones it runs without asking its owner. */
+  allowedActions: string[];
   selection: Selection | null;
   saving: boolean;
   /** What the server refused the last save with; shown instead of the local check. */
@@ -82,7 +83,7 @@ export interface BuilderState {
   draftNotes: string[];
 }
 
-type Flag = 'canAskQuestions' | 'autoAcceptActions';
+type Flag = 'canAskQuestions';
 
 export type BuilderAction =
   | { type: 'nameChanged'; value: string }
@@ -90,6 +91,8 @@ export type BuilderAction =
   | { type: 'guardrailsChanged'; value: string }
   | { type: 'toolsChanged'; tools: string[] }
   | { type: 'flagChanged'; flag: Flag; value: boolean }
+  /** "Runs without asking" switched for one of its act tools. */
+  | { type: 'actionAllowed'; tool: string; allowed: boolean }
   | { type: 'modelChanged'; llmModelId: string | null }
   | { type: 'sectionAdded'; heading: string }
   | { type: 'triggerAddOpened' }
@@ -149,7 +152,7 @@ export function initBuilder(existing?: StoredAgent): BuilderState {
     llmModelId: existing?.llmModelId ?? null,
     guardrails: existing?.guardrails ?? '',
     canAskQuestions: existing?.canAskQuestions ?? false,
-    autoAcceptActions: existing?.autoAcceptActions ?? false,
+    allowedActions: existing?.allowedActions ?? [],
     selection: null,
     saving: false,
     serverIssues: [],
@@ -238,7 +241,18 @@ export function builderReducer(state: BuilderState, action: BuilderAction): Buil
     case 'guardrailsChanged':
       return { ...state, guardrails: action.value, serverIssues: [] };
     case 'toolsChanged':
-      return { ...state, tools: action.tools, serverIssues: [] };
+      // A tool taken away takes its "runs without asking" with it.
+      return {
+        ...state,
+        tools: action.tools,
+        allowedActions: state.allowedActions.filter((tool) => action.tools.includes(tool)),
+        serverIssues: [],
+      };
+    case 'actionAllowed': {
+      if (!state.tools.includes(action.tool)) return state;
+      const rest = state.allowedActions.filter((tool) => tool !== action.tool);
+      return { ...state, allowedActions: action.allowed ? [...rest, action.tool].sort() : rest };
+    }
     case 'flagChanged':
       return { ...state, [action.flag]: action.value };
     case 'modelChanged':
@@ -395,7 +409,7 @@ export function agentDraftOf(state: BuilderState): AgentDraft {
     llmModelId: state.llmModelId,
     guardrails: state.guardrails.trim() ? state.guardrails : null,
     canAskQuestions: state.canAskQuestions,
-    autoAcceptActions: state.autoAcceptActions,
+    allowedActions: state.allowedActions,
   };
 }
 
@@ -484,7 +498,7 @@ export function saveRequestOf(state: BuilderState): {
       llmModelId: state.llmModelId,
       guardrails: state.guardrails.trim() ? state.guardrails : null,
       canAskQuestions: state.canAskQuestions,
-      autoAcceptActions: state.autoAcceptActions,
+      allowedActions: state.allowedActions,
       // Every save is content the owner may have changed — the summary is
       // rewritten in the background (see the PUT route).
       refreshDescription: true,
@@ -564,16 +578,47 @@ export function defaultModelLabel(models: { label: string; isDefault: boolean }[
   return `Organization default${fallback ? ` (${fallback.label})` : ''}`;
 }
 
-/** The copy beside the auto-accept switch: what it can and cannot skip. */
-export function autoAcceptNote(policy: ActApprovalPolicy): string {
+/** One of the agent's act tools, as "Runs without asking" lists it. */
+export interface AllowedActionRow {
+  name: string;
+  label: string;
+  allowed: boolean;
+  /** The organization locks it as high risk: it always waits, and the switch is off. */
+  locked: boolean;
+}
+
+/**
+ * The agent's act tools, each with whether it runs without asking — only
+ * what it was given (a read tool never waits, so it is not listed), in
+ * the catalog's words. A tool the organization locks shows off and
+ * unswitchable: it always waits.
+ */
+export function allowedActionRows(
+  state: BuilderState,
+  catalog: ToolDescriptor[],
+  locked: readonly string[]
+): AllowedActionRow[] {
+  return state.tools
+    .map((name) => ({ name, entry: catalog.find((tool) => tool.name === name) }))
+    .filter(({ entry }) => entry === undefined || entry.kind !== 'read')
+    .map(({ name, entry }) => ({
+      name,
+      label: entry?.title ?? name,
+      allowed: state.allowedActions.includes(name) && !locked.includes(name),
+      locked: locked.includes(name),
+    }));
+}
+
+/** The line under "Runs without asking": what it can and cannot skip. */
+export function allowedActionsNote(policy: ActApprovalPolicy): string {
   const base =
-    'Changes from high-risk tools always wait for you: the ones your organization locks (such as sending mail, deleting or sharing documents, merging code) and any you add under Preferences › Agents.';
+    'The agent never changes anything itself: it proposes a batch, and a batch made only of the actions switched on here runs without waiting for you. Tools your organization locks always wait.';
   switch (policy) {
     case 'all':
-      return `Your organization requires a person to accept every agent’s changes, so this has no effect right now. ${base}`;
+      return `Your organization requires a person to accept every agent’s changes, so these have no effect right now. ${base}`;
     case 'off':
       return base;
     case 'externally_triggered':
-      return `Runs started by an email, a message or an API call still wait for you — your organization requires it. ${base}`;
+      return `${base} Runs started by an email, a message or an API call still wait for you — your organization requires it.`;
   }
 }

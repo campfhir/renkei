@@ -31,7 +31,12 @@ export interface AgentRecord {
   enabled: boolean;
   guardrails: string | null;
   canAskQuestions: boolean;
-  autoAcceptActions: boolean;
+  /**
+   * The actions (act tool names) this agent's staged batches may carry
+   * without waiting for its owner — the owner's "runs without asking" per
+   * tool. Anything else waits; the organization's locked tools always wait.
+   */
+  allowedActions: string[];
   createdAt: Date;
   updatedAt: Date;
   triggers: AgentTriggerRecord[];
@@ -46,7 +51,8 @@ export interface AgentDefinitionValues {
   enabled: boolean;
   guardrails: string | null;
   canAskQuestions: boolean;
-  autoAcceptActions: boolean;
+  /** See AgentRecord.allowedActions. */
+  allowedActions: string[];
 }
 
 /** What a trigger reconcile does to an agent's rows, decided by the caller. */
@@ -307,7 +313,7 @@ export interface AgentRunSettingsRecord {
   enabled: boolean;
   guardrails: string | null;
   canAskQuestions: boolean;
-  autoAcceptActions: boolean;
+  allowedActions: string[];
 }
 
 /** A chained agent to start after another finishes, with its definition. */

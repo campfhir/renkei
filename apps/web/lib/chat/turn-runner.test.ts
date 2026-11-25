@@ -20,6 +20,7 @@ import {
   toolGroups,
   type TurnInput,
   type TurnOutcome,
+  type TurnPermissions,
   type TurnStore,
 } from './turn-runner';
 import { applyStreamEvent, initialThreadState, type ThreadState } from './stream-events';
@@ -27,6 +28,34 @@ import type { ChatStreamEvent } from './stream-events';
 import type { LocalToolContext } from './local-tools';
 import { resourceCipher } from './content-crypto';
 import type { ToolPermissionDecision } from './views';
+import { decideTool, emptyLayers } from './tool-decision';
+
+/**
+ * A turn's permissions from a sketch of the layers (tool-decision.ts):
+ * the person's always-allowed tools, blocked ones, the organization's
+ * locks, and Auto mode's high-risk tools when it is on.
+ */
+function permit(sketch: {
+  allow?: string[];
+  deny?: string[];
+  locked?: string[];
+  autoHighRisk?: string[];
+  /** This chat's Ask: a read tool made to ask. */
+  ask?: string[];
+}): TurnPermissions {
+  const locked = new Set(sketch.locked ?? []);
+  const base = emptyLayers();
+  const layers = {
+    ...base,
+    session: { ...base.session, ask: new Set(sketch.ask ?? []) },
+    locked,
+    user: { allow: new Set(sketch.allow ?? []), deny: new Set(sketch.deny ?? []) },
+    auto: sketch.autoHighRisk
+      ? { highRisk: (name: string) => (sketch.autoHighRisk ?? []).includes(name) }
+      : null,
+  };
+  return { decide: (name, kind) => decideTool(layers, name, kind), locked };
+}
 
 /** A chat key for the fixtures: the ciphers under test only care that one is there. */
 const testCipher = resourceCipher({
@@ -1121,7 +1150,7 @@ describe('runChatTurn permissions', () => {
     localTools: createLocalToolSet([]),
     localContext,
     readOnlyTools: new Set(['jira_search_issues']),
-    permissions: { alwaysAllowed: new Set() },
+    permissions: permit({}),
     channel,
     store: fake.store,
     limits: { flushMs: 5, permissionPollMs: 10, permissionWaitMs: 5_000 },
@@ -1167,7 +1196,7 @@ describe('runChatTurn permissions', () => {
         channel,
         [act('tu_r', 'jira_search_issues'), act('tu_w', 'webex_send_message'), text('Done')],
         calls,
-        { permissions: { alwaysAllowed: new Set(['webex_send_message']) } }
+        { permissions: permit({ allow: ['webex_send_message'] }) }
       ),
       inputFor('turn-p2')
     );
@@ -1183,7 +1212,7 @@ describe('runChatTurn permissions', () => {
     const calls: string[] = [];
     const outcome = await runChatTurn(
       deps(fake, channel, [act('tu_1', 'jira_delete_issue'), text('Understood')], calls, {
-        permissions: { alwaysAllowed: new Set(), denied: new Set(['jira_delete_issue']) },
+        permissions: permit({ deny: ['jira_delete_issue'] }),
       }),
       inputFor('turn-p2b')
     );
@@ -1208,7 +1237,7 @@ describe('runChatTurn permissions', () => {
     const outcome = await runChatTurn(
       deps(fake, channel, [act('tu_1', 'chat_memory_remember'), text('Understood')], calls, {
         permissions: {
-          alwaysAllowed: new Set(),
+          ...permit({}),
           unavailable: new Map([['chat_memory_remember', 'This is a temporary chat.']]),
         },
       }),
@@ -1236,7 +1265,7 @@ describe('runChatTurn permissions', () => {
       deps(fake, channel, [act('tu_1', 'outlook_send_mail'), text('Understood')], calls, {
         permissions: {
           // Even "always allow" cannot let the plain tool past its card.
-          alwaysAllowed: new Set(['outlook_send_mail']),
+          ...permit({ allow: ['outlook_send_mail'] }),
           previewOnly: new Map([['outlook_send_mail', 'outlook_send_mail_preview']]),
         },
       }),
@@ -1327,10 +1356,7 @@ describe('runChatTurn permissions', () => {
     const calls: string[] = [];
     const run = runChatTurn(
       deps(fake, channel, [act('tu_1'), act('tu_2'), text('Done')], calls, {
-        permissions: {
-          alwaysAllowed: new Set(['jira_create_issue']),
-          locked: new Set(['jira_create_issue']),
-        },
+        permissions: permit({ allow: ['jira_create_issue'], locked: ['jira_create_issue'] }),
       }),
       inputFor('turn-p4e')
     );
@@ -1341,6 +1367,34 @@ describe('runChatTurn permissions', () => {
     channel.resolveToolPermission('tu_2', 'once');
     expect((await run).status).toBe('completed');
     expect(calls).toHaveLength(2);
+  });
+
+  it('a read tool runs unasked, unless the organization locks it or this chat makes it ask', async () => {
+    const read = (id: string): LlmResponse => act(id, 'jira_search_issues');
+    const cases: [Parameters<typeof permit>[0], boolean][] = [
+      [{}, false],
+      [{ locked: ['jira_search_issues'] }, true],
+      [{ ask: ['jira_search_issues'] }, true],
+    ];
+    for (const [sketch, asks] of cases) {
+      const fake = fakeStore();
+      const id = `turn-read-${String(asks)}-${Object.keys(sketch).join('')}`;
+      const channel = openTurnChannel(id);
+      const calls: string[] = [];
+      const run = runChatTurn(
+        deps(fake, channel, [read('tu_1'), text('Found')], calls, {
+          permissions: permit(sketch),
+        }),
+        inputFor(id)
+      );
+      if (asks) {
+        await waitUntil(() => fake.asks.length === 1);
+        channel.resolveToolPermission('tu_1', 'once');
+      }
+      expect((await run).status).toBe('completed');
+      expect(fake.asks).toHaveLength(asks ? 1 : 0);
+      expect(calls).toHaveLength(1);
+    }
   });
 
   it('in Auto mode only a high-risk tool asks; the rest run unasked', async () => {
@@ -1354,10 +1408,7 @@ describe('runChatTurn permissions', () => {
         [act('tu_1', 'code_git_push'), act('tu_2', 'github_merge_pull_request'), text('Done')],
         calls,
         {
-          permissions: {
-            alwaysAllowed: new Set(),
-            autoAsks: (name) => name === 'github_merge_pull_request',
-          },
+          permissions: permit({ autoHighRisk: ['github_merge_pull_request'] }),
         }
       ),
       inputFor('turn-p4f')
@@ -1761,7 +1812,7 @@ describe('runChatTurn logs every tool call attempt', () => {
         localContext,
         // jira_create_issue is not in readOnlyTools, so it needs asking —
         // deny it to exercise the refused path in the same test.
-        permissions: { alwaysAllowed: new Set(), denied: new Set() },
+        permissions: permit({}),
         readOnlyTools: new Set(['local_echo']),
         channel,
         store: fake.store,
@@ -2043,11 +2094,7 @@ describe('runChatTurn in auto mode', () => {
         mcp: fakeMcp(calls),
         localTools: createLocalToolSet([]),
         localContext,
-        permissions: {
-          alwaysAllowed: new Set(),
-          denied: new Set(['outlook_send_mail']),
-          autoAsks: () => false,
-        },
+        permissions: permit({ deny: ['outlook_send_mail'], autoHighRisk: [] }),
         channel,
         store: fake.store,
         limits: { flushMs: 5 },
@@ -2172,7 +2219,7 @@ describe('runChatTurn on shutdown', () => {
         mcp: fakeMcp(calls),
         localTools: createLocalToolSet([]),
         localContext,
-        permissions: { alwaysAllowed: new Set() },
+        permissions: permit({}),
         suspendSignal: suspend.signal,
         channel,
         store: fake.store,

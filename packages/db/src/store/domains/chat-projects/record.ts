@@ -17,6 +17,7 @@ export function projectFromRow(row: Selectable<ChatProjects>): ChatProjectRecord
     description: row.description,
     instructions: row.instructions,
     toolConfig: row.tool_config ?? null,
+    toolPermissions: row.tool_permissions ?? null,
     repoProvider: row.repo_provider,
     repoFullName: row.repo_full_name,
     repoBranch: row.repo_branch,
@@ -63,6 +64,9 @@ export function projectPatchValues(patch: ChatProjectPatch) {
     ...(patch.description !== undefined ? { description: patch.description } : {}),
     ...(patch.instructions !== undefined ? { instructions: patch.instructions } : {}),
     ...(patch.toolConfig !== undefined ? { tool_config: jsonOrNull(patch.toolConfig) } : {}),
+    ...(patch.toolPermissions !== undefined
+      ? { tool_permissions: jsonOrNull(patch.toolPermissions) }
+      : {}),
     ...(patch.repo !== undefined
       ? {
           repo_provider: patch.repo.provider,

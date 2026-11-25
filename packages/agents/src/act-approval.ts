@@ -4,11 +4,12 @@
  * An agent never calls a tool that changes something: it stages the calls
  * (action-batch.ts) and a separate executor runs them once the batch is
  * accepted. Acceptance is a person clicking Accept on the batch's card —
- * or, for an agent whose owner turned on "accept proposed actions
- * automatically", the engine accepting on their behalf. Auto-accept is
- * honored only where the org lets it be (`agentActStepsRequireApproval`,
- * @renkei/settings), because an agent run acts on content it did not
- * write — a mail that arrived, a chat message, an API caller's payload:
+ * or, when every action in the batch is one the owner lets this agent run
+ * without asking (its allowed actions, per tool), the engine accepting on
+ * their behalf. That is honored only where the org lets it be
+ * (`agentActStepsRequireApproval`, @renkei/settings), because an agent
+ * run acts on content it did not write — a mail that arrived, a chat
+ * message, an API caller's payload:
  *
  *   - 'externally_triggered' (default): a run an event or a webhook started
  *     always waits for a person; a run a person started by hand, or a
@@ -16,11 +17,10 @@
  *   - 'all': every batch waits for a person.
  *   - 'off': auto-accept is always honored.
  *
- * Beneath the setting sit the high-risk tools: the organization's locked
- * list (@renkei/settings' lockedHighRiskTools, which operators edit) and
- * the owner's own list (@renkei/user-prefs' high-risk.ts, kind 'agents').
- * A batch holding one waits for a person under every setting. The caller
- * hands that as a test over tool names, read once per batch.
+ * Beneath the setting sit the organization's locked high-risk tools
+ * (@renkei/settings' lockedHighRiskTools, which operators edit): a batch
+ * holding one waits for a person whatever the agent is allowed. The caller
+ * hands both as tests over tool names, read once per batch.
  *
  * Shared between the engine (which decides when a batch is staged) and the
  * web app (which tells owners what auto-accept will and will not cover),
@@ -46,24 +46,24 @@ export function isExternallyTriggered(triggerKind: string): boolean {
 
 export type ToolKindHint = 'read' | 'act' | null;
 
-/** Why a batch waits for a person: the owner reviews, a tool is high risk, or the org's policy applies. */
+/** Why a batch waits for a person: an action the agent is not allowed, a locked tool, or the org's policy. */
 export type ActApprovalReason = 'owner' | 'high-risk' | 'policy';
 
 export interface ActApprovalInput {
   /** Every tool the batch would call. */
   tools: readonly string[];
-  /** Whether a tool is high risk for this agent's owner: locked by the org, or on their list. */
-  isHighRisk: (tool: string) => boolean;
-  /** The agent's own "accept proposed actions automatically". */
-  autoAccept: boolean;
+  /** Locked by the organization as high risk: always waits. */
+  isLocked: (tool: string) => boolean;
+  /** One of the agent's allowed actions: runs without asking. */
+  isAllowed: (tool: string) => boolean;
   policy: ActApprovalPolicy;
   externallyTriggered: boolean;
 }
 
 /** Null when the batch may be accepted without a person; otherwise why it waits. */
 export function actApprovalReason(input: ActApprovalInput): ActApprovalReason | null {
-  if (input.tools.some(input.isHighRisk)) return 'high-risk';
-  if (!input.autoAccept) return 'owner';
+  if (input.tools.some(input.isLocked)) return 'high-risk';
+  if (!input.tools.every(input.isAllowed)) return 'owner';
   if (input.policy === 'all') return 'policy';
   if (input.policy === 'externally_triggered' && input.externallyTriggered) return 'policy';
   return null;

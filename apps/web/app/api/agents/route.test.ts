@@ -55,7 +55,7 @@ function saveBody(overrides: Record<string, unknown> = {}) {
     llmModelId: null,
     guardrails: null,
     canAskQuestions: true,
-    autoAcceptActions: false,
+    allowedActions: [],
     refreshDescription: true,
     ...overrides,
   };
@@ -106,7 +106,7 @@ describe('POST /api/agents (Save on a new agent)', () => {
       tools: ['agent_list', 'agent_get'],
       enabled: false,
       canAskQuestions: true,
-      autoAcceptActions: false,
+      allowedActions: [],
     });
   });
 
@@ -157,7 +157,7 @@ describe('PUT /api/agents/:id (Update on an existing agent)', () => {
   it('saves the edit and answers the agent as stored', async () => {
     const agentId = await create();
     const response = await PUT(
-      request('PUT', saveBody({ name: 'Renamed', autoAcceptActions: true, tools: ['agent_get'] })),
+      request('PUT', saveBody({ name: 'Renamed', allowedActions: ['agent_get'], tools: ['agent_get'] })),
       params(agentId)
     );
     expect(response.status).toBe(200);
@@ -166,7 +166,7 @@ describe('PUT /api/agents/:id (Update on an existing agent)', () => {
       id: agentId,
       name: 'Renamed',
       tools: ['agent_get'],
-      autoAcceptActions: true,
+      allowedActions: ['agent_get'],
     });
   });
 

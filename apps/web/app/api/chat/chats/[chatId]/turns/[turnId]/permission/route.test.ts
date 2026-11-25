@@ -139,7 +139,7 @@ describe('answering a permission ask', () => {
     expect(await prefs()).toEqual({ alwaysAllow: [], alwaysDeny: [] });
     expect(
       parseChatToolAnswers((await getDataStore().chats.get(ask.chatId))?.toolPermissions)
-    ).toEqual({ allow: [TOOL], deny: [] });
+    ).toEqual({ allow: [TOOL], deny: [], ask: [] });
   });
 
   it('Block in this chat puts it on the chat’s blocked list; Block always on the person’s', async () => {
@@ -147,7 +147,7 @@ describe('answering a permission ask', () => {
     expect((await answer(inChat, 'deny-chat')).status).toBe(200);
     expect(
       parseChatToolAnswers((await getDataStore().chats.get(inChat.chatId))?.toolPermissions)
-    ).toEqual({ allow: [], deny: [TOOL] });
+    ).toEqual({ allow: [], deny: [TOOL], ask: [] });
     expect(await prefs()).toEqual({ alwaysAllow: [], alwaysDeny: [] });
 
     const always = await parked(me);

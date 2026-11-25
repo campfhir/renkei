@@ -30,6 +30,7 @@ export default async function NewAgentPage(): Promise<React.ReactNode> {
         models={data.models}
         runLimits={data.runLimits}
         actApprovalPolicy={data.actApprovalPolicy}
+        lockedTools={data.lockedTools}
       />
     </div>
   );

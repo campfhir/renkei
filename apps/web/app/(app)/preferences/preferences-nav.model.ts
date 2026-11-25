@@ -70,7 +70,12 @@ export const PREFERENCES_GROUPS: readonly PreferencesGroup[] = [
         icon: 'shield',
         blurb: 'What a chat may do without asking',
       },
-      { id: 'agents', label: 'Agents', icon: 'agent', blurb: 'What still waits for you' },
+      {
+        id: 'agents',
+        label: 'Agents',
+        icon: 'agent',
+        blurb: 'What each agent runs without asking',
+      },
       {
         id: 'code',
         label: 'Code projects',
@@ -146,8 +151,8 @@ export interface SectionState {
   theme: { mode: 'auto' | 'light' | 'dark'; codeLineNumbers: boolean };
   archiveAfterDays: number | null;
   permissions: { allowed: number; blocked: number };
-  /** High-risk tools for agents: the organization's locked ones and the person's own marks. */
-  agentHighRisk: number;
+  /** How many of the person's agents run some actions without asking. */
+  agentsAllowing: number;
   /** Tools the person moved on or off the code projects' default list. */
   codeChanges: number;
 }
@@ -177,9 +182,9 @@ export function sectionSummaries(state: SectionState): Record<PreferencesSection
             .filter((part) => part !== null)
             .join(', '),
     agents:
-      state.agentHighRisk === 0
-        ? 'Nothing waits when an agent accepts its own actions'
-        : `${plural(state.agentHighRisk, 'high-risk tool')} still ${state.agentHighRisk === 1 ? 'waits' : 'wait'} for you`,
+      state.agentsAllowing === 0
+        ? 'Every agent’s changes wait for you'
+        : `${plural(state.agentsAllowing, 'agent')} ${state.agentsAllowing === 1 ? 'runs' : 'run'} some actions without asking`,
     code:
       state.codeChanges === 0
         ? 'Auto mode asks before anything outside the checkout'

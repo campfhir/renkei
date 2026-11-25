@@ -67,7 +67,7 @@ maybe('agent notifications', () => {
       enabled: true,
       guardrails: null,
       canAskQuestions: false,
-      autoAcceptActions: false,
+      allowedActions: [],
     });
     await store.agentRuns.createQueued({
       id: runId,

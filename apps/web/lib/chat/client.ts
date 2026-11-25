@@ -291,11 +291,14 @@ export const chatClient = {
   toolPermissions: () =>
     getJson<{ alwaysAllow: string[]; alwaysDeny: string[] }>(`${base()}/tool-permissions`),
 
-  setToolPermissions: (prefs: { alwaysAllow: string[]; alwaysDeny: string[] }) =>
+  setToolPermissions: (
+    prefs: { alwaysAllow: string[]; alwaysDeny: string[] },
+    kind: 'chat' | 'project' | 'code' = 'chat'
+  ) =>
     sendJsonFull<{ alwaysAllow: string[]; alwaysDeny: string[] }>(
       `${base()}/tool-permissions`,
       'PUT',
-      prefs
+      { ...prefs, kind }
     ),
 
   /** Force a compaction pass now — /compact, or "compact this chat" picked from the prompt picker. */

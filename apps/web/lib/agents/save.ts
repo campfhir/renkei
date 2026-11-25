@@ -112,7 +112,7 @@ export async function saveAgent(
     tools: normalized.tools,
     guardrails: normalized.guardrails,
     canAskQuestions: normalized.canAskQuestions,
-    autoAcceptActions: normalized.autoAcceptActions,
+    allowedActions: normalized.allowedActions,
   };
   const nameTaken: SaveAgentResult = {
     outcome: 'invalid',
@@ -183,7 +183,7 @@ export async function saveAgent(
     llmModelId: existing.llmModelId,
     guardrails: existing.guardrails,
     canAskQuestions: existing.canAskQuestions,
-    autoAcceptActions: existing.autoAcceptActions,
+    allowedActions: existing.allowedActions,
   });
   const describedChanged =
     existingNormalized.name !== normalized.name ||
@@ -193,7 +193,7 @@ export async function saveAgent(
     // guardrails edit re-describes like an instructions edit does.
     existingNormalized.guardrails !== normalized.guardrails ||
     existingNormalized.canAskQuestions !== normalized.canAskQuestions ||
-    existingNormalized.autoAcceptActions !== normalized.autoAcceptActions ||
+    existingNormalized.allowedActions.join('\n') !== normalized.allowedActions.join('\n') ||
     JSON.stringify(existingNormalized.triggers) !== JSON.stringify(normalized.triggers);
   // An explicit save (refreshDescription — the builder's Save button)
   // rewrites the summary unconditionally: the review panel is about to

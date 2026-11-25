@@ -46,13 +46,13 @@ describe('Preferences’ sections', () => {
       theme: { mode: 'auto', codeLineNumbers: false },
       archiveAfterDays: null,
       permissions: { allowed: 0, blocked: 0 },
-      agentHighRisk: 0,
+      agentsAllowing: 0,
       codeChanges: 0,
     });
     expect(fresh.appearance).toBe('Matches your system');
     expect(fresh.chats).toBe('Never archived automatically');
     expect(fresh.permissions).toBe('Everything that acts asks first');
-    expect(fresh.agents).toBe('Nothing waits when an agent accepts its own actions');
+    expect(fresh.agents).toBe('Every agent’s changes wait for you');
     expect(fresh.code).toBe('Auto mode asks before anything outside the checkout');
     expect(fresh.notifications).toBe('What reaches you, and where');
 
@@ -60,22 +60,22 @@ describe('Preferences’ sections', () => {
       theme: { mode: 'dark', codeLineNumbers: true },
       archiveAfterDays: 1,
       permissions: { allowed: 2, blocked: 1 },
-      agentHighRisk: 49,
+      agentsAllowing: 3,
       codeChanges: 1,
     });
     expect(set.appearance).toBe('Dark · line numbers on');
     expect(set.chats).toBe('Archived after 1 day unused');
     expect(set.permissions).toBe('2 allowed, 1 blocked');
-    expect(set.agents).toBe('49 high-risk tools still wait for you');
+    expect(set.agents).toBe('3 agents run some actions without asking');
     expect(
       sectionSummaries({
         theme: { mode: 'auto', codeLineNumbers: false },
         archiveAfterDays: null,
         permissions: { allowed: 0, blocked: 0 },
-        agentHighRisk: 1,
+        agentsAllowing: 1,
         codeChanges: 0,
       }).agents
-    ).toBe('1 high-risk tool still waits for you');
+    ).toBe('1 agent runs some actions without asking');
     expect(set.code).toBe('Auto mode: 1 tool changed from the default');
   });
 });

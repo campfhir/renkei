@@ -25,7 +25,7 @@ const definition = {
   enabled: true,
   guardrails: null,
   canAskQuestions: false,
-  autoAcceptActions: false,
+  allowedActions: [],
 };
 
 describe('describing people for logs', () => {

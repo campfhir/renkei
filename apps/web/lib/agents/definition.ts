@@ -18,7 +18,7 @@ export interface AgentDefinitionInput {
   triggers: { draft: TriggerDraft; enabled: boolean }[];
   guardrails?: string | null;
   canAskQuestions?: boolean;
-  autoAcceptActions?: boolean;
+  allowedActions?: string[];
   llmModelId?: string | null;
 }
 
@@ -32,7 +32,9 @@ export function agentDefinition(agent: AgentDefinitionInput): Record<string, unk
     triggers: agent.triggers,
     ...(agent.guardrails ? { guardrails: agent.guardrails } : {}),
     ...(agent.canAskQuestions ? { canAskQuestions: true } : {}),
-    ...(agent.autoAcceptActions ? { autoAcceptActions: true } : {}),
+    ...(agent.allowedActions && agent.allowedActions.length > 0
+      ? { allowedActions: agent.allowedActions }
+      : {}),
     ...(agent.llmModelId ? { llmModelId: agent.llmModelId } : {}),
   };
 }

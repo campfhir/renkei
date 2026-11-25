@@ -83,7 +83,7 @@ export const ACCOUNT_TOURS: CoachMarkTour[] = [
         target: 'prefs-high-risk',
         path: '/preferences/agents',
         placement: 'auto',
-        body: 'When an agent accepts its own actions, the tools you mark high risk here still wait for you. Code projects have their own list for Auto mode. Tools your organization locks stay on.',
+        body: 'Each agent lists the actions it runs without asking you; anything else waits. Set them on the agent. Tools your organization locks always wait.',
       },
       {
         id: 'notifications',

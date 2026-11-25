@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getOrgSettings } from '@renkei/settings';
 import { getChatArchivePrefs, getHighRiskPrefs, getThemePrefs } from '@renkei/user-prefs';
+import { listAgents } from '@/lib/agents/store';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { getChatToolPermissionPrefs } from '@/lib/chat/permission-prefs';
@@ -20,15 +21,15 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
   const session = await getSessionFromCookies();
   if (!session) redirect(signInUrl(`/preferences`));
 
-  const [theme, archive, permissions, agentHighRisk, codeHighRisk, org] = await Promise.all([
+  const [theme, archive, permissions, agents, codeHighRisk, org] = await Promise.all([
     getThemePrefs(session.subject, { fresh: true }),
     getChatArchivePrefs(session.subject, { fresh: true }),
     getChatToolPermissionPrefs(session.subject, { fresh: true }),
-    getHighRiskPrefs(session.subject, 'agents', { fresh: true }),
+    listAgents(session.subject).catch(() => []),
     getHighRiskPrefs(session.subject, 'code', { fresh: true }),
     getOrgSettings(),
   ]);
-  const locked = org.ok ? org.val.lockedHighRiskTools : [];
+  const locked = new Set(org.ok ? org.val.lockedHighRiskTools : []);
   const summaries = sectionSummaries({
     theme,
     archiveAfterDays: archive.afterDays,
@@ -36,7 +37,8 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
       allowed: permissions.alwaysAllow.length,
       blocked: permissions.alwaysDeny.length,
     },
-    agentHighRisk: new Set([...locked, ...agentHighRisk.marked]).size,
+    agentsAllowing: agents.filter((agent) => agent.allowedActions.some((tool) => !locked.has(tool)))
+      .length,
     codeChanges: codeHighRisk.marked.length + codeHighRisk.unmarked.length,
   });
 

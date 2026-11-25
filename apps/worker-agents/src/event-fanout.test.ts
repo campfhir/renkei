@@ -57,7 +57,7 @@ maybe('agent event fan-out', () => {
       enabled: options.enabled ?? true,
       guardrails: null,
       canAskQuestions: false,
-      autoAcceptActions: false,
+      allowedActions: [],
     });
     await store.applyTriggerChanges(agentId, {
       update: [],

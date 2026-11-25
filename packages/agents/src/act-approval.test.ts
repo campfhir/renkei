@@ -1,12 +1,13 @@
 /**
- * The org policy and the high-risk tools, as the engine reads them. Which
- * tools are high risk is the caller's (the org's locked list and the
- * owner's own); this pins the decision itself.
+ * When an agent's staged batch waits for its owner: an action it is not
+ * allowed to run without asking, a tool the organization locks, or the
+ * org's policy. Which tools are allowed and locked is the caller's (the
+ * agent's allowed actions, the org setting); this pins the decision.
  */
 
 import { actApprovalReason, isExternallyTriggered } from './act-approval';
 
-const isHighRisk = (tool: string) => tool === 'outlook_send_mail';
+const isLocked = (tool: string) => tool === 'outlook_send_mail';
 
 describe('isExternallyTriggered', () => {
   it('reads an event or API-key start as external, a person or a schedule as not', () => {
@@ -24,17 +25,30 @@ describe('isExternallyTriggered', () => {
 });
 
 describe('actApprovalReason', () => {
-  const base = { tools: ['jira_add_comment'], autoAccept: true, isHighRisk };
+  const allowed =
+    (...tools: string[]) =>
+    (tool: string) =>
+      tools.includes(tool);
+  const base = {
+    tools: ['jira_add_comment'],
+    isLocked,
+    isAllowed: allowed('jira_add_comment'),
+  };
 
-  it('waits for the owner when the agent does not auto-accept, whatever the policy', () => {
+  it('waits for the owner when any action is not one the agent may run without asking', () => {
     for (const policy of ['off', 'all', 'externally_triggered'] as const) {
       expect(
-        actApprovalReason({ ...base, autoAccept: false, policy, externallyTriggered: false })
+        actApprovalReason({
+          ...base,
+          tools: ['jira_add_comment', 'jira_create_issue'],
+          policy,
+          externallyTriggered: false,
+        })
       ).toBe('owner');
     }
   });
 
-  it('honors auto-accept on a manual run under the default, not on an externally triggered one', () => {
+  it('runs a batch of allowed actions on a manual run under the default policy, not on an externally triggered one', () => {
     expect(
       actApprovalReason({ ...base, policy: 'externally_triggered', externallyTriggered: false })
     ).toBeNull();
@@ -43,34 +57,22 @@ describe('actApprovalReason', () => {
     ).toBe('policy');
   });
 
-  it("never honors auto-accept under 'all', always under 'off'", () => {
+  it("never runs one unasked under 'all', always under 'off'", () => {
     expect(actApprovalReason({ ...base, policy: 'all', externallyTriggered: false })).toBe(
       'policy'
     );
     expect(actApprovalReason({ ...base, policy: 'off', externallyTriggered: true })).toBeNull();
   });
 
-  it('holds a batch with any high-risk tool for a person under every setting', () => {
+  it('holds a batch with a tool the organization locks, even one the agent is allowed', () => {
     expect(
       actApprovalReason({
         tools: ['jira_add_comment', 'outlook_send_mail'],
-        isHighRisk,
-        autoAccept: true,
+        isLocked,
+        isAllowed: allowed('jira_add_comment', 'outlook_send_mail'),
         policy: 'off',
         externallyTriggered: false,
       })
     ).toBe('high-risk');
-  });
-
-  it('lets an auto-accepted batch through when nothing in it is high risk for its owner', () => {
-    expect(
-      actApprovalReason({
-        tools: ['outlook_send_mail'],
-        isHighRisk: () => false,
-        autoAccept: true,
-        policy: 'off',
-        externallyTriggered: false,
-      })
-    ).toBeNull();
   });
 });

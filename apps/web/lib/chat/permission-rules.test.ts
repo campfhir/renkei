@@ -1,5 +1,6 @@
 import {
   DEFAULT_CHAT_TOOL_PERMISSION_PREFS,
+  parseChatToolPermissionDoc,
   parseChatToolPermissionPrefs,
   ruleFor,
   withRule,
@@ -71,5 +72,30 @@ describe('ruleFor / withRule', () => {
       alwaysAllow: ['jira_create_issue', 'webex_send_message'],
       alwaysDeny: ['jira_delete_issue'],
     });
+  });
+});
+
+describe('the person’s lists, kept per kind of chat session', () => {
+  it('reads one pair per kind', () => {
+    expect(
+      parseChatToolPermissionDoc({
+        chat: { alwaysAllow: ['a'], alwaysDeny: [] },
+        code: { alwaysAllow: [], alwaysDeny: ['b'] },
+      })
+    ).toEqual({
+      chat: { alwaysAllow: ['a'], alwaysDeny: [] },
+      project: { alwaysAllow: [], alwaysDeny: [] },
+      code: { alwaysAllow: [], alwaysDeny: ['b'] },
+    });
+  });
+
+  it('a document from before the kinds split applies to every kind, so nothing changes', () => {
+    const legacy = { alwaysAllow: ['a'], alwaysDeny: ['b'] };
+    expect(parseChatToolPermissionDoc(legacy)).toEqual({
+      chat: legacy,
+      project: legacy,
+      code: legacy,
+    });
+    expect(parseChatToolPermissionDoc(null).chat).toEqual({ alwaysAllow: [], alwaysDeny: [] });
   });
 });

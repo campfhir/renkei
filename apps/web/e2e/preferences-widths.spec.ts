@@ -131,7 +131,7 @@ for (const size of WIDTHS) {
 
     // The new sections fit too: Agents and Code projects.
     await page.goto(`/preferences/agents`);
-    await expect(main.getByRole('region', { name: 'High-risk actions' })).toBeVisible();
+    await expect(main.getByRole('region', { name: 'Runs without asking' })).toBeVisible();
     expect(await overflows(page)).toBe(false);
     await page.goto(`/preferences/code`);
     await expect(main.getByRole('region', { name: 'High risk in Auto mode' })).toBeVisible();

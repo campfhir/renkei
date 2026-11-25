@@ -116,7 +116,7 @@ export default async function AgentOverviewPage({
           triggers: agent.triggers,
           guardrails: agent.guardrails,
           canAskQuestions: agent.canAskQuestions,
-          autoAcceptActions: agent.autoAcceptActions,
+          allowedActions: agent.allowedActions,
           limits: {
             minutes: settingsResult.ok ? settingsResult.val.agentRunTimeoutMinutes : 30,
             toolCalls: settingsResult.ok ? settingsResult.val.agentRunToolCallBudget : 150,
@@ -290,8 +290,8 @@ export default async function AgentOverviewPage({
           <CollapsibleSection title="How it acts">
             <ul className="space-y-1 text-xs text-gray-600 dark:text-gray-400">
               <li>
-                {agent.autoAcceptActions
-                  ? 'Proposed changes are accepted automatically where your organization allows it; high-risk ones still wait for you.'
+                {agent.allowedActions.length > 0
+                  ? `Runs without asking you: ${agent.allowedActions.join(', ')} (where your organization allows it; tools it locks always wait). Anything else waits for you.`
                   : 'Every change it proposes waits for your go-ahead.'}
               </li>
               <li>
