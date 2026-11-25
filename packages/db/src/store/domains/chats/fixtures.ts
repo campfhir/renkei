@@ -62,6 +62,7 @@ export function chatRow(
     project_id: null,
     llm_model_id: null,
     tool_config: null,
+    tool_permissions: null,
     archived_at: null,
     last_message_at: null,
     auto_title_asked: false,

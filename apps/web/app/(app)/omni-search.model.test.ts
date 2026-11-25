@@ -124,7 +124,7 @@ describe('finding', () => {
   it('finds dark mode under Settings, down to the appearance section', () => {
     const settings = section(search('dark mode'), 'Settings');
     expect(settings.find((r) => /Dark mode and appearance/.test(r.label))?.href).toBe(
-      '/preferences#appearance-heading'
+      '/preferences/appearance'
     );
   });
 
@@ -388,9 +388,7 @@ describe('picking with the keyboard', () => {
   it('Enter on a setting opens its page at the element that holds it', () => {
     const settings = flat(search('dark mode'));
     const index = settings.findIndex((r) => /Dark mode and appearance/.test(r.label));
-    expect(enterTarget(fold([{ type: 'hover', index }]), settings)).toBe(
-      '/preferences#appearance-heading'
-    );
+    expect(enterTarget(fold([{ type: 'hover', index }]), settings)).toBe('/preferences/appearance');
   });
 });
 

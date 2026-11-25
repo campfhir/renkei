@@ -10,6 +10,7 @@ export function chatFromRow(row: Selectable<Chats>): ChatRecord {
     title: row.title,
     llmModelId: row.llm_model_id,
     toolConfig: row.tool_config ?? null,
+    toolPermissions: row.tool_permissions ?? null,
     thinkingEnabled: row.thinking_enabled,
     autoMode: row.auto_mode,
     autoTitleAsked: row.auto_title_asked,

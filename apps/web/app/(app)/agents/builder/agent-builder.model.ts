@@ -567,7 +567,7 @@ export function defaultModelLabel(models: { label: string; isDefault: boolean }[
 /** The copy beside the auto-accept switch: what it can and cannot skip. */
 export function autoAcceptNote(policy: ActApprovalPolicy): string {
   const base =
-    'Changes from high-risk tools (sending mail, deleting or sharing documents, merging code) always wait for you.';
+    'Changes from high-risk tools always wait for you: the ones your organization locks (such as sending mail, deleting or sharing documents, merging code) and any you add under Preferences › Agents.';
   switch (policy) {
     case 'all':
       return `Your organization requires a person to accept every agent’s changes, so this has no effect right now. ${base}`;

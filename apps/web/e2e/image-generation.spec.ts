@@ -495,7 +495,7 @@ test('Preferences offers the org’s image models, saves the person’s pick, an
 }, testInfo) => {
   // No image model in the org: the section is not there.
   await model(page.request, { label: `Chatty ${tag}` });
-  await page.goto(`/preferences`);
+  await page.goto(`/preferences/models`);
   await expect(page.getByRole('heading', { name: 'Preferences', level: 1 })).toBeVisible(COLD);
   await expect(page.getByRole('heading', { name: 'Image generation' })).toHaveCount(0);
 

@@ -177,7 +177,7 @@ describe('renkei_link', () => {
 
   it('reaches a setting down to the element that holds it', async () => {
     const { text } = await call('renkei_link', { to: 'dark mode' });
-    expect(text).toContain(`${ORIGIN}/preferences#appearance-heading`);
+    expect(text).toContain(`${ORIGIN}/preferences/appearance`);
   });
 
   it('keeps the organization’s pages for operators', async () => {

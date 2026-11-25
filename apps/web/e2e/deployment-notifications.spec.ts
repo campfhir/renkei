@@ -66,7 +66,7 @@ test('deployment notifications: the settings, a failing application in the feed,
   const otherContext = await browser.newContext({ reducedMotion: 'reduce' });
   await signIn(otherContext, other);
   const otherPage = await otherContext.newPage();
-  await otherPage.goto('/preferences');
+  await otherPage.goto('/preferences/notifications');
   await expect(
     otherPage.getByRole('main').getByRole('heading', { name: 'Batch jobs' })
   ).toBeVisible({ timeout: 30_000 });
@@ -135,7 +135,7 @@ test('deployment notifications: the settings, a failing application in the feed,
     await expect(page).toHaveURL(new RegExp(`/agents/${agentId}(\\?.*)?$`), { timeout: 60_000 });
 
     // Connected: the card is there, failures on, the quiet ones off.
-    await page.goto('/preferences');
+    await page.goto('/preferences/notifications');
     const card = main.getByRole('region', { name: 'Deployments' });
     await expect(card).toBeVisible({ timeout: 30_000 });
     await expect(card.getByLabel('A deployment fails — App')).toBeChecked();

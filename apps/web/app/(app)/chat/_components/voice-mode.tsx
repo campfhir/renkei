@@ -619,14 +619,17 @@ export default function VoiceMode({
                 >
                   {deciding === 'once' ? 'Allowing…' : 'Allow once'}
                 </button>
-                <button
-                  type="button"
-                  disabled={deciding !== null}
-                  onClick={() => void decide('always')}
-                  className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-800 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
-                >
-                  {deciding === 'always' ? 'Allowing…' : 'Always allow'}
-                </button>
+                {/* A tool the organization locks can only be allowed once. */}
+                {permission.pending.locked ? null : (
+                  <button
+                    type="button"
+                    disabled={deciding !== null}
+                    onClick={() => void decide('always')}
+                    className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-800 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+                  >
+                    {deciding === 'always' ? 'Allowing…' : 'Always allow'}
+                  </button>
+                )}
                 <button
                   type="button"
                   disabled={deciding !== null}

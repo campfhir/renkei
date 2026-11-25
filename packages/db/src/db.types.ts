@@ -620,6 +620,7 @@ export interface Chats {
   thinking_enabled: Generated<boolean>;
   title: string | null;
   tool_config: Json | null;
+  tool_permissions: Json | null;
   updated_at: Generated<Timestamp>;
   workspace_id: string | null;
 }

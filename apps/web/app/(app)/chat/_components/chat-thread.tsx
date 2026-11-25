@@ -894,7 +894,9 @@ export default function ChatThread({
       if (result.error) {
         // Answered elsewhere already (another tab, a timeout): the next
         // stream event or snapshot removes the card on its own.
-        if (result.status === 409) {
+        // A lasting allow for a tool the organization locks is refused
+        // with its own code: the ask still stands, so say why and keep it.
+        if (result.status === 409 && result.data?.code !== 'locked') {
           dispatch({ type: 'tool_permission_decided', turnId: activeTurnId, toolUseId, decision });
           return null;
         }
@@ -1455,7 +1457,9 @@ export default function ChatThread({
                   <EmptyState
                     hasModel={currentModel !== null}
                     temporary={chat.temporary}
-                    agents={agentsOffered ? { projectId: chat.projectId, onAsk: addressAgent } : null}
+                    agents={
+                      agentsOffered ? { projectId: chat.projectId, onAsk: addressAgent } : null
+                    }
                   />
                 ) : null
               }
@@ -1498,7 +1502,7 @@ export default function ChatThread({
                 </p>
                 <div className="mt-2">
                   <Link
-                    href={`/preferences`}
+                    href={`/preferences/security`}
                     className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
                   >
                     Encryption key in Preferences

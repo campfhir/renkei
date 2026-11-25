@@ -84,7 +84,6 @@ import {
   agentDefinitionOf,
   flattenFormFields,
   friendlyToolName,
-  isAlwaysApprovalTool,
   triggerVariableDescriptors,
   type ApiTriggerInput,
   type QuestionField,
@@ -149,6 +148,7 @@ import { DEFAULT_ORG_SETTINGS, getOrgSettings, type ActApprovalPolicy } from '@r
 import { agentJobsQueue } from '@renkei/queue';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
+import { getHighRiskPrefs, highRiskTest } from '@renkei/user-prefs';
 import { whichAgentOf } from '@/lib/log-actor';
 
 /** The connector key the agents capabilities register under. */
@@ -359,8 +359,9 @@ function nativeCapabilities(limits: { minutes: number; toolCalls: number }): str
       '{tool, args, reason}), and the run pauses. The owner accepts or declines the WHOLE ' +
       'batch on one card — or, when the agent has `autoAcceptActions: true`, it is accepted ' +
       "automatically wherever the org's policy allows (by default not on runs an event or " +
-      'webhook started) and never for the fixed high-risk tools (sending mail, merging a pull ' +
-      'request, deleting or sharing a document, directory writes). A separate process then ' +
+      "webhook started) and never for a high-risk tool (the org's locked list — by default " +
+      'sending mail, merging a pull request, deleting or sharing a document, directory writes — ' +
+      "plus the owner's own list under Preferences › Agents). A separate process then " +
       'carries the batch out in order, stops at the first failure, and reports each outcome ' +
       'back to the agent, which carries on. So give an agent the [act] tools its changes need, ' +
       'and say in its instructions exactly what each change must contain. ' +
@@ -2244,8 +2245,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       .describe(
         "Default false. When true, the agent's staged changes are accepted without a person " +
           "wherever the org's policy allows (by default not on runs an event or webhook " +
-          'started) — never for the fixed high-risk tools (sending mail, merging, deleting or ' +
-          'sharing documents, directory writes).'
+          "started) — never for a high-risk tool (the org's locked list, plus the owner's own " +
+          'under Preferences › Agents).'
       ),
     confirm: z
       .boolean()
@@ -2327,13 +2328,20 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     if (!context.subject) return [];
     let policy: ActApprovalPolicy = DEFAULT_ORG_SETTINGS.agentActStepsRequireApproval;
     let kinds: Map<string, 'read' | 'act'>;
+    let isHighRisk: (tool: string) => boolean;
     try {
-      const [settings, catalog] = await Promise.all([
+      const [settings, catalog, highRisk] = await Promise.all([
         getOrgSettings(),
         listAvailableTools(context.subject, { roles: context.roles }),
+        getHighRiskPrefs(context.subject, 'agents'),
       ]);
       if (settings.ok) policy = settings.val.agentActStepsRequireApproval;
       kinds = new Map(catalog.map((tool) => [tool.name, tool.kind]));
+      isHighRisk = highRiskTest(
+        highRisk,
+        'agents',
+        settings.ok ? settings.val.lockedHighRiskTools : []
+      );
     } catch (error) {
       logger.warn(
         "the approval hints for {caller}'s agent save could not be read (org settings or the tool catalog); the reply omits them: {error}",
@@ -2349,7 +2357,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     if (acts.length === 0) {
       return ['', 'This agent has no act tools: it can read and report, but stage no changes.'];
     }
-    const highRisk = acts.filter(isAlwaysApprovalTool);
+    const highRisk = acts.filter(isHighRisk);
     const lines = [
       '',
       `Changes it can stage (accepted before anything happens): ${acts.join(', ')}.`,
@@ -2535,7 +2543,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           .optional()
           .describe(
             "Whether its staged changes are accepted without a person where the org's policy " +
-              'allows (never for the fixed high-risk tools)'
+              'allows (never for a high-risk tool)'
           ),
         keepEnabled: z
           .boolean()

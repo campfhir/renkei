@@ -217,7 +217,20 @@ export function askNarration(toolName: string): string {
 
 /** Said back once the ask is answered, so the person knows it was heard. */
 export function decisionNarration(decision: ToolPermissionDecision): string {
-  return decision === 'deny' ? 'Denied.' : decision === 'always' ? 'Always allowed.' : 'Allowed.';
+  switch (decision) {
+    case 'deny':
+      return 'Denied.';
+    case 'deny-chat':
+      return 'Blocked in this chat.';
+    case 'deny-always':
+      return 'Blocked.';
+    case 'always':
+      return 'Always allowed.';
+    case 'chat':
+      return 'Allowed in this chat.';
+    case 'once':
+      return 'Allowed.';
+  }
 }
 
 export const ASK_AGAIN = 'Say allow, always allow, or deny.';

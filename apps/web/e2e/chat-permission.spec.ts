@@ -1,7 +1,9 @@
 /**
  * A chat parked behind a tool call, on the real server: the thread draws
- * the ask inline, Always allow lets the runner carry on, and the
- * Preferences page then shows the tool allowed and saves a change. The
+ * the ask inline, Always allow (behind the Allow button's arrow) lets the
+ * runner carry on, and Preferences › Tool permissions then shows the tool
+ * allowed and saves a change; Block in this chat (behind Deny's arrow)
+ * sends its answer and leaves the person's own lists alone. The
  * notification the ask raised opens the chat in the same tab.
  *
  * The turn really runs: the scripted stand-in model (e2e/support/stub-model.ts)
@@ -126,19 +128,18 @@ test('a parked turn shows the ask inline, and Always allow lands on the Preferen
     await expect(page.getByRole('button', { name: /stop/i })).toBeVisible();
     await shot(page, testInfo, 'chat-permission-ask.png');
 
-    // Always allow: the answer reaches the turn, the runner carries on, the card goes.
-    await card.getByRole('button', { name: 'Always allow' }).click();
+    // Always allow, from the Allow button's arrow: the answer reaches the
+    // turn, the runner carries on, the card goes.
+    await card.getByRole('button', { name: 'More ways to allow' }).click();
+    await shot(page, testInfo, 'chat-permission-allow-menu.png');
+    await card.getByRole('menuitem', { name: /^Always allow/ }).click();
     await expect(page.getByText('Noted for next time.')).toBeVisible({ timeout: 15_000 });
     await expect(card).toBeHidden();
 
-    // Preferences shows the decision in the chat's own fold, and the
-    // system-notification click preference sits with the other switches.
-    await page.goto(`/preferences`);
+    // Preferences › Tool permissions shows the decision in the chat's own fold.
+    await page.goto(`/preferences/permissions`);
     const section = page.getByRole('region', { name: 'What a chat may do' });
     await expect(section).toBeVisible();
-    await expect(
-      page.getByRole('checkbox', { name: /Open the notification.s own application/ })
-    ).toBeChecked();
     const own = section.locator('details', { hasText: 'The chat itself' }).first();
     await expect(own.locator('summary')).toContainText('1 allowed');
     await own.locator('summary').click();
@@ -153,7 +154,41 @@ test('a parked turn shows the ask inline, and Always allow lands on the Preferen
     await expect
       .poll(() => toolPermissions(page.request))
       .toEqual({ alwaysAllow: [TOOL], alwaysDeny: ['chat_memory_forget'] });
+
+    // The system-notification click preference sits with the other switches.
+    await page.goto(`/preferences/notifications`);
+    await expect(
+      page.getByRole('checkbox', { name: /Open the notification.s own application/ })
+    ).toBeChecked();
   } finally {
+    await removeModel(page.request, parked.modelId);
+  }
+});
+
+test('Block in this chat, from the Deny button’s arrow, refuses the call and keeps it out of the chat', async ({
+  page,
+  person: _person,
+}, testInfo) => {
+  const parked = await parkedChat(page.request, testInfo);
+  try {
+    await page.goto(`/chat/${parked.chatId}`);
+    const card = page.getByRole('group', { name: 'Permission needed' });
+    await expect(card.getByText('Allow this?')).toBeVisible();
+
+    await card.getByRole('button', { name: 'More ways to deny' }).click();
+    const menu = card.getByRole('menu', { name: 'Deny' });
+    await expect(menu.getByRole('menuitem')).toHaveText([/^Block in this chat/, /^Block always/]);
+    const answered = page.waitForRequest(
+      (request) => request.method() === 'POST' && request.url().endsWith('/permission')
+    );
+    await menu.getByRole('menuitem', { name: /^Block in this chat/ }).click();
+    expect((await answered).postDataJSON()).toMatchObject({ decision: 'deny-chat' });
+    await expect(card).toBeHidden({ timeout: 15_000 });
+
+    // Kept on this chat alone: the person's own lists are untouched.
+    expect(await toolPermissions(page.request)).toEqual({ alwaysAllow: [], alwaysDeny: [] });
+  } finally {
+    await page.request.post(`/api/chat/chats/${parked.chatId}/turns/${parked.turnId}/cancel`);
     await removeModel(page.request, parked.modelId);
   }
 });

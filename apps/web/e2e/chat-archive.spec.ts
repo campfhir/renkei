@@ -31,7 +31,7 @@ test('preferences: archive old chats after a chosen number of days', async ({
   page,
   person: _person,
 }, testInfo) => {
-  await page.goto(`/preferences`);
+  await page.goto(`/preferences/chats`);
   const section = page.getByRole('region', { name: 'Archive old chats' });
   await expect(section).toBeVisible();
   const days = section.getByLabel('Archive chats after (days)');

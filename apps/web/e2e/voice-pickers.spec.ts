@@ -42,7 +42,7 @@ test.afterEach(async ({ page }) => {
 
 test('preferences: the language and voice pickers', async ({ page }, testInfo) => {
   await mockVendor(page);
-  await page.goto(`/preferences`);
+  await page.goto(`/preferences/voice`);
   const section = page.getByRole('region', { name: 'Voice' });
   await expect(section.getByRole('combobox', { name: 'Voice' })).toContainText('Sonia');
   await section.scrollIntoViewIfNeeded();

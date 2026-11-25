@@ -12,7 +12,7 @@ test('a card saves its own change, and only its card offers Save', async ({
   page,
   person: _person,
 }) => {
-  await page.goto('/preferences');
+  await page.goto('/preferences/notifications');
   const card = (name: string) =>
     page
       .getByRole('region', { name: 'Notifications' })

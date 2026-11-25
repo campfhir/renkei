@@ -265,9 +265,21 @@ export interface OrgSettings {
    * Which agent runs need a person to accept a staged action batch even
    * when the agent auto-accepts — see ActApprovalPolicy. Read live by the
    * engine when a batch is staged, so a change bites in-flight agents; a
-   * fixed high-risk tool set waits for a person whatever this says.
+   * high-risk tool (lockedHighRiskTools, or the owner's own list) waits for
+   * a person whatever this says.
    */
   agentActStepsRequireApproval: ActApprovalPolicy;
+  /**
+   * Tools the organization holds as high risk for everyone, whatever a
+   * person's own lists say: an agent batch holding one always waits for a
+   * person, a code project's Auto mode still asks before one, and a chat
+   * cannot be told to "always allow" one or allow it for the whole chat.
+   * Seeded by migration 196 with the tools whose effect is hard to take
+   * back or reaches other people (sending mail, merging, deleting or
+   * sharing documents, directory writes); operators change it on Settings.
+   * Names are tool names as the model calls them. Unset reads as none.
+   */
+  lockedHighRiskTools: string[];
   /**
    * How stale watched content (Jira projects, Confluence spaces, document
    * libraries) may get before the worker polls it again. Atlassian offers
@@ -480,6 +492,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   agentMaxRunsPerDay: 200,
   agentApprovalMaxWaitDays: 14,
   agentActStepsRequireApproval: 'externally_triggered',
+  lockedHighRiskTools: [],
   contentPollMinutes: 15,
   // Above the worker's 15-minute sweep floor: the previous fixed 15-minute
   // cadence was tripping WebEx's rate limit on orgs with many opted-in
@@ -666,6 +679,10 @@ export async function getOrgSettings(): Promise<Result<OrgSettings, 'DB_ERROR'>>
       stored.get('agent_act_steps_require_approval'),
       d.agentActStepsRequireApproval
     ),
+    lockedHighRiskTools: coerceStringList(
+      stored.get('locked_high_risk_tools'),
+      d.lockedHighRiskTools
+    ),
     contentPollMinutes: Number(coerce(stored.get('content_poll_minutes'), d.contentPollMinutes)),
     webexWebhookHealthMinutes: Number(
       coerce(stored.get('webex_webhook_health_minutes'), d.webexWebhookHealthMinutes)
@@ -800,6 +817,7 @@ export async function setOrgSettings(
     ['agent_max_runs_per_day', updates.agentMaxRunsPerDay],
     ['agent_approval_max_wait_days', updates.agentApprovalMaxWaitDays],
     ['agent_act_steps_require_approval', updates.agentActStepsRequireApproval],
+    ['locked_high_risk_tools', updates.lockedHighRiskTools],
     ['content_poll_minutes', updates.contentPollMinutes],
     ['webex_webhook_health_minutes', updates.webexWebhookHealthMinutes],
     ['log_retention_days', updates.logRetentionDays],

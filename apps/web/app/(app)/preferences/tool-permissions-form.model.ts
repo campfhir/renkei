@@ -21,6 +21,11 @@ import {
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'failed';
 
 export interface ToolPermissionsState {
+  /**
+   * The organization's locked high-risk tools: they always ask, so Allow
+   * is not an answer the person can give them here (Block still is).
+   */
+  locked: string[];
   /** The lists as the person has them on screen. */
   prefs: ChatToolPermissionPrefs;
   /** The lists as last stored. */
@@ -36,8 +41,16 @@ export type ToolPermissionsAction =
   | { type: 'save-succeeded'; stored: unknown }
   | { type: 'save-failed' };
 
-export function initToolPermissions(initial: ChatToolPermissionPrefs): ToolPermissionsState {
-  return { prefs: initial, saved: initial, status: 'idle' };
+export function initToolPermissions(input: {
+  prefs: ChatToolPermissionPrefs;
+  locked?: string[];
+}): ToolPermissionsState {
+  return { locked: input.locked ?? [], prefs: input.prefs, saved: input.prefs, status: 'idle' };
+}
+
+/** Whether Allow is closed to this tool: the organization locks it. */
+export function allowLocked(state: ToolPermissionsState, name: string): boolean {
+  return state.locked.includes(name);
 }
 
 function edited(state: ToolPermissionsState, prefs: ChatToolPermissionPrefs): ToolPermissionsState {
@@ -50,17 +63,21 @@ export function toolPermissionsReducer(
 ): ToolPermissionsState {
   switch (action.type) {
     case 'set-rule':
+      if (action.rule === 'allow' && allowLocked(state, action.name)) return state;
       return edited(state, withRule(state.prefs, action.name, action.rule));
     case 'set-all': {
       let next = state.prefs;
-      for (const tool of action.group.tools) next = withRule(next, tool.name, action.rule);
+      for (const tool of action.group.tools) {
+        if (action.rule === 'allow' && allowLocked(state, tool.name)) continue;
+        next = withRule(next, tool.name, action.rule);
+      }
       return edited(state, next);
     }
     case 'save-started':
       return { ...state, status: 'saving' };
     case 'save-succeeded': {
       const stored = parseChatToolPermissionPrefs(action.stored);
-      return { prefs: stored, saved: stored, status: 'saved' };
+      return { ...state, prefs: stored, saved: stored, status: 'saved' };
     }
     case 'save-failed':
       return { ...state, status: 'failed' };

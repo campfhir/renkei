@@ -114,7 +114,7 @@ test('setup: the Voice connector in the admin catalog and its form', async ({ pa
 
 test('setup: the Voice section under Preferences', async ({ page }, testInfo) => {
   await mockVendor(page);
-  await page.goto(`/preferences`);
+  await page.goto(`/preferences/voice`);
   const section = page.getByRole('region', { name: 'Voice' });
   await expect(section).toBeVisible();
   await expect(section.getByRole('combobox', { name: 'Voice' })).toContainText('Sonia');

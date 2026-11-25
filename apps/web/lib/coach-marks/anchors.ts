@@ -136,6 +136,8 @@ export const COACH_ANCHORS = [
   'notifications-preferences-link',
   /** Mark all as read (only while something is unread). */
   'notifications-mark-all',
+  /** Preferences' sections: the sidebar on a wide screen, the section list on a phone. */
+  'prefs-sections',
   /** The Appearance card on Preferences. */
   'prefs-appearance',
   /** The Voice card (only when the org has a voice service). */
@@ -144,6 +146,8 @@ export const COACH_ANCHORS = [
   'prefs-default-tools',
   /** The "What a chat may do" card. */
   'prefs-permissions',
+  /** The agents' high-risk list (Preferences › Agents). */
+  'prefs-high-risk',
   /** The notifications grid. */
   'prefs-notifications',
   /** New batch job. */

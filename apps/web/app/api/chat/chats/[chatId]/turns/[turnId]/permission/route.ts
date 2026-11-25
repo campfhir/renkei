@@ -1,11 +1,18 @@
 /**
- * Allow once, always allow, or deny the tool call a turn is parked behind.
- * Owner only — the one person who can send the chat a message is the one
- * person who can let it act.
+ * Answer the tool call a turn is parked behind: allow it once, in this
+ * chat, or always; deny it once, block it in this chat, or block it
+ * always. Owner only — the one person who can send the chat a message is
+ * the one person who can let it act.
  *
- * Three writes, in the order that keeps each safe on its own: "always"
- * goes to the person's preferences first (durable even if the turn dies
- * before it runs the call), then the answer onto the turn row (what any
+ * A tool the organization locks as high risk can only be allowed once:
+ * "in this chat" and "always" would stop it asking, which the lock exists
+ * to prevent, so they are refused (the card does not offer them).
+ *
+ * Three writes, in the order that keeps each safe on its own: an answer
+ * that outlasts the call goes first — onto the person's preferences
+ * ("always", "block always") or the chat ("in this chat") — durable even
+ * if the turn dies before it runs the call, then the answer onto the turn
+ * row (what any
  * replica's runner polls), then the channel (the fast path when the turn
  * runs here). A decision for a call the turn is no longer waiting on —
  * answered from another tab, or the ask timed out — is a 409, not a
@@ -18,7 +25,11 @@ import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-su
 import { getChatForOwner } from '@/lib/chat/store';
 import { decideToolPermission, getTurn, isToolPermissionDecision } from '@/lib/chat/turns';
 import { getTurnChannel } from '@/lib/chat/turn-events';
-import { allowChatToolAlways } from '@/lib/chat/permission-prefs';
+import { getOrgSettings } from '@renkei/settings';
+import { allowChatToolAlways, blockChatToolAlways } from '@/lib/chat/permission-prefs';
+import { rememberChatToolAnswer } from '@/lib/chat/chat-permissions';
+import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 import { markChatToolPermissionRead } from '@/lib/chat/permission-notification';
 
 export async function POST(
@@ -51,8 +62,25 @@ export async function POST(
     return jsonError(409, 'not-pending', 'The chat is no longer waiting on this call');
   }
 
-  if (decision === 'always') {
-    const remembered = await allowChatToolAlways(session.subject, pending.name);
+  if (decision === 'always' || decision === 'chat') {
+    const settings = await getOrgSettings();
+    // Unreadable settings: refuse the lasting allow rather than risk
+    // lifting a lock — "allow once" still works.
+    const locked = !settings.ok || settings.val.lockedHighRiskTools.includes(pending.name);
+    if (locked) {
+      return jsonError(
+        409,
+        'locked',
+        'Your organization locks this tool as high risk, so it can only be allowed once'
+      );
+    }
+  }
+
+  if (decision === 'always' || decision === 'deny-always') {
+    const remembered =
+      decision === 'always'
+        ? await allowChatToolAlways(session.subject, pending.name)
+        : await blockChatToolAlways(session.subject, pending.name);
     if (!remembered.ok) {
       return jsonError(
         remembered.err.type === 'INVALID_NAME' ? 400 : 500,
@@ -60,6 +88,28 @@ export async function POST(
         'Could not save the permission'
       );
     }
+  }
+
+  if (decision === 'chat' || decision === 'deny-chat') {
+    const remembered = await rememberChatToolAnswer(
+      chat.id,
+      pending.name,
+      decision === 'chat' ? 'allow' : 'deny'
+    ).catch((error: unknown) => {
+      logger.error(
+        '{actor} answered "{decision}" for {tool} in chat {chatId}, but it was not saved on the chat; the call waits on: {error}',
+        {
+          component: 'api/chat/permission',
+          ...who(session),
+          decision,
+          tool: pending.name,
+          chatId: chat.id,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      return false;
+    });
+    if (!remembered) return jsonError(500, 'not-remembered', 'Could not save the permission');
   }
 
   const written = await decideToolPermission(chat.id, turnId, toolUseId, decision);

@@ -1,15 +1,12 @@
 /**
- * The org policy and the fixed high-risk list, as the engine reads them.
- * Which NAMES the list may hold is apps/web's high-risk-tools test, against
- * the registered catalog; this pins the decision itself.
+ * The org policy and the high-risk tools, as the engine reads them. Which
+ * tools are high risk is the caller's (the org's locked list and the
+ * owner's own); this pins the decision itself.
  */
 
-import {
-  ALWAYS_APPROVAL_TOOLS,
-  actApprovalReason,
-  isAlwaysApprovalTool,
-  isExternallyTriggered,
-} from './act-approval';
+import { actApprovalReason, isExternallyTriggered } from './act-approval';
+
+const isHighRisk = (tool: string) => tool === 'outlook_send_mail';
 
 describe('isExternallyTriggered', () => {
   it('reads an event or API-key start as external, a person or a schedule as not', () => {
@@ -27,7 +24,7 @@ describe('isExternallyTriggered', () => {
 });
 
 describe('actApprovalReason', () => {
-  const base = { tools: ['jira_add_comment'], autoAccept: true };
+  const base = { tools: ['jira_add_comment'], autoAccept: true, isHighRisk };
 
   it('waits for the owner when the agent does not auto-accept, whatever the policy', () => {
     for (const policy of ['off', 'all', 'externally_triggered'] as const) {
@@ -57,17 +54,23 @@ describe('actApprovalReason', () => {
     expect(
       actApprovalReason({
         tools: ['jira_add_comment', 'outlook_send_mail'],
+        isHighRisk,
         autoAccept: true,
         policy: 'off',
         externallyTriggered: false,
       })
     ).toBe('high-risk');
   });
-});
 
-describe('ALWAYS_APPROVAL_TOOLS', () => {
-  it('is what isAlwaysApprovalTool answers from', () => {
-    for (const tool of ALWAYS_APPROVAL_TOOLS) expect(isAlwaysApprovalTool(tool)).toBe(true);
-    expect(isAlwaysApprovalTool('jira_search_issues')).toBe(false);
+  it('lets an auto-accepted batch through when nothing in it is high risk for its owner', () => {
+    expect(
+      actApprovalReason({
+        tools: ['outlook_send_mail'],
+        isHighRisk: () => false,
+        autoAccept: true,
+        policy: 'off',
+        externallyTriggered: false,
+      })
+    ).toBeNull();
   });
 });

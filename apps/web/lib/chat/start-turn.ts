@@ -84,6 +84,8 @@ import {
 } from './tool-config';
 import { getDefaultChatTools } from './tool-prefs';
 import { getChatToolPermissionPrefs } from './permission-prefs';
+import { NO_CHAT_TOOL_ANSWERS } from './chat-permissions';
+import { DEFAULT_HIGH_RISK_PREFS, getHighRiskPrefs, highRiskTest } from '@renkei/user-prefs';
 import { resolveChatToolSurface, type DiscoverableTool } from './tool-surface';
 import { createLocalToolSet, type LocalTool } from './local-tools';
 import { findToolsTool, recallDiscoveredTools } from './tool-discovery';
@@ -683,12 +685,21 @@ async function executeTurnBody(
     // never their chat default (tool-prefs.ts keeps the two apart).
     // fresh: "always allow" clicked in another chat a moment ago, or a tool
     // just blocked on the Preferences page, must hold for this turn too.
-    const [userDefault, permissionPrefs] = await Promise.all([
+    // Auto mode's high-risk list (fresh, like the permissions: a list just
+    // saved under Preferences › Code projects holds from the next Send).
+    const autoWanted =
+      project?.kind === 'code' && input.chat.autoMode && !(input.settings?.readOnly ?? false);
+    const [userDefault, permissionPrefs, codeHighRisk] = await Promise.all([
       input.chat.toolConfig || project?.toolConfig
         ? null
         : getDefaultChatTools(input.session.subject, { kind: defaultsKind }),
       getChatToolPermissionPrefs(input.session.subject, { fresh: true }),
+      autoWanted ? getHighRiskPrefs(input.session.subject, 'code', { fresh: true }) : null,
     ]);
+    // The organization's locked high-risk tools always ask; this chat's
+    // own answers ("in this chat") sit beside the person's lists.
+    const lockedTools = new Set(input.settings?.lockedHighRiskTools ?? []);
+    const chatAnswers = input.chat.toolAnswers ?? NO_CHAT_TOOL_ANSWERS;
     // A code project's chats always carry the Bitbucket connector on top
     // of whatever was chosen (tool-config.ts): the code_* tools push, the
     // connector's tools open the pull request.
@@ -709,7 +720,7 @@ async function executeTurnBody(
     // The token must outlive the longest the turn can run: its wall clock
     // plus every minute it may spend parked behind a permission ask.
     const permissionWaitMs = limits?.permissionWaitMs ?? DEFAULT_TURN_LIMITS.permissionWaitMs;
-    const denied = new Set(permissionPrefs.alwaysDeny);
+    const denied = new Set([...permissionPrefs.alwaysDeny, ...chatAnswers.deny]);
     // The slowest read of the lot — a token minted, then the app's own MCP
     // endpoint asked three times over HTTP — so it runs while the rest of
     // the turn's context is read. The release is taken the moment it is
@@ -1110,13 +1121,16 @@ async function executeTurnBody(
         widgetResourceUris: surface.widgetResourceUris,
         discoverableTools: discoverable.map((entry) => entry.def),
         // Every call that acts asks first, unless this person has said
-        // "always" for that tool (permission-prefs.ts) — or the chat is in
-        // auto mode, where nothing asks and only a blocked tool refuses.
+        // "always" for that tool (permission-prefs.ts) or "in this chat"
+        // (chat-permissions.ts) — or the chat is in auto mode, where only
+        // their high-risk tools for code projects ask. A tool the
+        // organization locks asks whatever was said.
         permissions: {
           // A message the person addressed to an agent is their say-so for
           // handing it that task (agent-ask-tool.ts refuses any other agent).
           alwaysAllowed: new Set([
             ...permissionPrefs.alwaysAllow,
+            ...chatAnswers.allow,
             ...(addressedAgentId && askAgent ? [CHAT_ASK_AGENT_TOOL] : []),
           ]),
           // A blocked tool's preview card is blocked with it.
@@ -1124,7 +1138,16 @@ async function executeTurnBody(
           previewOnly: surface.previewOnly,
           // A temporary chat's memory tools: refused, never asked about.
           ...(input.chat.temporary ? { unavailable: temporaryUnavailableTools() } : {}),
-          ...(auto ? { allowAll: true } : {}),
+          locked: lockedTools,
+          ...(auto
+            ? {
+                autoAsks: highRiskTest(
+                  codeHighRisk ?? DEFAULT_HIGH_RISK_PREFS,
+                  'code',
+                  lockedTools
+                ),
+              }
+            : {}),
         },
         ...(auto
           ? {

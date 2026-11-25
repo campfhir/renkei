@@ -38,6 +38,7 @@ import {
   canSave,
   groupSummary,
   initToolPermissions,
+  allowLocked,
   saveBody,
   toolPermissionsReducer,
   unlistedDecisions,
@@ -53,11 +54,18 @@ const RULES: readonly { rule: ToolPermissionRule; label: string; hint: string }[
 export default function ToolPermissionsForm({
   groups,
   initial,
+  locked = [],
 }: {
   groups: ActToolGroup[];
   initial: ChatToolPermissionPrefs;
+  /** The organization's locked high-risk tools: Allow is not offered for them. */
+  locked?: string[];
 }) {
-  const [state, dispatch] = useReducer(toolPermissionsReducer, initial, initToolPermissions);
+  const [state, dispatch] = useReducer(
+    toolPermissionsReducer,
+    { prefs: initial, locked },
+    initToolPermissions
+  );
   const { prefs, status } = state;
 
   async function save() {
@@ -164,6 +172,12 @@ export default function ToolPermissionsForm({
                               <td key={rule} className="px-1 py-2 text-center align-top">
                                 <input
                                   type="radio"
+                                  disabled={rule === 'allow' && allowLocked(state, tool.name)}
+                                  title={
+                                    rule === 'allow' && allowLocked(state, tool.name)
+                                      ? 'Your organization locks this tool as high risk: it always asks'
+                                      : undefined
+                                  }
                                   name={`tool-rule:${tool.name}`}
                                   // The wire name is part of the accessible name:
                                   // two tools can share a title within a connector.

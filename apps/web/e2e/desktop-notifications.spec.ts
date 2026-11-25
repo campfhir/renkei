@@ -77,7 +77,7 @@ test('flipping the switch on subscribes this device and records it, off removes 
   await context.grantPermissions(['notifications']);
   await mockPushManager(page);
 
-  await page.goto(`/preferences`);
+  await page.goto(`/preferences/notifications`);
   const checkbox = page.getByRole('checkbox', { name: /Show system notifications/i });
   await expect(checkbox).toBeVisible();
   await expect(checkbox).not.toBeChecked();
@@ -121,7 +121,7 @@ test('with the switch left off, nothing gets subscribed', async ({
     if (new URL(request.url()).pathname === '/api/push/public-key') keys.push(request.url());
   });
 
-  await page.goto(`/preferences`);
+  await page.goto(`/preferences/notifications`);
   const checkbox = page.getByRole('checkbox', { name: /Show system notifications/i });
   await expect(checkbox).toBeVisible();
   await expect(checkbox).not.toBeChecked();

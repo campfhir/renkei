@@ -35,7 +35,7 @@ test('dark mode lands on the appearance section, scrolled into view', async ({
   await page.goto('/agents');
   const results = await search(page, 'dark mode');
   await results.getByRole('option', { name: /Dark mode and appearance/ }).click();
-  await expect(page).toHaveURL(/\/preferences#appearance-heading$/);
+  await expect(page).toHaveURL(/\/preferences\/appearance$/);
   await expect(page.locator('#appearance-heading')).toBeInViewport();
 });
 

@@ -128,7 +128,7 @@ test('chat: a new chat starts on the preferred model, and on its project’s own
   const projects = await addModel(page, 'Projects');
 
   // Preferences: pick the model new chats start on.
-  await page.goto('/preferences');
+  await page.goto('/preferences/models');
   const section = page.getByRole('region', { name: 'Chat model' });
   await section.getByLabel('Preferred chat model').selectOption(preferred.id);
   await section.getByRole('button', { name: 'Save' }).click();
@@ -222,7 +222,7 @@ test('admin: removing a model moves the people on it to a replacement and tells 
   ).toBeVisible();
   await theirs.goto(`/chat/${chatId}`);
   await expect(modelButton(theirs)).toContainText(staying.label);
-  await theirs.goto('/preferences');
+  await theirs.goto('/preferences/models');
   await expect(
     theirs.getByRole('region', { name: 'Chat model' }).getByLabel('Preferred chat model')
   ).toHaveValue(staying.id);

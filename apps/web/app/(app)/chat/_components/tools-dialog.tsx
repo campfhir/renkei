@@ -289,7 +289,7 @@ export default function ToolsDialog({
                 Saved on the project as soon as you toggle it. Your personal default for new chats
                 outside this project lives in{' '}
                 <a
-                  href={`/preferences`}
+                  href={`/preferences/chats`}
                   className="text-blue-600 hover:underline dark:text-blue-400"
                 >
                   Preferences

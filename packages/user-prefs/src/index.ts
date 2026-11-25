@@ -50,6 +50,11 @@ import {
   type NotificationPrefs,
   type ThemePrefs,
   type VoicePrefs,
+  HIGH_RISK_KEYS,
+  DEFAULT_HIGH_RISK_PREFS,
+  parseHighRiskPrefs,
+  type HighRiskKind,
+  type HighRiskPrefs,
 } from './prefs';
 
 export * from './prefs';
@@ -400,4 +405,50 @@ export async function patchChatArchivePrefs(
   patch: Partial<ChatArchivePrefs>
 ): Promise<Result<void, 'DB_ERROR'>> {
   return mergePrefs(subject, CHAT_ARCHIVE_KEY, patch, chatArchiveCache);
+}
+
+const highRiskCache = new Map<string, { value: HighRiskPrefs; expiresAt: number }>();
+
+/**
+ * One of this person's high-risk lists (high-risk.ts). Read by the agents
+ * worker each time a batch is staged and by a code chat's turn at its
+ * start; the Preferences page and the route that saves pass `fresh`.
+ * Never fails loudly: a database problem reads as the default, which for
+ * agents leaves the organization's locked list in charge and for code
+ * projects asks before everything but the checkout's own work.
+ */
+export async function getHighRiskPrefs(
+  subject: string,
+  kind: HighRiskKind,
+  options: { fresh?: boolean } = {}
+): Promise<HighRiskPrefs> {
+  const key = `${kind}:${cacheKey(subject)}`;
+  const cached = highRiskCache.get(key);
+  if (!options.fresh && cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const rowResult = await wrapAsync(
+    () => getDataStore().userPreferences.get(subject, HIGH_RISK_KEYS[kind]),
+    'DB_ERROR' as const
+  );
+  if (!rowResult.ok) return DEFAULT_HIGH_RISK_PREFS;
+
+  const value = parseHighRiskPrefs(rowResult.val);
+  highRiskCache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
+  return value;
+}
+
+/** Replace one of this person's high-risk lists wholesale; what was stored, as parsed. */
+export async function setHighRiskPrefs(
+  subject: string,
+  kind: HighRiskKind,
+  prefs: HighRiskPrefs
+): Promise<Result<HighRiskPrefs, 'DB_ERROR'>> {
+  const value = parseHighRiskPrefs(prefs);
+  const written = await wrapAsync(
+    () => getDataStore().userPreferences.set(subject, HIGH_RISK_KEYS[kind], { ...value }),
+    'DB_ERROR' as const
+  );
+  if (!written.ok) return written;
+  highRiskCache.delete(`${kind}:${cacheKey(subject)}`);
+  return ok(value);
 }

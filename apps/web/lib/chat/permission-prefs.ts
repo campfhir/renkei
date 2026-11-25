@@ -97,10 +97,28 @@ export async function allowChatToolAlways(
   subject: string,
   toolName: string
 ): Promise<Result<ChatToolPermissionPrefs, 'DB_ERROR' | 'INVALID_NAME'>> {
+  return rememberChatTool(subject, toolName, 'allow');
+}
+
+/** "Block always" from the card: the same, onto the blocked list (which wins over allowed). */
+export async function blockChatToolAlways(
+  subject: string,
+  toolName: string
+): Promise<Result<ChatToolPermissionPrefs, 'DB_ERROR' | 'INVALID_NAME'>> {
+  return rememberChatTool(subject, toolName, 'deny');
+}
+
+async function rememberChatTool(
+  subject: string,
+  toolName: string,
+  rule: 'allow' | 'deny'
+): Promise<Result<ChatToolPermissionPrefs, 'DB_ERROR' | 'INVALID_NAME'>> {
   if (!TOOL_NAME.test(toolName)) return err('INVALID_NAME' as const);
   const current = await getChatToolPermissionPrefs(subject, { fresh: true });
-  if (current.alwaysAllow.includes(toolName)) return ok(current);
-  const next = withRule(current, toolName, 'allow');
+  if ((rule === 'allow' ? current.alwaysAllow : current.alwaysDeny).includes(toolName)) {
+    return ok(current);
+  }
+  const next = withRule(current, toolName, rule);
   const written = await setChatToolPermissionPrefs(subject, next);
   if (!written.ok) return err('DB_ERROR' as const);
   return ok(next);

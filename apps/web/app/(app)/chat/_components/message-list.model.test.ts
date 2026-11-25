@@ -735,13 +735,37 @@ describe('the permission card', () => {
     from: PermissionCardState = initialPermissionCardState
   ) => actions.reduce(permissionCardReducer, from);
 
-  it('asks the owner, with the three answers on', () => {
+  it('asks the owner with two split buttons: allow once, and deny', () => {
     expect(permissionCardText('chat_memory_remember', true, null).lead).toBe('Allow this?');
-    expect(permissionButtons(initialPermissionCardState)).toEqual([
-      { decision: 'once', label: 'Allow once', disabled: false },
-      { decision: 'always', label: 'Always allow', disabled: false },
-      { decision: 'deny', label: 'Deny', disabled: false },
+    const [allow, deny] = permissionButtons(initialPermissionCardState);
+    expect(allow.main).toEqual({ decision: 'once', label: 'Allow once' });
+    expect(deny.main).toEqual({ decision: 'deny', label: 'Deny' });
+    expect(allow.more.map((choice) => choice.label)).toEqual([
+      'Allow in this chat',
+      'Always allow',
     ]);
+    expect(deny.more.map((choice) => choice.label)).toEqual(['Block in this chat', 'Block always']);
+    expect([allow.menuOpen, deny.menuOpen, allow.disabled]).toEqual([false, false, false]);
+  });
+
+  it('the allow arrow opens its menu, the deny arrow switches to the other, a second press shuts it', () => {
+    const open = fold([{ type: 'toggle-menu', side: 'allow' }]);
+    expect(permissionButtons(open).map((button) => button.menuOpen)).toEqual([true, false]);
+    const other = fold([{ type: 'toggle-menu', side: 'deny' }], open);
+    expect(permissionButtons(other).map((button) => button.menuOpen)).toEqual([false, true]);
+    expect(fold([{ type: 'toggle-menu', side: 'deny' }], other).menu).toBeNull();
+    expect(fold([{ type: 'close-menu' }], open).menu).toBeNull();
+  });
+
+  it('a tool the organization locks has no allow arrow, and the card says why', () => {
+    const [allow, deny] = permissionButtons(fold([{ type: 'toggle-menu', side: 'allow' }]), true);
+    expect(allow.more).toEqual([]);
+    expect(allow.menuOpen).toBe(false);
+    expect(deny.more).toHaveLength(2);
+    expect(permissionCardText('outlook_send_mail', true, null, true).locked).toMatch(
+      /locks this tool/
+    );
+    expect(permissionCardText('outlook_send_mail', true, null).locked).toBeNull();
   });
 
   it('tells anyone else the owner decides', () => {
@@ -763,16 +787,20 @@ describe('the permission card', () => {
     expect(permissionCardText('chat_memory_remember', true, null).input).toBeNull();
   });
 
-  it('turns every button off while an answer is on its way, the pressed one saying so', () => {
-    const state = fold([{ type: 'decide', decision: 'always' }]);
-    expect(permissionButtons(state)).toEqual([
-      { decision: 'once', label: 'Allow once', disabled: true },
-      { decision: 'always', label: 'Allowing…', disabled: true },
-      { decision: 'deny', label: 'Deny', disabled: true },
+  it('choosing from a menu closes it, turns every button off, and the main button says what is on its way', () => {
+    const state = fold([
+      { type: 'toggle-menu', side: 'allow' },
+      { type: 'decide', decision: 'chat' },
     ]);
-    expect(permissionButtons(fold([{ type: 'decide', decision: 'deny' }]))[2].label).toBe(
-      'Denying…'
-    );
+    const [allow, deny] = permissionButtons(state);
+    expect(state.menu).toBeNull();
+    expect([allow.disabled, deny.disabled]).toEqual([true, true]);
+    expect(allow.main.label).toBe('Allowing…');
+    expect(deny.main.label).toBe('Deny');
+    expect(
+      permissionButtons(fold([{ type: 'decide', decision: 'deny-always' }]))[1].main.label
+    ).toBe('Blocking…');
+    expect(fold([{ type: 'toggle-menu', side: 'deny' }], state).menu).toBeNull();
   });
 
   it('ignores a second press while the first is on its way', () => {
@@ -786,14 +814,19 @@ describe('the permission card', () => {
 
   it('a refused answer puts the buttons back and says why; the next press clears it', () => {
     const refused = fold([
-      { type: 'decide', decision: 'once' },
-      { type: 'refused', error: 'The turn is no longer waiting on this.' },
+      { type: 'decide', decision: 'always' },
+      { type: 'refused', error: 'Your organization locks this tool.' },
     ]);
-    expect(refused).toEqual({ busy: null, error: 'The turn is no longer waiting on this.' });
+    expect(refused).toEqual({
+      busy: null,
+      error: 'Your organization locks this tool.',
+      menu: null,
+    });
     expect(permissionButtons(refused).every((button) => !button.disabled)).toBe(true);
     expect(fold([{ type: 'decide', decision: 'deny' }], refused)).toEqual({
       busy: 'deny',
       error: null,
+      menu: null,
     });
   });
 });

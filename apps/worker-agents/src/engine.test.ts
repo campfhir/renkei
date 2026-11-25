@@ -32,6 +32,7 @@ import {
   type AgentDefinition,
 } from '@renkei/agents';
 import { setOrgSettings } from '@renkei/settings';
+import { setHighRiskPrefs } from '@renkei/user-prefs';
 import { resumeAgentRun } from '@renkei/agents/runs';
 import type { QueueMessageInput, QueueProducer } from '@renkei/queue';
 import { MessageReleased } from '@renkei/worker-loop';
@@ -200,6 +201,8 @@ maybe('agent run engine', () => {
       agentRunTimeoutMinutes: 30,
       agentRunToolCallBudget: 150,
       agentActStepsRequireApproval: 'externally_triggered',
+      // As migration 196 seeds it, in part.
+      lockedHighRiskTools: ['outlook_send_mail'],
     });
   });
 
@@ -538,6 +541,19 @@ maybe('agent run engine', () => {
       status: 'proposed',
       reviewReason: 'high-risk',
     });
+
+    // A tool the owner put on their own agents list waits too, though the org never locked it.
+    await setHighRiskPrefs(subject, 'agents', { marked: ['jira_add_comment'], unmarked: [] });
+    const marked = await seedRun({ autoAccept: true });
+    const markedLlm = stubLlm(() =>
+      call('stage_actions', {
+        summary: 'Comment',
+        actions: [{ tool: 'jira_add_comment', args: {}, reason: 'r' }],
+      })
+    );
+    await harness(markedLlm).handler({ payload: { runId: marked.runId } });
+    expect((await batchOf(marked.runId)).reviewReason).toBe('high-risk');
+    await setHighRiskPrefs(subject, 'agents', { marked: [], unmarked: [] });
 
     // An event-started run ignores auto-accept under the default policy.
     const external = await seedRun({ autoAccept: true, triggerKind: 'event' });

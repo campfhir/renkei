@@ -74,7 +74,12 @@ import { parseDigest, type ArtifactDigest } from './artifact-digest-input';
 import { PROMPT_FILE_MAX_BYTES } from './attachments';
 import type { ChatStreamEvent } from './stream-events';
 import type { TurnChannel } from './turn-events';
-import type { AttachmentView, PendingToolPermission, ToolPermissionDecision } from './views';
+import {
+  isRefusal,
+  type AttachmentView,
+  type PendingToolPermission,
+  type ToolPermissionDecision,
+} from './views';
 import { toChatBlock } from './views';
 import type { MessageStatus, MessageTiming, TurnStatus } from './views';
 
@@ -272,13 +277,25 @@ const RETRYABLE_MODEL_ERROR_KINDS = new Set<LlmErrorKind>(['network', 'provider_
  * in `alwaysAllowed`, which grows with every 'always' the person answers.
  */
 export interface TurnPermissions {
+  /**
+   * Tools that run unasked: the person's "always" and this chat's "allow
+   * in this chat" — grows with every such answer during the turn. Never
+   * honoured for a `locked` tool.
+   */
   alwaysAllowed: ReadonlySet<string>;
   /**
-   * Auto mode (auto-mode.ts): nothing asks. Every call runs as if the
-   * person had said "always" for it — except the tools in `denied`,
-   * which stay refused. The person chose this for the chat.
+   * The organization's locked high-risk tools (@renkei/settings'
+   * lockedHighRiskTools): always asked about, whatever `alwaysAllowed` or
+   * Auto mode say, and the card offers no answer that would stop that.
    */
-  allowAll?: boolean;
+  locked?: ReadonlySet<string>;
+  /**
+   * Auto mode (auto-mode.ts): only these calls ask — the person's
+   * high-risk tools for code projects (@renkei/user-prefs' high-risk.ts)
+   * — and everything else runs as if they had said "always" for it. The
+   * tools in `denied` stay refused. The person chose this for the chat.
+   */
+  autoAsks?: (name: string) => boolean;
   /**
    * Tools the person blocked outright (permission-prefs.ts). The surface
    * never offers these, so a call can only come from the model's memory
@@ -309,7 +326,7 @@ export const PERMISSION_TIMEOUT_RESULT =
 export const previewOnlyResult = (preview: string) =>
   `This tool is not available in chat: it acts only after the person confirms on a preview card. Call ${preview} instead and let them decide from the card; do not repeat its contents in your reply.`;
 export const PERMISSION_BLOCKED_RESULT =
-  'The person has blocked this tool in their preferences, so it cannot be used in this chat. Do not retry it or work around it; tell them what you were going to do and let them decide.';
+  'The person has blocked this tool, for this chat or in their preferences, so it cannot be used here. Do not retry it or work around it; tell them what you were going to do and let them decide.';
 /**
  * What the model is told in place of a result for a tool call whose
  * arguments were cut off mid-stream (the reply hit its output-token
@@ -722,16 +739,19 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
   const concurrentTools = deps.concurrentTools ?? new Set<string>();
   const widgetResourceUris = deps.widgetResourceUris ?? new Map<string, string>();
   const alwaysAllowed = new Set(deps.permissions?.alwaysAllowed ?? []);
-  const denied = deps.permissions?.denied ?? new Set<string>();
+  const locked = deps.permissions?.locked ?? new Set<string>();
+  // Grows with every "block in this chat" or "block always" answered this turn.
+  const denied = new Set(deps.permissions?.denied ?? []);
   const previewOnly = deps.permissions?.previewOnly ?? new Map<string, string>();
   const unavailable = deps.permissions?.unavailable ?? new Map<string, string>();
-  const needsPermission = (name: string) =>
-    deps.permissions !== undefined &&
-    deps.permissions.allowAll !== true &&
-    !denied.has(name) &&
-    !unavailable.has(name) &&
-    !readOnlyTools.has(name) &&
-    !alwaysAllowed.has(name);
+  const needsPermission = (name: string): boolean => {
+    const permissions = deps.permissions;
+    if (permissions === undefined) return false;
+    if (denied.has(name) || unavailable.has(name) || readOnlyTools.has(name)) return false;
+    if (locked.has(name)) return true;
+    if (alwaysAllowed.has(name)) return false;
+    return permissions.autoAsks ? permissions.autoAsks(name) : true;
+  };
   let permissionWaited = 0;
   // Auto mode: whether the model has marked the task finished this turn,
   // how many times it has been told to carry on, and whether it has
@@ -1030,6 +1050,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       messageId: assistant.id,
       name: use.name,
       requestedAt: new Date().toISOString(),
+      ...(locked.has(use.name) ? { locked: true } : {}),
     };
     stage = `permission:${use.name}`;
     await store.requestToolPermission({ ...ask, input: use.input });
@@ -1095,7 +1116,13 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         decision: answer,
       });
     }
-    if (answer === 'always') alwaysAllowed.add(use.name);
+    // The answers that outlast this call hold for the rest of the turn
+    // too; the route has already stored them for the next one. A locked
+    // tool keeps asking, whatever was answered.
+    if ((answer === 'always' || answer === 'chat') && !locked.has(use.name)) {
+      alwaysAllowed.add(use.name);
+    }
+    if (answer === 'deny-chat' || answer === 'deny-always') denied.add(use.name);
     return answer;
   };
 
@@ -1690,14 +1717,21 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         // as running, since a refused one never runs.
         let canceledWhileAsking = false;
         for (const use of group) {
-          if (refused.has(use.id) || !needsPermission(use.name)) continue;
+          if (refused.has(use.id)) continue;
+          // Blocked by an answer earlier in this round ("block in this chat").
+          if (denied.has(use.name)) {
+            refused.set(use.id, 'blocked');
+            continue;
+          }
+          if (!needsPermission(use.name)) continue;
           const answer = await askPermission(use);
           if (answer === 'suspended') return await finalizeSuspended();
           if (answer === 'canceled') {
             canceledWhileAsking = true;
             break;
           }
-          if (answer === 'deny' || answer === 'timeout') refused.set(use.id, answer);
+          if (answer === 'timeout') refused.set(use.id, 'timeout');
+          else if (isRefusal(answer)) refused.set(use.id, 'deny');
         }
         if (canceledWhileAsking || cancelRequested || channel.cancelRequested) break;
         for (const use of group) {

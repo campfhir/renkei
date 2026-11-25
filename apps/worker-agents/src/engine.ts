@@ -126,7 +126,7 @@ import {
   writeNotificationRow,
   type Notifier,
 } from './notifications';
-import { getNotificationPrefs } from '@renkei/user-prefs';
+import { getHighRiskPrefs, getNotificationPrefs, highRiskTest } from '@renkei/user-prefs';
 import { delegateClient } from '@renkei/delegate-client';
 import type { QueueProducer } from '@renkei/queue';
 import type { McpClient, McpToolInfo, McpToolResult } from './mcp-client';
@@ -891,6 +891,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
         autoAccept: agentRow.autoAcceptActions,
         externallyTriggered: await runIsExternallyTriggered(run),
         actPolicy: settings.agentActStepsRequireApproval,
+        // What still waits for a person when the agent accepts its own
+        // batches: the org's locked tools and the owner's own list.
+        isHighRisk: highRiskTest(
+          await getHighRiskPrefs(run.ownerSubject, 'agents'),
+          'agents',
+          settings.lockedHighRiskTools
+        ),
         approvalWaitCapHours: settings.agentApprovalMaxWaitDays * 24,
         limits,
         llm,
@@ -922,6 +929,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
     autoAccept: boolean;
     externallyTriggered: boolean;
     actPolicy: 'externally_triggered' | 'all' | 'off';
+    /** High risk for the owner: locked by the org, or on their agents list. */
+    isHighRisk: (tool: string) => boolean;
     approvalWaitCapHours: number;
     limits: RunLimits;
     llm: ResolvedLlm;
@@ -2090,6 +2099,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     ): Promise<void> {
       const reason = actApprovalReason({
         tools: actions.map((action) => action.tool),
+        isHighRisk: this.input.isHighRisk,
         autoAccept: this.input.autoAccept,
         policy: this.input.actPolicy,
         externallyTriggered: this.input.externallyTriggered,

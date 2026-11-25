@@ -97,11 +97,41 @@ export async function listChatActToolGroups(
   subject: string,
   roles: string[]
 ): Promise<ActToolGroup[]> {
+  return listActToolGroups(subject, roles, { previews: false, chatOwn: true, code: true });
+}
+
+/**
+ * The tools a high-risk list is about (@renkei/user-prefs' high-risk.ts):
+ *
+ *  - 'agents': what an agent can stage — every connector's act tools,
+ *    preview tools included (an agent stages a directory write through its
+ *    preview), and none of a chat's own;
+ *  - 'code': what a code project's chat can call — the chat's own list
+ *    (connectors without previews, the chat's own tools, the checkout's);
+ *  - 'org': everything either can, for the organization's locked list.
+ */
+export async function listHighRiskToolGroups(
+  subject: string,
+  roles: string[],
+  kind: 'agents' | 'code' | 'org'
+): Promise<ActToolGroup[]> {
+  return listActToolGroups(subject, roles, {
+    previews: kind !== 'code',
+    chatOwn: kind !== 'agents',
+    code: kind !== 'agents',
+  });
+}
+
+async function listActToolGroups(
+  subject: string,
+  roles: string[],
+  include: { previews: boolean; chatOwn: boolean; code: boolean }
+): Promise<ActToolGroup[]> {
   const catalog = await listAvailableTools(subject, { roles });
   const byConnector = new Map<string, ActToolEntry[]>();
   for (const descriptor of catalog) {
-    if (descriptor.kind !== 'act' || descriptor.appOnly) continue;
-    if (descriptor.name.endsWith('_preview') || !descriptor.connector) continue;
+    if (descriptor.kind !== 'act' || descriptor.appOnly || !descriptor.connector) continue;
+    if (!include.previews && descriptor.name.endsWith('_preview')) continue;
     const list = byConnector.get(descriptor.connector) ?? [];
     list.push({
       name: descriptor.name,
@@ -112,7 +142,11 @@ export async function listChatActToolGroups(
   const groups: ActToolGroup[] = [...byConnector.entries()]
     .map(([key, tools]) => ({ key, label: connectorLabel(key), tools: dedupe(tools) }))
     .sort((a, b) => a.label.localeCompare(b.label));
-  groups.push({ key: CHAT_OWN_TOOLS_KEY, label: 'The chat itself', tools: chatOwnActTools() });
-  groups.push({ key: CODE_TOOLS_KEY, label: 'Code projects', tools: codeActTools() });
+  if (include.chatOwn) {
+    groups.push({ key: CHAT_OWN_TOOLS_KEY, label: 'The chat itself', tools: chatOwnActTools() });
+  }
+  if (include.code) {
+    groups.push({ key: CODE_TOOLS_KEY, label: 'Code projects', tools: codeActTools() });
+  }
   return groups.filter((group) => group.tools.length > 0);
 }

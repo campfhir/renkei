@@ -9,6 +9,7 @@
  */
 
 import { getDataStore, type ChatRecord } from '@renkei/db';
+import { parseChatToolAnswers, type ChatToolAnswers } from './chat-permissions';
 import { resolveTenantBlobStore } from '@renkei/blob-store';
 import { isUuid } from '@/lib/uuid';
 import { parseToolConfig, toolConfigJson, type ChatToolConfig } from './tool-config';
@@ -31,6 +32,8 @@ export interface ChatRow {
   temporary: boolean;
   /** A code chat's worktree on the sandbox worker (lib/code/projects.ts); null until its first turn makes one. */
   workspaceId: string | null;
+  /** The owner's "in this chat" answers from the permission card (chat-permissions.ts). */
+  toolAnswers?: ChatToolAnswers;
   lastMessageAt: Date | null;
   archivedAt: Date | null;
   createdAt: Date;
@@ -41,7 +44,12 @@ export interface ChatRow {
 export const CHAT_LIST_LIMIT = 200;
 
 function rowOf(chat: ChatRecord): ChatRow {
-  return { ...chat, toolConfig: parseToolConfig(chat.toolConfig) };
+  const { toolPermissions, ...rest } = chat;
+  return {
+    ...rest,
+    toolConfig: parseToolConfig(chat.toolConfig),
+    toolAnswers: parseChatToolAnswers(toolPermissions),
+  };
 }
 
 export async function getChatRow(chatId: string): Promise<ChatRow | null> {

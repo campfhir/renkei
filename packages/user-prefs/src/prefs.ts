@@ -853,3 +853,5 @@ export function parseChatArchivePatch(raw: unknown): PrefsPatch<ChatArchivePrefs
   }
   return parsed;
 }
+
+export * from './high-risk';
