@@ -81,6 +81,7 @@ import {
   permissionButtons,
   permissionCardReducer,
   permissionCardText,
+  type PermissionGlyph,
   replyCopies,
   replyEndNote,
   resultRowsById,
@@ -1187,6 +1188,14 @@ function MilestoneCard({
   );
 }
 
+/** The menu items' glyphs (message-list.model.ts's PermissionGlyph). */
+const GLYPHS: Record<PermissionGlyph, string> = {
+  check: ICONS.check,
+  'double-check': ICONS.doubleCheck,
+  hand: ICONS.stopHand,
+  ban: ICONS.ban,
+};
+
 /**
  * The ask, inline where the reply stopped: what the assistant wants to
  * call, with what, and two split buttons — Allow once ▾ (in this chat,
@@ -1334,7 +1343,8 @@ function PermissionCard({
                             className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-gray-100 focus-visible:bg-gray-100 dark:hover:bg-gray-900 dark:focus-visible:bg-gray-900"
                           >
                             <Icon
-                              path={button.side === 'deny' ? ICONS.ban : ICONS.check}
+                              path={GLYPHS[choice.glyph]}
+                              solid={choice.glyph === 'hand'}
                               className={`mt-0.5 h-4 w-4 shrink-0 ${
                                 button.side === 'deny'
                                   ? 'text-red-600 dark:text-red-400'

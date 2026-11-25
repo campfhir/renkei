@@ -94,35 +94,36 @@ export default function ChatToolAnswers({ chatId }: { chatId: string }) {
                   key={row.name}
                   className="flex items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-gray-50 dark:hover:bg-gray-900"
                 >
-                  <span
-                    className={
-                      row.blocked
-                        ? 'text-red-600 dark:text-red-400'
-                        : 'text-green-600 dark:text-green-400'
-                    }
-                    title={row.blocked ? 'Blocked here' : 'Allowed here'}
-                  >
-                    <Icon
-                      path={row.blocked ? ICONS.ban : ICONS.check}
-                      className="h-4 w-4 shrink-0"
-                    />
-                    <span className="sr-only">{row.blocked ? 'Blocked' : 'Allowed'}</span>
-                  </span>
                   <span className="min-w-0 flex-1 truncate" title={row.name}>
                     {row.label}
+                  </span>
+                  <span
+                    className={`inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-xs font-medium ${
+                      row.blocked
+                        ? 'bg-red-50 text-red-700 dark:bg-red-950/50 dark:text-red-300'
+                        : 'bg-green-50 text-green-700 dark:bg-green-950/50 dark:text-green-300'
+                    }`}
+                  >
+                    <Icon
+                      path={row.blocked ? ICONS.stopHand : ICONS.check}
+                      solid={row.blocked}
+                      className="h-3.5 w-3.5"
+                    />
+                    {row.status}
                   </span>
                   <button
                     type="button"
                     disabled={row.disabled}
                     onClick={() => void reset(row.name)}
                     aria-label={`Reset ${row.label} (${row.name})`}
-                    title="Ask again"
-                    className="shrink-0 rounded p-1 text-gray-500 hover:bg-gray-200 hover:text-gray-900 disabled:opacity-40 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
+                    title="Back to asking from the next message"
+                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-gray-300 px-1.5 py-0.5 text-xs text-gray-700 hover:bg-gray-100 disabled:opacity-40 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
                   >
                     <Icon
                       path={ICONS.undo}
-                      className={`h-4 w-4 ${row.busy ? 'motion-safe:animate-pulse' : ''}`}
+                      className={`h-3.5 w-3.5 ${row.busy ? 'motion-safe:animate-pulse' : ''}`}
                     />
+                    Reset
                   </button>
                 </li>
               ))}

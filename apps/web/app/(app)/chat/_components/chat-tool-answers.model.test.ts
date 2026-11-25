@@ -28,9 +28,9 @@ describe('Decided in this chat', () => {
   it('lists each decided tool, blocked ones first, and counts them in the heading', () => {
     const state = fold(decided);
     const rows = chatToolAnswerRows(state);
-    expect(rows.map((row) => [row.name, row.blocked])).toEqual([
-      ['chat_memory_remember', true],
-      ['jira_create_issue', false],
+    expect(rows.map((row) => [row.name, row.status])).toEqual([
+      ['chat_memory_remember', 'Blocked'],
+      ['jira_create_issue', 'Allowed'],
     ]);
     expect(rows[0].label).not.toBe('');
     expect(chatToolAnswersCount(state)).toBe('1 blocked · 1 allowed');

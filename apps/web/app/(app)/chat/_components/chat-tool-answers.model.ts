@@ -82,6 +82,8 @@ export interface ChatToolAnswerRow {
   name: string;
   label: string;
   blocked: boolean;
+  /** What happened to the tool here, as the row's tag says it beside its glyph. */
+  status: 'Blocked' | 'Allowed';
   /** This row's undo is on its way. */
   busy: boolean;
   /** Every undo is off while any reset is on its way. */
@@ -95,6 +97,7 @@ export function chatToolAnswerRows(state: ChatToolAnswersState): ChatToolAnswerR
     name,
     label: toolLabel(name),
     blocked,
+    status: blocked ? 'Blocked' : 'Allowed',
     busy: state.resetting === name || state.resetting === ALL,
     disabled: state.resetting !== null,
   });

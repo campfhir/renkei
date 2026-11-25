@@ -745,6 +745,13 @@ describe('the permission card', () => {
       'Always allow',
     ]);
     expect(deny.more.map((choice) => choice.label)).toEqual(['Block in this chat', 'Block always']);
+    // One tick here, two everywhere; a raised hand here, a ban everywhere.
+    expect([...allow.more, ...deny.more].map((choice) => choice.glyph)).toEqual([
+      'check',
+      'double-check',
+      'hand',
+      'ban',
+    ]);
     expect([allow.menuOpen, deny.menuOpen, allow.disabled]).toEqual([false, false, false]);
   });
 

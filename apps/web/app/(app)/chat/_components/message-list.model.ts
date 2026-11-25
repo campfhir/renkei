@@ -744,10 +744,21 @@ export const DECISION_HINTS: Partial<Record<ToolPermissionDecision, string>> = {
   'deny-always': 'Every chat · change in Preferences',
 };
 
+/** Each lasting answer's glyph: one tick here, two ticks everywhere, a raised hand here, a ban everywhere. */
+export type PermissionGlyph = 'check' | 'double-check' | 'hand' | 'ban';
+
+const DECISION_GLYPHS: Partial<Record<ToolPermissionDecision, PermissionGlyph>> = {
+  chat: 'check',
+  always: 'double-check',
+  'deny-chat': 'hand',
+  'deny-always': 'ban',
+};
+
 export interface PermissionChoice {
   decision: ToolPermissionDecision;
   label: string;
   hint: string | null;
+  glyph: PermissionGlyph;
 }
 
 export interface PermissionSplitButton {
@@ -770,6 +781,7 @@ export function permissionButtons(
     decision,
     label: label(decision),
     hint: DECISION_HINTS[decision] ?? null,
+    glyph: DECISION_GLYPHS[decision] ?? 'check',
   });
   const disabled = state.busy !== null;
   // The lasting answers live in the menus; while one is on its way the
