@@ -14,12 +14,13 @@
  * the organization locks says so instead of "allowed": it asks whatever
  * was allowed.
  *
- * Each tag explains itself: on hover (its title), and pressed, in a line
- * under the row (one open at a time). Reset takes that row's decision
- * back — off this chat's lists, or off the person's own (every chat of
- * theirs, as Preferences would); the next decision down, if any, then
- * shows. "Block a tool" searches the chat's tools by name and blocks one
- * here or always. Loaded each time the dialog opens; one change at a
+ * Each tag explains itself in a tip floating beside it, on hover or
+ * pressed (pressing pins it; one pinned at a time). Reset takes that
+ * row's decision back — off this chat's lists, or off the person's own
+ * (every chat of theirs, as Preferences would); the next decision down,
+ * if any, then shows. "Block a tool" is a small dialog of its own: search
+ * the chat's tools, pick one, choose this chat or every chat, Save — and
+ * the tool joins the list. Loaded each time the dialog opens; one change at a
  * time; a refused change keeps the rows and says why; the server's answer
  * replaces the lists.
  * chat-tool-answers.tsx renders from this; tested beside it.
@@ -46,8 +47,8 @@ export interface ChatToolAnswersState {
   error: string | null;
   /** The row whose tag's explanation is open. */
   explaining: string | null;
-  /** "Block a tool": open or shut, and what is typed in its search. */
-  picker: { open: boolean; filter: string };
+  /** "Block a tool", its own small dialog: open or shut, the search, the tool picked, where. */
+  picker: { open: boolean; filter: string; selected: string | null; scope: 'chat' | 'always' };
 }
 
 export type ChatToolAnswersAction =
@@ -58,8 +59,18 @@ export type ChatToolAnswersAction =
   | { type: 'reset-succeeded'; answers: unknown }
   | { type: 'reset-failed'; error: string }
   | { type: 'explain'; tool: string }
-  | { type: 'picker-toggled' }
-  | { type: 'picker-filter'; filter: string };
+  | { type: 'picker-opened' }
+  | { type: 'picker-closed' }
+  | { type: 'picker-filter'; filter: string }
+  | { type: 'picker-select'; tool: string }
+  | { type: 'picker-scope'; scope: 'chat' | 'always' };
+
+const CLOSED_PICKER: ChatToolAnswersState['picker'] = {
+  open: false,
+  filter: '',
+  selected: null,
+  scope: 'chat',
+};
 
 export const initialChatToolAnswersState: ChatToolAnswersState = {
   answers: null,
@@ -67,7 +78,7 @@ export const initialChatToolAnswersState: ChatToolAnswersState = {
   resetting: null,
   error: null,
   explaining: null,
-  picker: { open: false, filter: '' },
+  picker: CLOSED_PICKER,
 };
 
 function groupsOf(raw: unknown): ActToolGroup[] {
@@ -142,15 +153,23 @@ export function chatToolAnswersReducer(
         resetting: null,
         error: null,
         explaining: null,
+        // A block that went through closes its dialog: the tool is in the list now.
+        picker: CLOSED_PICKER,
       };
     case 'reset-failed':
       return { ...state, resetting: null, error: action.error };
     case 'explain':
       return { ...state, explaining: state.explaining === action.tool ? null : action.tool };
-    case 'picker-toggled':
-      return { ...state, picker: { open: !state.picker.open, filter: '' } };
+    case 'picker-opened':
+      return { ...state, picker: { ...CLOSED_PICKER, open: true }, error: null };
+    case 'picker-closed':
+      return { ...state, picker: CLOSED_PICKER };
     case 'picker-filter':
       return { ...state, picker: { ...state.picker, filter: action.filter } };
+    case 'picker-select':
+      return { ...state, picker: { ...state.picker, selected: action.tool } };
+    case 'picker-scope':
+      return { ...state, picker: { ...state.picker, scope: action.scope } };
   }
 }
 
@@ -328,7 +347,7 @@ export const PICKER_LIMIT = 40;
 export interface PickerGroup {
   key: string;
   label: string;
-  tools: { name: string; label: string; read: boolean }[];
+  tools: { name: string; label: string; read: boolean; selected: boolean }[];
 }
 
 /**
@@ -369,9 +388,19 @@ export function pickerGroups(state: ChatToolAnswersState): {
           name: tool.name,
           label: tool.label,
           read: tool.read === true,
+          selected: state.picker.selected === tool.name,
         })),
       });
     }
   }
   return { groups, more };
+}
+
+/** The Block dialog's Save: on once a tool is picked, off while a change is on its way. */
+export function blockSave(state: ChatToolAnswersState): { disabled: boolean; label: string } {
+  return {
+    disabled: state.picker.selected === null || state.resetting !== null,
+    label:
+      state.resetting !== null && state.resetting === state.picker.selected ? 'Saving…' : 'Save',
+  };
 }

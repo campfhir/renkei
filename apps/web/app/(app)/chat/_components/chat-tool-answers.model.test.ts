@@ -1,4 +1,5 @@
 import {
+  blockSave,
   pickerGroups,
   chatToolAnswerGroups,
   chatToolAnswerRows,
@@ -79,7 +80,7 @@ describe('Decided here', () => {
           },
         ],
       }),
-      { type: 'picker-toggled' }
+      { type: 'picker-opened' }
     );
     expect(withTools.picker.open).toBe(true);
     expect(pickerGroups(withTools).groups).toEqual([
@@ -87,12 +88,16 @@ describe('Decided here', () => {
         key: 'renkei-cards',
         label: 'Renkei cards',
         tools: [
-          { name: 'card_list', label: 'List cards', read: true },
+          { name: 'card_list', label: 'List cards', read: true, selected: false },
           // Allowed here, but it can still be blocked.
-          { name: 'card_update', label: 'Update a card', read: false },
+          { name: 'card_update', label: 'Update a card', read: false, selected: false },
         ],
       },
-      { key: 'jira', label: 'Jira', tools: [{ name: 'jira_search', label: 'Search', read: true }] },
+      {
+        key: 'jira',
+        label: 'Jira',
+        tools: [{ name: 'jira_search', label: 'Search', read: true, selected: false }],
+      },
     ]);
     const narrowed = chatToolAnswersReducer(withTools, { type: 'picker-filter', filter: 'jira' });
     expect(pickerGroups(narrowed).groups.map((group) => group.key)).toEqual(['jira']);
@@ -201,5 +206,45 @@ describe('Decided here', () => {
     expect(
       chatToolAnswersReducer(refused, { type: 'reset-started', tool: 'card_create' }).error
     ).toBeNull();
+  });
+
+  it('the Block dialog: Save is off until a tool is picked, takes a scope, and closes once saved', () => {
+    const open = fold(all, { type: 'picker-opened' });
+    expect(blockSave(open)).toEqual({ disabled: true, label: 'Save' });
+    const actions: ChatToolAnswersAction[] = [
+      { type: 'picker-select', tool: 'card_list' },
+      { type: 'picker-scope', scope: 'always' },
+    ];
+    const picked = actions.reduce(chatToolAnswersReducer, open);
+    expect(picked.picker).toMatchObject({ open: true, selected: 'card_list', scope: 'always' });
+    expect(blockSave(picked)).toEqual({ disabled: false, label: 'Save' });
+    const saving = chatToolAnswersReducer(picked, { type: 'block-started', tool: 'card_list' });
+    expect(blockSave(saving)).toEqual({ disabled: true, label: 'Saving…' });
+    const saved = chatToolAnswersReducer(saving, {
+      type: 'reset-succeeded',
+      answers: {
+        chat: { allow: [], deny: [] },
+        always: { allow: [], deny: ['card_list'] },
+        locked: [],
+      },
+    });
+    expect(saved.picker.open).toBe(false);
+    expect(chatToolAnswerRows(saved).map((row) => [row.name, row.decision])).toEqual([
+      ['card_list', 'always-blocked'],
+    ]);
+    // A refused save keeps the dialog open with the pick.
+    const refused = chatToolAnswersReducer(saving, { type: 'reset-failed', error: 'No' });
+    expect(refused.picker).toMatchObject({ open: true, selected: 'card_list' });
+  });
+
+  it('closing the Block dialog forgets the search and the pick', () => {
+    const actions: ChatToolAnswersAction[] = [
+      { type: 'picker-opened' },
+      { type: 'picker-filter', filter: 'card' },
+      { type: 'picker-select', tool: 'card_list' },
+      { type: 'picker-closed' },
+    ];
+    const closed = actions.reduce(chatToolAnswersReducer, fold(all));
+    expect(closed.picker).toEqual({ open: false, filter: '', selected: null, scope: 'chat' });
   });
 });

@@ -251,23 +251,27 @@ test('a reading tool, which never asks, can be blocked from the chat’s Tools d
     const permissions = page.getByRole('region', { name: 'Permissions' });
     await expect(permissions).toContainText('Anything not listed asks first.');
 
+    // Its own small dialog: search, pick one, where, Save.
     await permissions.getByRole('button', { name: 'Block a tool' }).click();
-    await permissions.getByLabel('Search tools to block').fill('chat_memory_list');
+    const blockDialog = page.getByRole('dialog', { name: 'Block a tool' });
+    await blockDialog.getByLabel('Search tools to block').fill('chat_memory_list');
+    await blockDialog.getByRole('radio', { name: /\(chat_memory_list\)$/ }).check();
     const blocked = page.waitForRequest(
       (request) => request.method() === 'PUT' && request.url().endsWith('/tool-answers')
     );
-    await permissions.getByRole('button', { name: /^Block .*\(chat_memory_list\) here$/ }).click();
+    await blockDialog.getByRole('button', { name: 'Save' }).click();
     expect((await blocked).postDataJSON()).toEqual({
       tool: 'chat_memory_list',
       rule: 'deny',
       scope: 'chat',
     });
+    await expect(blockDialog).toBeHidden();
 
-    // Listed now, and its tag says what it means when pressed.
+    // Listed now; pressing its tag floats what it means beside it.
     const tagButton = permissions.getByRole('button', { name: 'Blocked here' });
     await expect(tagButton).toBeVisible();
     await tagButton.click();
-    await expect(permissions.getByText(/Refused in this chat/)).toBeVisible();
+    await expect(page.getByRole('tooltip')).toHaveText(/Refused in this chat/);
     await shot(page, testInfo, 'chat-tools-permissions.png');
   } finally {
     await removeModel(page.request, modelId);
