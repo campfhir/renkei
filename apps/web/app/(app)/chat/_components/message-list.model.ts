@@ -744,14 +744,18 @@ export const DECISION_HINTS: Partial<Record<ToolPermissionDecision, string>> = {
   'deny-always': 'Every chat · change in Preferences',
 };
 
-/** Each lasting answer's glyph: one tick here, two ticks everywhere, a raised hand here, a ban everywhere. */
+/**
+ * Each lasting answer's glyph: one tick here, two ticks everywhere; a
+ * do-not-enter sign here, and the solid raised hand — the loudest of the
+ * four — for blocking everywhere.
+ */
 export type PermissionGlyph = 'check' | 'double-check' | 'hand' | 'ban';
 
 const DECISION_GLYPHS: Partial<Record<ToolPermissionDecision, PermissionGlyph>> = {
   chat: 'check',
   always: 'double-check',
-  'deny-chat': 'hand',
-  'deny-always': 'ban',
+  'deny-chat': 'ban',
+  'deny-always': 'hand',
 };
 
 export interface PermissionChoice {

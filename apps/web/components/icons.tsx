@@ -170,12 +170,13 @@ export const ICONS = {
   mockup: 'M3 5h18v14H3zM3 9h18M6 7h.01M9 7h.01',
   // Preferences' Appearance section.
   sun: 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5 19 19M5 19l1.5-1.5M17.5 6.5 19 5',
-  // A tool blocked (the chat's Tools dialog, the permission card).
+  // A tool blocked in one chat (the chat's Tools dialog, the permission card).
   ban: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM5.6 5.6l12.8 12.8',
   // Allowed everywhere ("Always allow"): two overlapping ticks.
   doubleCheck: 'M2 12.5l4.5 4.5L16 7.5M9 14.5l2.5 2.5L21 7.5',
-  // Stopped in this chat: a raised palm, drawn solid (<Icon solid>); `hand` above is the pan cursor.
-  stopHand: 'M8.4 4.4a1.3 1.3 0 0 1 2.6 0v6.1h.3V2.9a1.3 1.3 0 0 1 2.6 0v7.6h.3V4a1.3 1.3 0 0 1 2.6 0v6.9h.3V6.6a1.3 1.3 0 0 1 2.6 0v8.1c0 4-3.1 7.3-7 7.3h-.6c-2 0-3.8-.9-5-2.5l-3.4-4.6a1.4 1.4 0 0 1 2.1-1.8l2.6 2.4z',
+  // Blocked everywhere: a raised palm, drawn solid (<Icon solid>); `hand` above is the pan cursor.
+  stopHand:
+    'M8.4 4.4a1.3 1.3 0 0 1 2.6 0v6.1h.3V2.9a1.3 1.3 0 0 1 2.6 0v7.6h.3V4a1.3 1.3 0 0 1 2.6 0v6.9h.3V6.6a1.3 1.3 0 0 1 2.6 0v8.1c0 4-3.1 7.3-7 7.3h-.6c-2 0-3.8-.9-5-2.5l-3.4-4.6a1.4 1.4 0 0 1 2.1-1.8l2.6 2.4z',
   // Take a decision back.
   undo: 'M9 14 4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3',
   // Preferences' Tool permissions section.

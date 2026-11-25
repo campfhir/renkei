@@ -104,11 +104,7 @@ export default function ChatToolAnswers({ chatId }: { chatId: string }) {
                         : 'bg-green-50 text-green-700 dark:bg-green-950/50 dark:text-green-300'
                     }`}
                   >
-                    <Icon
-                      path={row.blocked ? ICONS.stopHand : ICONS.check}
-                      solid={row.blocked}
-                      className="h-3.5 w-3.5"
-                    />
+                    <Icon path={row.blocked ? ICONS.ban : ICONS.check} className="h-3.5 w-3.5" />
                     {row.status}
                   </span>
                   <button
