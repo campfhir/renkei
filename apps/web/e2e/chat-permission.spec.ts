@@ -255,7 +255,10 @@ test('a reading tool, which never asks, can be blocked from the chat’s Tools d
     await permissions.getByRole('button', { name: 'Set a tool' }).click();
     const blockDialog = page.getByRole('dialog', { name: 'Set a tool' });
     await blockDialog.getByLabel('Search tools').fill('chat_memory_list');
-    await blockDialog.getByRole('radio', { name: /\(chat_memory_list\)$/ }).check();
+    await blockDialog.getByRole('option', { name: /\(chat_memory_list\)$/ }).click();
+    await expect(
+      blockDialog.getByRole('option', { name: /\(chat_memory_list\)$/ })
+    ).toHaveAttribute('aria-selected', 'true');
     // A reading tool: this chat can make it ask, or block it.
     await blockDialog.getByText('Block', { exact: true }).click();
     const blocked = page.waitForRequest(

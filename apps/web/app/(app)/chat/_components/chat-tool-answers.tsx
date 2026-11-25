@@ -301,7 +301,7 @@ export default function ChatToolAnswers({ chatId }: { chatId: string }) {
               className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
             />
             <div
-              role="radiogroup"
+              role="listbox"
               aria-label="Tool"
               className="min-h-0 flex-1 overflow-y-auto rounded-md border border-gray-200 p-1 dark:border-gray-800"
             >
@@ -314,21 +314,19 @@ export default function ChatToolAnswers({ chatId }: { chatId: string }) {
                     {group.label}
                   </p>
                   {group.tools.map((tool) => (
-                    <label
+                    <button
                       key={tool.name}
-                      className={`flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 ${
+                      type="button"
+                      role="option"
+                      aria-selected={tool.selected}
+                      aria-label={`${tool.label} (${tool.name})`}
+                      onClick={() => dispatch({ type: 'picker-select', tool: tool.name })}
+                      className={`flex w-full cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-left ${
                         tool.selected
-                          ? 'bg-blue-50 dark:bg-blue-950/50'
+                          ? 'bg-blue-100 text-blue-900 ring-1 ring-blue-400 dark:bg-blue-950/60 dark:text-blue-100 dark:ring-blue-700'
                           : 'hover:bg-gray-50 dark:hover:bg-gray-900'
                       }`}
                     >
-                      <input
-                        type="radio"
-                        name={`block-tool-${chatId}`}
-                        checked={tool.selected}
-                        onChange={() => dispatch({ type: 'picker-select', tool: tool.name })}
-                        aria-label={`${tool.label} (${tool.name})`}
-                      />
                       <span className="min-w-0 flex-1 truncate" title={tool.name}>
                         {tool.label}
                       </span>
@@ -340,7 +338,7 @@ export default function ChatToolAnswers({ chatId }: { chatId: string }) {
                           reads
                         </span>
                       ) : null}
-                    </label>
+                    </button>
                   ))}
                 </div>
               ))}
