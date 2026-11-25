@@ -1,7 +1,10 @@
 /**
- * "Decided here", in the chat's Tools dialog, with no React: every
- * decision that applies to tools in this chat, in one list. A tool on
- * none of the lists asks every time, so it is not listed.
+ * "Permissions", in the chat's Tools dialog, with no React: every
+ * decision that applies to tools in this chat, in one list, and a way to
+ * block any tool the chat can be offered — one that only reads included,
+ * which never asks and so is never offered a card. A tool on none of the
+ * lists asks every time (or, if it only reads, simply runs), so it is not
+ * listed.
  *
  * Four decisions, each with its glyph: allowed here (one tick), always
  * allowed (two ticks), blocked here (do-not-enter), always blocked (the
@@ -11,14 +14,18 @@
  * the organization locks says so instead of "allowed": it asks whatever
  * was allowed.
  *
- * Reset takes that row's decision back to asking — off this chat's
- * lists, or off the person's own (every chat of theirs, as Preferences
- * would); the next decision down, if any, then shows. Loaded each time
- * the dialog opens; one reset at a time; a refused reset keeps the rows
- * and says why; the server's answer replaces the lists.
+ * Each tag explains itself: on hover (its title), and pressed, in a line
+ * under the row (one open at a time). Reset takes that row's decision
+ * back — off this chat's lists, or off the person's own (every chat of
+ * theirs, as Preferences would); the next decision down, if any, then
+ * shows. "Block a tool" searches the chat's tools by name and blocks one
+ * here or always. Loaded each time the dialog opens; one change at a
+ * time; a refused change keeps the rows and says why; the server's answer
+ * replaces the lists.
  * chat-tool-answers.tsx renders from this; tested beside it.
  */
 
+import type { ActToolGroup } from '@/lib/chat/permission-rules';
 import { toolLabel } from './message-list.model';
 
 export interface ToolDecisionLists {
@@ -26,30 +33,72 @@ export interface ToolDecisionLists {
   always: { allow: string[]; deny: string[] };
   /** The listed tools the organization locks as high risk. */
   locked: string[];
+  /** The tools the chat can be offered, by connector; reading ones carry `read`. */
+  tools: ActToolGroup[];
 }
 
 export interface ChatToolAnswersState {
   /** null until loaded. */
   answers: ToolDecisionLists | null;
   failedToLoad: boolean;
-  /** The tool a reset is on its way for. */
+  /** The tool a change (a reset or a block) is on its way for. */
   resetting: string | null;
   error: string | null;
+  /** The row whose tag's explanation is open. */
+  explaining: string | null;
+  /** "Block a tool": open or shut, and what is typed in its search. */
+  picker: { open: boolean; filter: string };
 }
 
 export type ChatToolAnswersAction =
   | { type: 'loaded'; answers: unknown }
   | { type: 'load-failed' }
   | { type: 'reset-started'; tool: string }
+  | { type: 'block-started'; tool: string }
   | { type: 'reset-succeeded'; answers: unknown }
-  | { type: 'reset-failed'; error: string };
+  | { type: 'reset-failed'; error: string }
+  | { type: 'explain'; tool: string }
+  | { type: 'picker-toggled' }
+  | { type: 'picker-filter'; filter: string };
 
 export const initialChatToolAnswersState: ChatToolAnswersState = {
   answers: null,
   failedToLoad: false,
   resetting: null,
   error: null,
+  explaining: null,
+  picker: { open: false, filter: '' },
 };
+
+function groupsOf(raw: unknown): ActToolGroup[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((group): ActToolGroup[] => {
+    if (typeof group !== 'object' || group === null) return [];
+    const key: unknown = Reflect.get(group, 'key');
+    const label: unknown = Reflect.get(group, 'label');
+    const tools: unknown = Reflect.get(group, 'tools');
+    if (typeof key !== 'string' || typeof label !== 'string' || !Array.isArray(tools)) return [];
+    return [
+      {
+        key,
+        label,
+        tools: tools.flatMap((tool) => {
+          if (typeof tool !== 'object' || tool === null) return [];
+          const name: unknown = Reflect.get(tool, 'name');
+          const toolLabelText: unknown = Reflect.get(tool, 'label');
+          if (typeof name !== 'string') return [];
+          return [
+            {
+              name,
+              label: typeof toolLabelText === 'string' ? toolLabelText : name,
+              ...(Reflect.get(tool, 'read') === true ? { read: true as const } : {}),
+            },
+          ];
+        }),
+      },
+    ];
+  });
+}
 
 function listOf(raw: unknown): string[] {
   return Array.isArray(raw)
@@ -64,12 +113,13 @@ function pair(raw: unknown): { allow: string[]; deny: string[] } {
 
 function read(raw: unknown): ToolDecisionLists {
   if (typeof raw !== 'object' || raw === null) {
-    return { chat: pair(null), always: pair(null), locked: [] };
+    return { chat: pair(null), always: pair(null), locked: [], tools: [] };
   }
   return {
     chat: pair(Reflect.get(raw, 'chat')),
     always: pair(Reflect.get(raw, 'always')),
     locked: listOf(Reflect.get(raw, 'locked')),
+    tools: groupsOf(Reflect.get(raw, 'tools')),
   };
 }
 
@@ -83,26 +133,62 @@ export function chatToolAnswersReducer(
     case 'load-failed':
       return { ...state, failedToLoad: true };
     case 'reset-started':
+    case 'block-started':
       return state.resetting ? state : { ...state, resetting: action.tool, error: null };
     case 'reset-succeeded':
-      return { ...state, answers: read(action.answers), resetting: null, error: null };
+      return {
+        ...state,
+        answers: read(action.answers),
+        resetting: null,
+        error: null,
+        explaining: null,
+      };
     case 'reset-failed':
       return { ...state, resetting: null, error: action.error };
+    case 'explain':
+      return { ...state, explaining: state.explaining === action.tool ? null : action.tool };
+    case 'picker-toggled':
+      return { ...state, picker: { open: !state.picker.open, filter: '' } };
+    case 'picker-filter':
+      return { ...state, picker: { ...state.picker, filter: action.filter } };
   }
 }
 
 export type ToolDecision = 'blocked-here' | 'always-blocked' | 'allowed-here' | 'always-allowed';
 
-/** What a row's tag says, and the glyph beside it. */
+export type TagGlyph = 'ban' | 'hand' | 'check' | 'double-check' | 'lock';
+
+/** What a row's tag says, the glyph beside it, and what it means (its tooltip and explanation). */
 export const DECISION_TAGS: Record<
   ToolDecision | 'locked',
-  { text: string; glyph: 'ban' | 'hand' | 'check' | 'double-check' | 'lock' }
+  { text: string; glyph: TagGlyph; meaning: string }
 > = {
-  'blocked-here': { text: 'Blocked here', glyph: 'ban' },
-  'always-blocked': { text: 'Always blocked', glyph: 'hand' },
-  'allowed-here': { text: 'Allowed here', glyph: 'check' },
-  'always-allowed': { text: 'Always allowed', glyph: 'double-check' },
-  locked: { text: 'Locked · asks', glyph: 'lock' },
+  'blocked-here': {
+    text: 'Blocked here',
+    glyph: 'ban',
+    meaning: 'Refused in this chat: if the model calls it here, the call is turned down.',
+  },
+  'always-blocked': {
+    text: 'Always blocked',
+    glyph: 'hand',
+    meaning: 'Refused in every chat: the model can never use it anywhere in Renkei.',
+  },
+  'allowed-here': {
+    text: 'Allowed here',
+    glyph: 'check',
+    meaning: 'In this chat the model calls it without waiting for you to allow it.',
+  },
+  'always-allowed': {
+    text: 'Always allowed',
+    glyph: 'double-check',
+    meaning: 'In every chat in Renkei the model calls it without waiting for you to allow it.',
+  },
+  locked: {
+    text: 'Locked · asks',
+    glyph: 'lock',
+    meaning:
+      'Your organization locks this tool as high risk: it asks every time, whatever you allowed.',
+  },
 };
 
 export interface ChatToolAnswerRow {
@@ -112,13 +198,24 @@ export interface ChatToolAnswerRow {
   /** The organization locks it: an allow does nothing, it asks. */
   locked: boolean;
   /** The tag: the decision's, or "Locked · asks" for an allowed tool that is locked. */
-  tag: { text: string; glyph: 'ban' | 'hand' | 'check' | 'double-check' | 'lock' };
+  tag: { text: string; glyph: TagGlyph; meaning: string };
+  /** The tag's explanation is open under the row. */
+  explained: boolean;
   blocked: boolean;
   /** Which list Reset takes it off. */
   scope: 'chat' | 'always';
   /** This row's Reset is on its way; every Reset is off while any is. */
   busy: boolean;
   disabled: boolean;
+}
+
+/** A tool's name as the catalog words it, else as the thread does. */
+function labelOf(lists: ToolDecisionLists, name: string): string {
+  for (const group of lists.tools) {
+    const found = group.tools.find((tool) => tool.name === name);
+    if (found) return found.label;
+  }
+  return toolLabel(name);
 }
 
 /** The decision that applies to a tool, as a turn reads them; null when it asks. */
@@ -153,12 +250,13 @@ export function chatToolAnswerRows(state: ChatToolAnswersState): ChatToolAnswerR
       return [
         {
           name,
-          label: toolLabel(name),
+          label: labelOf(lists, name),
           decision,
           locked,
           tag: DECISION_TAGS[locked ? 'locked' : decision],
           blocked,
           scope: decision === 'blocked-here' || decision === 'allowed-here' ? 'chat' : 'always',
+          explained: state.explaining === name,
           busy: state.resetting === name,
           disabled: state.resetting !== null,
         },
@@ -219,7 +317,61 @@ export function chatToolAnswersCount(state: ChatToolAnswersState): string {
     .join(' · ');
 }
 
-/** Whether the section shows at all: only once loaded, and only with something decided. */
+/** Whether the section shows at all: once loaded (it always offers "Block a tool"). */
 export function showsChatToolAnswers(state: ChatToolAnswersState): boolean {
-  return chatToolAnswerRows(state).length > 0;
+  return state.answers !== null;
+}
+
+/** The most "Block a tool" lists at once; typing narrows it. */
+export const PICKER_LIMIT = 40;
+
+export interface PickerGroup {
+  key: string;
+  label: string;
+  tools: { name: string; label: string; read: boolean }[];
+}
+
+/**
+ * What "Block a tool" offers: the chat's tools no block already covers
+ * (an allowed one can still be blocked), matching the search by name or
+ * connector, by connector, at most PICKER_LIMIT tools.
+ */
+export function pickerGroups(state: ChatToolAnswersState): {
+  groups: PickerGroup[];
+  more: number;
+} {
+  const lists = state.answers;
+  if (!lists) return { groups: [], more: 0 };
+  const blocked = new Set([...lists.chat.deny, ...lists.always.deny]);
+  const needle = state.picker.filter.trim().toLowerCase();
+  let shown = 0;
+  let more = 0;
+  const groups: PickerGroup[] = [];
+  for (const group of lists.tools) {
+    const groupMatches = needle !== '' && group.label.toLowerCase().includes(needle);
+    const tools = group.tools.filter(
+      (tool) =>
+        !blocked.has(tool.name) &&
+        (needle === '' ||
+          groupMatches ||
+          tool.label.toLowerCase().includes(needle) ||
+          tool.name.toLowerCase().includes(needle))
+    );
+    const room = Math.max(0, PICKER_LIMIT - shown);
+    more += Math.max(0, tools.length - room);
+    const kept = tools.slice(0, room);
+    shown += kept.length;
+    if (kept.length > 0) {
+      groups.push({
+        key: group.key,
+        label: group.label,
+        tools: kept.map((tool) => ({
+          name: tool.name,
+          label: tool.label,
+          read: tool.read === true,
+        })),
+      });
+    }
+  }
+  return { groups, more };
 }

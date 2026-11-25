@@ -13,6 +13,8 @@ import {
   groupSummary,
   initToolPermissions,
   allowLocked,
+  isReadTool,
+  shownRule,
   isDirty,
   saveBody,
   toolPermissionsReducer,
@@ -146,5 +148,34 @@ describe('what a chat may do', () => {
     expect(ruleFor(all.prefs, 'chat_memory_remember')).toBe('allow');
     const blocked = fold([{ type: 'set-rule', name: 'chat_memory_forget', rule: 'deny' }], start);
     expect(ruleFor(blocked.prefs, 'chat_memory_forget')).toBe('deny');
+  });
+
+  it('a reading tool runs without asking: it shows Allow, offers no Ask, and can be blocked', () => {
+    const groups: ActToolGroup[] = [
+      {
+        key: 'renkei-chat',
+        label: 'The chat itself',
+        tools: [
+          { name: 'chat_memory_list', label: 'List memories', read: true },
+          { name: 'chat_memory_remember', label: 'Remember' },
+        ],
+      },
+    ];
+    const start = initToolPermissions({ prefs: { alwaysAllow: [], alwaysDeny: [] }, groups });
+    expect(isReadTool(start, 'chat_memory_list')).toBe(true);
+    expect(shownRule(start, 'chat_memory_list')).toBe('allow');
+    expect(shownRule(start, 'chat_memory_remember')).toBe('ask');
+    expect(groupSummary(groups[0], start.prefs)).toBe('1 ask · 1 read');
+
+    const blocked = fold([{ type: 'set-rule', name: 'chat_memory_list', rule: 'deny' }], start);
+    expect(saveBody(blocked)).toEqual({ alwaysAllow: [], alwaysDeny: ['chat_memory_list'] });
+    expect(groupSummary(groups[0], blocked.prefs)).toBe('1 blocked');
+
+    // Allow on a reading tool stores nothing: it is simply back to running.
+    const back = fold([{ type: 'set-rule', name: 'chat_memory_list', rule: 'allow' }], blocked);
+    expect(saveBody(back)).toEqual({ alwaysAllow: [], alwaysDeny: [] });
+    // "All of …: Allow" never puts a reading tool on the allowed list.
+    const all = fold([{ type: 'set-all', group: groups[0], rule: 'allow' }], start);
+    expect(saveBody(all)).toEqual({ alwaysAllow: ['chat_memory_remember'], alwaysDeny: [] });
   });
 });

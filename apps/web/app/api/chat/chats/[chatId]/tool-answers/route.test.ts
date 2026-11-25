@@ -7,6 +7,19 @@
  */
 
 jest.mock('@/lib/session', () => ({ getSessionFromRequest: jest.fn() }));
+// The catalog reaches every connector's registration; one fixed group stands in.
+jest.mock('@/lib/chat/permission-catalog', () => ({
+  listChatToolGroups: async () => [
+    {
+      key: 'renkei-chat',
+      label: 'The chat itself',
+      tools: [
+        { name: 'chat_memory_list', label: 'List memories', read: true },
+        { name: 'chat_memory_remember', label: 'Remember' },
+      ],
+    },
+  ],
+}));
 
 import { randomUUID } from 'node:crypto';
 import { NextRequest } from 'next/server';
@@ -73,6 +86,28 @@ describe('the decisions that apply to tools in a chat', () => {
       chat: { allow: ['card_update'], deny: ['card_create'] },
       always: { allow: ['outlook_send_mail'], deny: ['jira_delete_issue'] },
       locked: ['outlook_send_mail'],
+      tools: [
+        {
+          key: 'renkei-chat',
+          label: 'The chat itself',
+          tools: [
+            { name: 'chat_memory_list', label: 'List memories', read: true },
+            { name: 'chat_memory_remember', label: 'Remember' },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('blocks a tool here or always, a reading one included (no card would ever offer it)', async () => {
+    const chatId = await chatOf(me);
+    const here = await put(chatId, { tool: 'chat_memory_list', rule: 'deny', scope: 'chat' });
+    expect((await here.json()).chat).toEqual({ allow: [], deny: ['chat_memory_list'] });
+    const always = await put(chatId, { tool: 'chat_memory_list', rule: 'deny', scope: 'always' });
+    expect((await always.json()).always).toEqual({ allow: [], deny: ['chat_memory_list'] });
+    expect(await getChatToolPermissionPrefs(me, { fresh: true })).toEqual({
+      alwaysAllow: [],
+      alwaysDeny: ['chat_memory_list'],
     });
   });
 
@@ -97,7 +132,7 @@ describe('the decisions that apply to tools in a chat', () => {
     });
   });
 
-  it('only takes decisions back, and needs to know which list', async () => {
+  it('never allows (that is the card’s, which knows the locks), and needs to know which list', async () => {
     const chatId = await chatOf(me);
     for (const body of [
       { tool: 'card_create', rule: 'allow', scope: 'chat' },

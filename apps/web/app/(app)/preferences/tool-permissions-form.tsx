@@ -29,7 +29,6 @@ import { chatClient } from '@/lib/chat/client';
 import {
   CHAT_OWN_TOOLS_KEY,
   CODE_TOOLS_KEY,
-  ruleFor,
   type ActToolGroup,
   type ChatToolPermissionPrefs,
   type ToolPermissionRule,
@@ -39,6 +38,7 @@ import {
   groupSummary,
   initToolPermissions,
   allowLocked,
+  shownRule,
   saveBody,
   toolPermissionsReducer,
   unlistedDecisions,
@@ -63,7 +63,7 @@ export default function ToolPermissionsForm({
 }) {
   const [state, dispatch] = useReducer(
     toolPermissionsReducer,
-    { prefs: initial, locked },
+    { prefs: initial, locked, groups },
     initToolPermissions
   );
   const { prefs, status } = state;
@@ -92,7 +92,8 @@ export default function ToolPermissionsForm({
           A chat asks before it does anything that changes something — files an issue, sends a
           message, writes a file. Decide ahead of time here, per tool: keep asking, allow it without
           asking, or block it so the chat never sees it. &ldquo;Always allow&rdquo; on a
-          chat&rsquo;s permission card lands here too. Reading never asks.
+          chat&rsquo;s permission card lands here too. Tools that only read never ask, but you can
+          still block one here.
         </p>
       </div>
 
@@ -154,7 +155,7 @@ export default function ToolPermissionsForm({
                     </thead>
                     <tbody>
                       {group.tools.map((tool) => {
-                        const current = ruleFor(prefs, tool.name);
+                        const current = shownRule(state, tool.name);
                         return (
                           <tr
                             key={tool.name}
@@ -164,31 +165,50 @@ export default function ToolPermissionsForm({
                           >
                             <td className="px-3 py-2 align-top">
                               <span className="font-medium">{tool.label}</span>
+                              {tool.read ? (
+                                <span
+                                  className="ml-2 rounded bg-gray-100 px-1 text-[11px] text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+                                  title="Only reads: it never asks, but you can block it"
+                                >
+                                  reads
+                                </span>
+                              ) : null}
                               <code className="ml-2 font-mono text-xs break-all text-gray-500 dark:text-gray-400">
                                 {tool.name}
                               </code>
                             </td>
-                            {RULES.map(({ rule, label }) => (
-                              <td key={rule} className="px-1 py-2 text-center align-top">
-                                <input
-                                  type="radio"
-                                  disabled={rule === 'allow' && allowLocked(state, tool.name)}
-                                  title={
-                                    rule === 'allow' && allowLocked(state, tool.name)
-                                      ? 'Your organization locks this tool as high risk: it always asks'
-                                      : undefined
-                                  }
-                                  name={`tool-rule:${tool.name}`}
-                                  // The wire name is part of the accessible name:
-                                  // two tools can share a title within a connector.
-                                  aria-label={`${tool.label} (${tool.name}) — ${label}`}
-                                  checked={current === rule}
-                                  onChange={() =>
-                                    dispatch({ type: 'set-rule', name: tool.name, rule })
-                                  }
-                                />
-                              </td>
-                            ))}
+                            {RULES.map(({ rule, label }) =>
+                              tool.read && rule === 'ask' ? (
+                                // A reading tool never asks: no Ask to choose.
+                                <td
+                                  key={rule}
+                                  className="px-1 py-2 text-center align-top text-gray-400"
+                                  aria-hidden="true"
+                                >
+                                  —
+                                </td>
+                              ) : (
+                                <td key={rule} className="px-1 py-2 text-center align-top">
+                                  <input
+                                    type="radio"
+                                    disabled={rule === 'allow' && allowLocked(state, tool.name)}
+                                    title={
+                                      rule === 'allow' && allowLocked(state, tool.name)
+                                        ? 'Your organization locks this tool as high risk: it always asks'
+                                        : undefined
+                                    }
+                                    name={`tool-rule:${tool.name}`}
+                                    // The wire name is part of the accessible name:
+                                    // two tools can share a title within a connector.
+                                    aria-label={`${tool.label} (${tool.name}) — ${label}`}
+                                    checked={current === rule}
+                                    onChange={() =>
+                                      dispatch({ type: 'set-rule', name: tool.name, rule })
+                                    }
+                                  />
+                                </td>
+                              )
+                            )}
                           </tr>
                         );
                       })}

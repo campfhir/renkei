@@ -1,4 +1,5 @@
 import {
+  pickerGroups,
   chatToolAnswerGroups,
   chatToolAnswerRows,
   chatToolAnswersCount,
@@ -20,13 +21,86 @@ const all = loaded({
 });
 
 describe('Decided here', () => {
-  it('shows nothing until loaded, and nothing when no tool has a decision (they all ask)', () => {
+  it('shows once loaded, listing no rows when no tool has a decision (they all ask)', () => {
     expect(showsChatToolAnswers(fold())).toBe(false);
+    const none = fold(
+      loaded({ chat: { allow: [], deny: [] }, always: { allow: [], deny: [] }, locked: [] })
+    );
+    expect(showsChatToolAnswers(none)).toBe(true);
+    expect(chatToolAnswerRows(none)).toEqual([]);
+    expect(chatToolAnswersCount(none)).toBe('');
+  });
+
+  it('each tag says what it means, and pressing it opens that explanation (one at a time)', () => {
+    const rows = chatToolAnswerRows(fold(all));
+    expect(rows.map((row) => row.tag.meaning)).toEqual([
+      'Refused in this chat: if the model calls it here, the call is turned down.',
+      'Refused in every chat: the model can never use it anywhere in Renkei.',
+      'In this chat the model calls it without waiting for you to allow it.',
+      'In every chat in Renkei the model calls it without waiting for you to allow it.',
+    ]);
+    const open = fold(all, { type: 'explain', tool: 'card_create' });
     expect(
-      showsChatToolAnswers(
-        fold(loaded({ chat: { allow: [], deny: [] }, always: { allow: [], deny: [] }, locked: [] }))
-      )
-    ).toBe(false);
+      chatToolAnswerRows(open)
+        .filter((row) => row.explained)
+        .map((row) => row.name)
+    ).toEqual(['card_create']);
+    const other = chatToolAnswersReducer(open, { type: 'explain', tool: 'card_update' });
+    expect(
+      chatToolAnswerRows(other)
+        .filter((row) => row.explained)
+        .map((row) => row.name)
+    ).toEqual(['card_update']);
+    expect(
+      chatToolAnswersReducer(other, { type: 'explain', tool: 'card_update' }).explaining
+    ).toBeNull();
+  });
+
+  it('Block a tool offers the chat’s tools no block covers yet, reading ones too, narrowed by the search', () => {
+    const withTools = fold(
+      loaded({
+        chat: { allow: ['card_update'], deny: ['card_create'] },
+        always: { allow: [], deny: [] },
+        locked: [],
+        tools: [
+          {
+            key: 'renkei-cards',
+            label: 'Renkei cards',
+            tools: [
+              { name: 'card_create', label: 'Create a card' },
+              { name: 'card_list', label: 'List cards', read: true },
+              { name: 'card_update', label: 'Update a card' },
+            ],
+          },
+          {
+            key: 'jira',
+            label: 'Jira',
+            tools: [{ name: 'jira_search', label: 'Search', read: true }],
+          },
+        ],
+      }),
+      { type: 'picker-toggled' }
+    );
+    expect(withTools.picker.open).toBe(true);
+    expect(pickerGroups(withTools).groups).toEqual([
+      {
+        key: 'renkei-cards',
+        label: 'Renkei cards',
+        tools: [
+          { name: 'card_list', label: 'List cards', read: true },
+          // Allowed here, but it can still be blocked.
+          { name: 'card_update', label: 'Update a card', read: false },
+        ],
+      },
+      { key: 'jira', label: 'Jira', tools: [{ name: 'jira_search', label: 'Search', read: true }] },
+    ]);
+    const narrowed = chatToolAnswersReducer(withTools, { type: 'picker-filter', filter: 'jira' });
+    expect(pickerGroups(narrowed).groups.map((group) => group.key)).toEqual(['jira']);
+    // A row uses the catalog's words for the tool.
+    expect(chatToolAnswerRows(withTools).map((row) => row.label)).toEqual([
+      'Create a card',
+      'Update a card',
+    ]);
   });
 
   it('lists the four decisions in one list, blocks first, each with its tag and glyph', () => {

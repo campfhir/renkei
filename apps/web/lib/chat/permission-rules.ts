@@ -84,6 +84,12 @@ export function withRule(
 export interface ActToolEntry {
   name: string;
   label: string;
+  /**
+   * A tool that only reads: it never asks, so Allow means nothing for it,
+   * but it can still be blocked (here or always) from Preferences or the
+   * chat's Tools dialog. Absent for a tool that acts.
+   */
+  read?: true;
 }
 
 export interface ActToolGroup {

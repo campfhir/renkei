@@ -192,7 +192,7 @@ test('Block in this chat refuses the call and keeps it out of the chat, until Re
 
     // Taken back from the chat's Tools dialog: Reset sends "ask" for the tool.
     await page.getByRole('button', { name: 'Tools', exact: true }).click();
-    const decided = page.getByRole('region', { name: 'Decided here' });
+    const decided = page.getByRole('region', { name: 'Permissions' });
     await expect(decided).toContainText('Blocked here');
     await shot(page, testInfo, 'chat-tools-decided.png');
     const reset = page.waitForRequest(
@@ -200,7 +200,7 @@ test('Block in this chat refuses the call and keeps it out of the chat, until Re
     );
     await decided.getByRole('button', { name: new RegExp(`^Reset .*\\(${TOOL}\\)$`) }).click();
     expect((await reset).postDataJSON()).toEqual({ tool: TOOL, rule: 'ask', scope: 'chat' });
-    await expect(decided).toBeHidden();
+    await expect(decided.getByRole('button', { name: 'Blocked here' })).toBeHidden();
     await page.keyboard.press('Escape');
 
     // The next call to the tool in this chat asks again.
@@ -235,6 +235,42 @@ test('Block in this chat refuses the call and keeps it out of the chat, until Re
   } finally {
     await page.request.post(`/api/chat/chats/${parked.chatId}/turns/${parked.turnId}/cancel`);
     await removeModel(page.request, parked.modelId);
+  }
+});
+
+test('a reading tool, which never asks, can be blocked from the chat’s Tools dialog', async ({
+  page,
+  person: _person,
+}, testInfo) => {
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const modelId = await addStubModel(page.request, tag);
+  try {
+    const chatId = await createChat(page.request, { llmModelId: modelId, title: `Reads ${tag}` });
+    await page.goto(`/chat/${chatId}`);
+    await page.getByRole('button', { name: 'Tools', exact: true }).click();
+    const permissions = page.getByRole('region', { name: 'Permissions' });
+    await expect(permissions).toContainText('Anything not listed asks first.');
+
+    await permissions.getByRole('button', { name: 'Block a tool' }).click();
+    await permissions.getByLabel('Search tools to block').fill('chat_memory_list');
+    const blocked = page.waitForRequest(
+      (request) => request.method() === 'PUT' && request.url().endsWith('/tool-answers')
+    );
+    await permissions.getByRole('button', { name: /^Block .*\(chat_memory_list\) here$/ }).click();
+    expect((await blocked).postDataJSON()).toEqual({
+      tool: 'chat_memory_list',
+      rule: 'deny',
+      scope: 'chat',
+    });
+
+    // Listed now, and its tag says what it means when pressed.
+    const tagButton = permissions.getByRole('button', { name: 'Blocked here' });
+    await expect(tagButton).toBeVisible();
+    await tagButton.click();
+    await expect(permissions.getByText(/Refused in this chat/)).toBeVisible();
+    await shot(page, testInfo, 'chat-tools-permissions.png');
+  } finally {
+    await removeModel(page.request, modelId);
   }
 });
 

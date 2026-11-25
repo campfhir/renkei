@@ -5,7 +5,7 @@ import { getOrgSettings } from '@renkei/settings';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { getChatToolPermissionPrefs } from '@/lib/chat/permission-prefs';
-import { listChatActToolGroups } from '@/lib/chat/permission-catalog';
+import { listChatToolGroups } from '@/lib/chat/permission-catalog';
 import { PreferencesSectionBody } from '../section-body';
 import ToolPermissionsForm from '../tool-permissions-form';
 
@@ -15,7 +15,8 @@ export default async function PermissionsPage(): Promise<React.ReactNode> {
   if (!session) redirect(signInUrl(`/preferences/permissions`));
   const [toolPermissions, groups, org] = await Promise.all([
     getChatToolPermissionPrefs(session.subject, { fresh: true }),
-    listChatActToolGroups(session.subject, session.roles),
+    // Reading tools too: they never ask, but they can be blocked.
+    listChatToolGroups(session.subject, session.roles),
     getOrgSettings(),
   ]);
   return (
