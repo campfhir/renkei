@@ -80,11 +80,13 @@ test('app menu column: open by default, toggles and is remembered', async ({
   await shot('account-menu.png');
   await menu.getByRole('menuitem', { name: 'Organization' }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Organization' })).toBeVisible();
-  await expect(page.getByRole('link', { name: /Agent oversight/ })).toBeVisible();
+  // The console's areas are in its sidebar on every one of its pages.
+  const areas = page.getByRole('navigation', { name: 'Organization areas' });
+  await expect(areas.getByRole('link', { name: 'Agent oversight' })).toBeVisible();
   await shot('organization.png');
 
   // Storage has its own page, and a test that says what is wrong before saving.
-  await page.getByRole('link', { name: /^Storage/ }).click();
+  await areas.getByRole('link', { name: 'Storage' }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Storage' })).toBeVisible();
   await page.getByLabel('Storage account').fill('devstoreaccount1');
   await page.getByRole('button', { name: 'Test connection' }).click();
