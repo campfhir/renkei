@@ -29,6 +29,14 @@ describe('languageForPath, the longer tail', () => {
     expect(languageForPath('samples/adt.hl7')).toBe('plaintext');
   });
 
+  it('knows a Salesforce project’s Apex and SOQL', () => {
+    expect(languageForPath('force-app/main/default/classes/AccountService.cls')).toBe('apex');
+    expect(languageForPath('force-app/main/default/triggers/AccountTrigger.trigger')).toBe('apex');
+    expect(languageForPath('scripts/apex/hello.apex')).toBe('apex');
+    expect(languageForPath('scripts/soql/account.soql')).toBe('sql');
+    expect(highlighterLanguageFor('apex')).toBe('java');
+  });
+
   it('knows more dotfiles and bare names', () => {
     expect(languageForPath('.env.development')).toBe('ini');
     expect(languageForPath('.prettierrc')).toBe('json');

@@ -155,6 +155,7 @@ describe('wrapCommand', () => {
     expect(env.GOPATH).toBe('/h/go');
     expect(env.CARGO_HOME).toBe('/h/.cargo');
     expect(env.XDG_CACHE_HOME).toBe('/h/.cache');
+    expect(env.SF_DISABLE_TELEMETRY).toBe('true');
     expect(env.DATABASE_URL).toBeUndefined();
     expect(env.SANDBOX_WORKER_API_KEY).toBeUndefined();
     expect(env.GIT_CONFIG_COUNT).toBe('1');

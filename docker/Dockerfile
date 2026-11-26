@@ -696,6 +696,7 @@ ARG RUSTUP_VERSION=1.29.1
 ARG RUST_TOOLCHAIN=1.99.0
 ARG TEMURIN_RELEASE=jdk-21.0.12.1+1
 ARG JDTLS_VERSION=1.63.0
+ARG SALESFORCE_CLI_VERSION=2.159.7
 
 # TypeScript/JavaScript, Python and shell: Node-based, beside the
 # worker's own Node. The shell server lints through shellcheck when it
@@ -812,6 +813,17 @@ RUN ARCH="$(dpkg --print-architecture)" && \
     ln -s /usr/local/jdtls/bin/jdtls /usr/local/bin/jdtls && \
     chmod -R a+rX /usr/local/java /usr/local/jdtls && \
     java -version && test -x /usr/local/jdtls/bin/jdtls
+
+# The Salesforce CLI, for a code project that is a Salesforce DX project:
+# converting metadata pulled from an org into source format and the
+# project's own offline commands. No org is ever signed in to from here —
+# a deploy is the project's pipeline's (docs/salesforce-ci-design.md) — so
+# it holds no credential; its state goes under the caller's HOME. The same
+# version the starter CI blocks pin (packages/db/src/migrations/
+# 200-salesforce-ci-blocks.ts).
+RUN npm install -g --no-audit --no-fund @salesforce/cli@${SALESFORCE_CLI_VERSION} && \
+    rm -rf /root/.npm && \
+    SF_DISABLE_TELEMETRY=true SF_AUTOUPDATE_DISABLE=true sf --version
 
 # Created before anything it owns — see the runtime stage for why a trailing
 # chown -R would double the image.

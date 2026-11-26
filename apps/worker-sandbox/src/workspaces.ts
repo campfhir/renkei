@@ -391,6 +391,9 @@ export function childEnvironment(input: RunInput): Record<string, string> {
     GOCACHE: `${input.home}/.cache/go-build`,
     CARGO_HOME: `${input.home}/.cargo`,
     RUSTUP_HOME,
+    // The Salesforce CLI the image carries: no usage reports, and no updating itself in place.
+    SF_DISABLE_TELEMETRY: 'true',
+    SF_AUTOUPDATE_DISABLE: 'true',
     ...(input.extraEnv ?? {}),
   };
   if (input.gitProxy) {

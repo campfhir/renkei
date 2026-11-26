@@ -130,6 +130,8 @@ Building in a Salesforce org: the first three slices of the design's admin conne
 
 Not yet: the rest of the design's admin tools — record pages, paths, quick actions, compact layouts, stamp rules, apps, report types, report and dashboard drafts and folders, whole applications, promotion between orgs, `compare_orgs`, `audit_trail`, `export_openapi`, `list_apps`, `list_flows`.
 
+**Deploys through CI (first step).** Migration 200 (`packages/db/src/migrations/200-salesforce-ci-blocks.ts`) seeds two building blocks, `salesforce-validate` (a check-only deploy) and `salesforce-deploy`, for a code project that is a Salesforce DX project: a pinned Salesforce CLI on `node:22` signs in as the organization's integration user from the host's variables `SF_LOGIN_URL`, `SF_CLIENT_ID` and the secret `SF_CLIENT_CREDENTIAL` (the app's consumer secret, or its private key with the step's `username`) and runs `sf project deploy start`. The connector's own change requests are unchanged for now; [`salesforce-ci-design.md`](./salesforce-ci-design.md) says where this goes. The sandbox image carries the same CLI for offline work on a checkout, signed in to nothing.
+
 ## connector-fileshares
 
 Wraps org-registered SMB/SFTP network shares. An admin registers only connection details (protocol/host/port/share/root path) — each employee separately connects with **their own** credentials, sealed via `credentials.ts` (`encryptCredentials`/`decryptCredentials`).
