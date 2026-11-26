@@ -80,7 +80,7 @@ test('with the org switch off, no tour runs and the Tutorials door is closed', a
     await shot(page, testInfo, 'coach-off-tutorials');
 
     // Where the switch lives.
-    await page.goto(`/admin/settings`);
+    await page.goto(`/admin/settings/safety`);
     const toggle = page.getByRole('switch', { name: 'Guided tours' });
     await expect(toggle).toBeVisible();
     await expect(toggle).toHaveAttribute('aria-checked', 'false');

@@ -14,6 +14,7 @@
  */
 
 import { adminSections } from '@/lib/admin-areas';
+import { settingsGroupHref, settingsGroupOf } from '@/lib/admin-settings';
 import { anchorId } from '@/lib/hash-scroll';
 
 export interface AppPlaceEntry {
@@ -207,6 +208,12 @@ const CONNECTOR_PLACES: AppPlaceEntry[] = CONNECTOR_CARDS.map((entry) => ({
     : {}),
 }));
 
+/** The page of Settings a heading is on: its group's, or Settings itself. */
+function settingsPageOf(heading: string): string {
+  const group = settingsGroupOf(heading);
+  return group ? settingsGroupHref(group.id) : ADMIN_SETTINGS;
+}
+
 /** The organization's settings sections, by the heading each one carries. */
 const ORGANIZATION_SETTINGS: { title: string; keywords: string }[] = [
   { title: 'Organization', keywords: 'name organization display name branding' },
@@ -220,13 +227,14 @@ const ORGANIZATION_SETTINGS: { title: string; keywords: string }[] = [
   { title: 'Request limits', keywords: 'limits quotas size requests' },
   { title: 'Sandbox', keywords: 'sandbox code workspace services' },
   { title: 'AD Manager', keywords: 'ad manager active directory' },
+  { title: 'Code previews', keywords: 'code previews preview host subdomain' },
 ];
 
 const ORGANIZATION_PLACES: AppPlaceEntry[] = [
   ...ORGANIZATION_SETTINGS.map((entry) => ({
     title: entry.title,
     where: 'Organization settings',
-    href: `${ADMIN_SETTINGS}#${anchorId('settings', entry.title)}`,
+    href: `${settingsPageOf(entry.title)}#${anchorId('settings', entry.title)}`,
     keywords: entry.keywords,
     section: 'Organization' as const,
     operatorOnly: true,
@@ -234,7 +242,7 @@ const ORGANIZATION_PLACES: AppPlaceEntry[] = [
   {
     title: 'Locked high-risk tools',
     where: 'Organization settings',
-    href: `${ADMIN_SETTINGS}#locked-high-risk-tools`,
+    href: `${settingsPageOf('Locked high-risk tools')}#locked-high-risk-tools`,
     keywords: 'high risk locked tools approval agents auto mode always ask',
     section: 'Organization' as const,
     operatorOnly: true,

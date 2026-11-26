@@ -153,7 +153,7 @@ describe('finding', () => {
   it('sends an operator straight to an organization setting, and offers it to no one else', () => {
     const asOperator = section(search('safety', {}, true), 'Organization');
     const safety = asOperator.find((r) => /Safety/.test(r.label));
-    expect(safety?.href).toBe('/admin/settings#settings-safety');
+    expect(safety?.href).toBe('/admin/settings/safety#settings-safety');
     expect(safety?.detail).toContain('Organization settings');
     expect(section(search('safety', {}, false), 'Organization')).toEqual([]);
   });

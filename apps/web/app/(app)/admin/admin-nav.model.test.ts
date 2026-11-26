@@ -1,5 +1,14 @@
 import { adminSections } from '@/lib/admin-areas';
-import { SETTINGS_PARTS, currentArea, isAreaList } from './admin-nav.model';
+import {
+  SETTINGS_GROUPS,
+  backLink,
+  currentArea,
+  currentSettingsGroup,
+  isAreaList,
+  settingsGroup,
+  settingsGroupHref,
+  settingsGroupOf,
+} from './admin-nav.model';
 
 describe('The Organization console’s areas', () => {
   it('lists every area once, in six groups, each with its own page', () => {
@@ -43,8 +52,52 @@ describe('The Organization console’s areas', () => {
     expect(isAreaList('/admin/')).toBe(true);
     expect(isAreaList('/admin/settings')).toBe(false);
   });
+});
 
-  it('names each part of Settings once', () => {
-    expect(new Set(SETTINGS_PARTS).size).toBe(SETTINGS_PARTS.length);
+describe('Settings’ groups', () => {
+  it('lists six groups, each with its own page', () => {
+    expect(SETTINGS_GROUPS.map((group) => group.label)).toEqual([
+      'General',
+      'Safety',
+      'Agents',
+      'Data & search',
+      'Access & limits',
+      'Sandbox & code',
+    ]);
+    expect(settingsGroupHref('safety')).toBe('/admin/settings/safety');
+    expect(settingsGroup('safety')?.label).toBe('Safety');
+    expect(settingsGroup('nonsense')).toBeNull();
+  });
+
+  it('every heading is on one group’s page and no other', () => {
+    const headings = SETTINGS_GROUPS.flatMap((group) => [...group.parts, ...group.also]);
+    expect(new Set(headings).size).toBe(headings.length);
+    expect(headings).toHaveLength(14);
+  });
+
+  it('finds the page a heading is on, the form’s or one beside it', () => {
+    expect(settingsGroupOf('Request limits')?.id).toBe('access');
+    expect(settingsGroupOf('Locked high-risk tools')?.id).toBe('safety');
+    expect(settingsGroupOf('Identity')?.id).toBe('general');
+    expect(settingsGroupOf('Nothing')).toBeNull();
+  });
+
+  it('knows which group a path is in, and still marks Settings as the area', () => {
+    expect(currentSettingsGroup('/admin/settings/sandbox')).toBe('sandbox');
+    expect(currentSettingsGroup('/admin/settings/sandbox/')).toBe('sandbox');
+    expect(currentSettingsGroup('/admin/settings')).toBeNull();
+    expect(currentSettingsGroup('/admin/settings/nonsense')).toBeNull();
+    expect(currentSettingsGroup('/admin/agents')).toBeNull();
+    expect(currentArea('/admin/settings/sandbox')).toBe('/admin/settings');
+  });
+
+  it('a phone’s link back: a group to Settings, an area to the list, the list nowhere', () => {
+    expect(backLink('/admin/settings/safety')).toEqual({
+      href: '/admin/settings',
+      label: 'Settings',
+    });
+    expect(backLink('/admin/settings')).toEqual({ href: '/admin', label: 'Organization' });
+    expect(backLink('/admin/agents/abc')).toEqual({ href: '/admin', label: 'Organization' });
+    expect(backLink('/admin')).toBeNull();
   });
 });

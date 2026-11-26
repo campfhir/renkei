@@ -57,38 +57,46 @@ test('an operator names the organization', async ({ page, person: _person }, tes
   test.setTimeout(240_000);
   const name = `Acme Health (${testInfo.project.name})`;
 
-  await page.goto('/admin/settings');
+  await page.goto('/admin/settings/general');
   const main = page.getByRole('main');
   const field = main.getByRole('textbox', { name: 'Organization name' });
   await expect(field).toBeVisible();
   await field.scrollIntoViewIfNeeded();
   await shot(page, testInfo, '01-default');
 
-  // The sections whose specs became route tests, as they look.
-  for (const [control, label] of [
-    [main.getByRole('switch', { name: 'Require a BAA-covered model for PHI connectors' }), 'phi'],
-    [main.getByLabel('agentActStepsRequireApproval'), 'approval-policy'],
-    [main.getByRole('switch', { name: 'Charts' }), 'sandbox'],
-  ] as const) {
-    await expect(control).toBeVisible();
-    await control.scrollIntoViewIfNeeded();
-    await shot(page, testInfo, `01-section-${label}`);
-  }
-
   try {
     // ── Rename, save: the press reaches the route, which answers the trimmed name ──
     await field.fill(`  ${name}  `);
-    // In the same save: how long an evicted sandbox's archive is kept.
+    await main.getByRole('button', { name: 'Save settings' }).click();
+    await expect(main.getByText('Saved.')).toBeVisible();
+    expect((await settings(page)).organizationName).toBe(name);
+    // The form adopts the server's answer.
+    await expect(field).toHaveValue(name);
+
+    // The groups whose specs became route tests, each on its own page, as they look.
+    for (const [group, control, label] of [
+      ['safety', () => main.getByRole('switch', { name: /^Require a BAA-covered model/ }), 'phi'],
+      ['agents', () => main.getByLabel('agentActStepsRequireApproval'), 'approval-policy'],
+      ['sandbox', () => main.getByRole('switch', { name: 'Charts' }), 'sandbox'],
+    ] as const) {
+      await page.goto(`/admin/settings/${group}`);
+      await expect(control()).toBeVisible();
+      await control().scrollIntoViewIfNeeded();
+      await shot(page, testInfo, `01-section-${label}`);
+    }
+
+    // ── Another group saves on its own page, and leaves the name as it was saved ──
+    // How long an evicted sandbox's archive is kept.
     const retention = main.getByLabel('sandboxArchiveRetentionDays');
     await expect(retention).toHaveValue(String(DEFAULT_ARCHIVE_DAYS));
     await retention.fill('45');
     await main.getByRole('button', { name: 'Save settings' }).click();
     await expect(main.getByText('Saved.')).toBeVisible();
-    expect((await settings(page)).organizationName).toBe(name);
     expect((await settings(page)).sandboxArchiveRetentionDays).toBe(45);
-    // The form adopts the server's answer.
-    await expect(field).toHaveValue(name);
+    expect((await settings(page)).organizationName).toBe(name);
     await expect(retention).toHaveValue('45');
+    await page.goto('/admin/settings/general');
+    await expect(field).toHaveValue(name);
     await shot(page, testInfo, '02-saved');
     await page.emulateMedia({ colorScheme: 'dark' });
     await shot(page, testInfo, '02-saved-dark');
@@ -96,7 +104,7 @@ test('an operator names the organization', async ({ page, person: _person }, tes
 
     // ── Phone width: the page fits, the field still sits in its section ──
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings/general');
     const narrow = page.getByRole('main').getByRole('textbox', { name: 'Organization name' });
     await expect(narrow).toBeVisible();
     const overflow = await page.evaluate(

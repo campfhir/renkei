@@ -1,11 +1,5 @@
 import type { CoachAnchor } from './anchors';
-import {
-  isEligible,
-  isSettled,
-  pickAutoStartTour,
-  stateLabel,
-  toursFor,
-} from './select';
+import { isEligible, isSettled, pickAutoStartTour, stateLabel, toursFor } from './select';
 import type { CoachMarkProgressView, CoachMarkTour } from './types';
 
 const tour = (over: Partial<CoachMarkTour> & { id: string }): CoachMarkTour => ({

@@ -3,9 +3,10 @@
 /**
  * The frame every Organization page sits in. On a wide screen: the area
  * sidebar beside the page, the sidebar staying put while the page scrolls
- * (Settings lists its parts under it while it is open). On a phone the
+ * (Settings lists its groups under it while it is open). On a phone the
  * area list is the /admin page itself (page.tsx), and an area opens with
- * a link back to it instead of the sidebar. Which area is current is
+ * a link back to it instead of the sidebar (a Settings group, back to
+ * Settings). Which area is current is
  * admin-nav.model.ts's; the areas are lib/admin-areas.ts's.
  */
 
@@ -14,13 +15,15 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
 import { adminSections } from '@/lib/admin-areas';
-import { anchorId } from '@/lib/hash-scroll';
 import {
   ADMIN_PATH,
+  SETTINGS_GROUPS,
   SETTINGS_HREF,
-  SETTINGS_PARTS,
+  backLink,
   currentArea,
+  currentSettingsGroup,
   isAreaList,
+  settingsGroupHref,
 } from './admin-nav.model';
 
 const SECTIONS = adminSections();
@@ -29,18 +32,20 @@ export default function AdminFrame({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const current = currentArea(pathname);
   const atList = isAreaList(pathname);
+  const group = currentSettingsGroup(pathname);
+  const back = backLink(pathname);
 
   return (
     <div className="mx-auto max-w-7xl">
-      {atList ? null : (
+      {back ? (
         <Link
-          href={ADMIN_PATH}
+          href={back.href}
           className="mb-3 inline-flex items-center gap-0.5 text-sm text-blue-600 hover:underline lg:hidden dark:text-blue-400"
         >
           <Icon path={ICONS.chevron} className="h-4 w-4 rotate-180" />
-          Organization
+          {back.label}
         </Link>
-      )}
+      ) : null}
       <div className="lg:grid lg:grid-cols-[13rem_minmax(0,1fr)] lg:items-start lg:gap-8">
         <nav
           aria-label="Organization areas"
@@ -73,7 +78,9 @@ export default function AdminFrame({ children }: { children: ReactNode }) {
                     <li key={area.href}>
                       <Link
                         href={area.href}
-                        aria-current={here ? 'page' : undefined}
+                        aria-current={
+                          here && !(group && area.href === SETTINGS_HREF) ? 'page' : undefined
+                        }
                         className={`flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 ${
                           here
                             ? 'bg-blue-50 font-semibold text-blue-700 dark:bg-blue-950/50 dark:text-blue-300'
@@ -88,14 +95,19 @@ export default function AdminFrame({ children }: { children: ReactNode }) {
                       </Link>
                       {here && area.href === SETTINGS_HREF ? (
                         <ul className="mt-0.5 mb-1 ml-5 border-l border-gray-200 dark:border-gray-800">
-                          {SETTINGS_PARTS.map((part) => (
-                            <li key={part}>
-                              <a
-                                href={`#${anchorId('settings', part)}`}
-                                className="block py-0.5 pl-3 text-xs text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100"
+                          {SETTINGS_GROUPS.map((entry) => (
+                            <li key={entry.id}>
+                              <Link
+                                href={settingsGroupHref(entry.id)}
+                                aria-current={group === entry.id ? 'page' : undefined}
+                                className={`block py-0.5 pl-3 text-xs ${
+                                  group === entry.id
+                                    ? 'font-semibold text-blue-700 dark:text-blue-300'
+                                    : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100'
+                                }`}
                               >
-                                {part}
-                              </a>
+                                {entry.label}
+                              </Link>
                             </li>
                           ))}
                         </ul>

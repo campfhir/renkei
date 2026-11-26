@@ -1,7 +1,7 @@
 'use client';
 
 import { anchorId } from '@/lib/hash-scroll';
-import { useReducer, useState } from 'react';
+import { createContext, useContext, useReducer, useState } from 'react';
 import { sendJsonFull } from '@/lib/fetch-json';
 import CoachTarget, { useCoachAnchor } from '@/components/coach-marks/anchor';
 import type { CoachAnchor } from '@/lib/coach-marks/anchors';
@@ -70,6 +70,9 @@ function ByteSizeInput({
   );
 }
 
+/** The parts this page of Settings shows; the form holds every value all the same. */
+const ShownParts = createContext<readonly SettingsPart[]>([]);
+
 function Section({
   title,
   anchor,
@@ -81,6 +84,8 @@ function Section({
   anchor?: CoachAnchor;
   children: React.ReactNode;
 }) {
+  const shown = useContext(ShownParts);
+  if (!shown.includes(title)) return null;
   const className =
     'rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950';
   const body = (
@@ -154,12 +159,19 @@ function Toggle({
 
 /**
  * The settings that have no more specific home, grouped by what they
- * protect. One Save for the whole page: these are numbers an operator
- * adjusts a few at a time, and eleven separate save buttons would be
- * eleven chances to forget one. What the form decides is
- * settings-form.model.ts.
+ * protect. Each group of Settings is a page showing some of the parts
+ * (`parts`); the form holds every value whichever it shows, and Save
+ * sends them all, so a page saves what it shows and leaves the rest as
+ * it was read. One Save per page: these are numbers an operator adjusts a
+ * few at a time. What the form decides is settings-form.model.ts.
  */
-export function SettingsForm({ initial }: { initial: EditableSettings }) {
+export function SettingsForm({
+  initial,
+  parts,
+}: {
+  initial: EditableSettings;
+  parts: readonly SettingsPart[];
+}) {
   const [state, dispatch] = useReducer(settingsReducer, initial, initSettings);
   const { values } = state;
 
@@ -241,465 +253,469 @@ export function SettingsForm({ initial }: { initial: EditableSettings }) {
   const saveAnchor = useCoachAnchor('admin-settings-save');
 
   return (
-    <div className="space-y-4">
-      <Section title="Organization">
-        <Row
-          label="Organization name"
-          hint="What the app calls this organization where it names it: the consent page an MCP client's user sees, for one."
-        >
-          <input
-            type="text"
-            aria-label="Organization name"
-            maxLength={80}
-            value={values.organizationName}
-            onChange={(event) => set('organizationName', event.target.value)}
-            className="w-56 rounded border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
-          />
-        </Row>
-      </Section>
+    <ShownParts.Provider value={parts}>
+      <div className="space-y-4">
+        <Section title="Organization">
+          <Row
+            label="Organization name"
+            hint="What the app calls this organization where it names it: the consent page an MCP client's user sees, for one."
+          >
+            <input
+              type="text"
+              aria-label="Organization name"
+              maxLength={80}
+              value={values.organizationName}
+              onChange={(event) => set('organizationName', event.target.value)}
+              className="w-56 rounded border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
+            />
+          </Row>
+        </Section>
 
-      <Section title="Safety" anchor="admin-settings-safety">
-        <Row
-          label="Read-only mode"
-          hint="Hides every tool that changes an external system, org-wide and immediately. Read tools keep working. The brake to pull while investigating."
-        >
-          <Toggle
-            on={values.readOnly}
-            onChange={(next) => set('readOnly', next)}
+        <Section title="Safety" anchor="admin-settings-safety">
+          <Row
             label="Read-only mode"
-          />
-        </Row>
-        <Row
-          label="Guided tours"
-          hint="The coach marks that walk people through a page. Off takes every tour down for everyone at once — nothing starts on its own, and nobody can start one from Tutorials — the brake to pull if a tour misbehaves."
-        >
-          <Toggle
-            on={values.coachMarksEnabled}
-            onChange={(next) => set('coachMarksEnabled', next)}
+            hint="Hides every tool that changes an external system, org-wide and immediately. Read tools keep working. The brake to pull while investigating."
+          >
+            <Toggle
+              on={values.readOnly}
+              onChange={(next) => set('readOnly', next)}
+              label="Read-only mode"
+            />
+          </Row>
+          <Row
             label="Guided tours"
-          />
-        </Row>
-        <Row
-          label="Require a BAA-covered model for PHI connectors"
-          hint="When on, a chat turn or agent run that can reach Mirth, OnBase or file-share tools must run on a model whose Data handling (Agent models) records a BAA; otherwise it is refused with the reason. Does not change what the model does with the data — it keeps PHI off models you have no agreement for."
-        >
-          <Toggle
-            on={values.phiConnectorsRequireCoveredModel}
-            onChange={(next) => set('phiConnectorsRequireCoveredModel', next)}
+            hint="The coach marks that walk people through a page. Off takes every tour down for everyone at once — nothing starts on its own, and nobody can start one from Tutorials — the brake to pull if a tour misbehaves."
+          >
+            <Toggle
+              on={values.coachMarksEnabled}
+              onChange={(next) => set('coachMarksEnabled', next)}
+              label="Guided tours"
+            />
+          </Row>
+          <Row
             label="Require a BAA-covered model for PHI connectors"
-          />
-        </Row>
-      </Section>
+            hint="When on, a chat turn or agent run that can reach Mirth, OnBase or file-share tools must run on a model whose Data handling (Agent models) records a BAA; otherwise it is refused with the reason. Does not change what the model does with the data — it keeps PHI off models you have no agreement for."
+          >
+            <Toggle
+              on={values.phiConnectorsRequireCoveredModel}
+              onChange={(next) => set('phiConnectorsRequireCoveredModel', next)}
+              label="Require a BAA-covered model for PHI connectors"
+            />
+          </Row>
+        </Section>
 
-      <Section title="Agents">
-        <Row
-          label="Max runs per day"
-          hint="Org-wide ceiling on agent runs started per day — the runaway-trigger brake."
-        >
-          {numberInput('agentMaxRunsPerDay', '1–10,000')}
-        </Row>
-        <Row
-          label="Active minutes per run"
-          hint="The most time one agent run may spend working — with the model and its own tool calls (default 30). Time spent waiting on a person to accept changes or answer a question, and carrying out accepted changes, is not counted. A run that reaches it ends unfinished."
-        >
-          {numberInput('agentRunTimeoutMinutes', '1–120')}
-        </Row>
-        <Row
-          label="Tool calls per run"
-          hint="The most tool calls one agent run may make (default 150) — every lookup it makes, and every change it proposes. The agent spends them as it judges best, retries included, and is told what is left."
-        >
-          {numberInput('agentRunToolCallBudget', '1–1000')}
-        </Row>
-        <Row
-          label="Max chain depth"
-          hint="How many agents may trigger each other in a chain before the platform refuses."
-        >
-          {numberInput('agentMaxChainDepth', '1–10')}
-        </Row>
-        <Row
-          label="A person must accept agent changes on"
-          hint="Agents never change anything themselves: they propose changes that are carried out once accepted. An agent can be set to accept its own proposals automatically — this names the runs where a person must accept them anyway. The default covers runs an event or webhook started — the content they act on came from outside. Sending mail, merging a pull request, deleting or sharing a document and directory writes always wait for a person, whatever this says."
-        >
-          {actApprovalSelect()}
-        </Row>
-        <Row
-          label="Max approval wait (days)"
-          hint="Ceiling on how long proposed changes or a question may wait for the owner before they are treated as declined or unanswered. An agent may ask for a shorter wait; this clamps it, runs already waiting included."
-        >
-          {numberInput('agentApprovalMaxWaitDays', '1–90')}
-        </Row>
-        <Row
-          label="Optimizer window (days)"
-          hint="How far back 'Improve' looks when it reads an agent's failures and token spend (default 30). Wider sees more history; narrower judges the agent as it is now after an edit."
-        >
-          {numberInput('agentOptimizerWindowDays', '1–365')}
-        </Row>
-      </Section>
+        <Section title="Agents">
+          <Row
+            label="Max runs per day"
+            hint="Org-wide ceiling on agent runs started per day — the runaway-trigger brake."
+          >
+            {numberInput('agentMaxRunsPerDay', '1–10,000')}
+          </Row>
+          <Row
+            label="Active minutes per run"
+            hint="The most time one agent run may spend working — with the model and its own tool calls (default 30). Time spent waiting on a person to accept changes or answer a question, and carrying out accepted changes, is not counted. A run that reaches it ends unfinished."
+          >
+            {numberInput('agentRunTimeoutMinutes', '1–120')}
+          </Row>
+          <Row
+            label="Tool calls per run"
+            hint="The most tool calls one agent run may make (default 150) — every lookup it makes, and every change it proposes. The agent spends them as it judges best, retries included, and is told what is left."
+          >
+            {numberInput('agentRunToolCallBudget', '1–1000')}
+          </Row>
+          <Row
+            label="Max chain depth"
+            hint="How many agents may trigger each other in a chain before the platform refuses."
+          >
+            {numberInput('agentMaxChainDepth', '1–10')}
+          </Row>
+          <Row
+            label="A person must accept agent changes on"
+            hint="Agents never change anything themselves: they propose changes that are carried out once accepted. An agent can be set to accept its own proposals automatically — this names the runs where a person must accept them anyway. The default covers runs an event or webhook started — the content they act on came from outside. Sending mail, merging a pull request, deleting or sharing a document and directory writes always wait for a person, whatever this says."
+          >
+            {actApprovalSelect()}
+          </Row>
+          <Row
+            label="Max approval wait (days)"
+            hint="Ceiling on how long proposed changes or a question may wait for the owner before they are treated as declined or unanswered. An agent may ask for a shorter wait; this clamps it, runs already waiting included."
+          >
+            {numberInput('agentApprovalMaxWaitDays', '1–90')}
+          </Row>
+          <Row
+            label="Optimizer window (days)"
+            hint="How far back 'Improve' looks when it reads an agent's failures and token spend (default 30). Wider sees more history; narrower judges the agent as it is now after an edit."
+          >
+            {numberInput('agentOptimizerWindowDays', '1–365')}
+          </Row>
+        </Section>
 
-      <Section title="Notifications">
-        <Row
-          label="Chat reply presence window (seconds)"
-          hint="A reply's desktop notification (feed row and OS banner) is skipped entirely when the owner's browser was connected to that exact chat's live stream within this many seconds — they were already watching it happen. That connection touches this on open, roughly every 15 seconds while it stays open, and again the instant the reply finishes, so a value a little past 15 already covers anyone genuinely watching. 0 turns the check off, so every reply notifies regardless."
-        >
-          {numberInput('chatReplyPresenceWindowSeconds', '0–300')}
-        </Row>
-      </Section>
+        <Section title="Notifications">
+          <Row
+            label="Chat reply presence window (seconds)"
+            hint="A reply's desktop notification (feed row and OS banner) is skipped entirely when the owner's browser was connected to that exact chat's live stream within this many seconds — they were already watching it happen. That connection touches this on open, roughly every 15 seconds while it stays open, and again the instant the reply finishes, so a value a little past 15 already covers anyone genuinely watching. 0 turns the check off, so every reply notifies regardless."
+          >
+            {numberInput('chatReplyPresenceWindowSeconds', '0–300')}
+          </Row>
+        </Section>
 
-      <Section title="Data & logs">
-        <Row
-          label="Log level"
-          hint="Minimum severity written to the console and the logs table. Takes effect within about 30 seconds, no restart needed — but it applies process-wide, so with several organizations sharing a deployment, the most verbose level any of them asks for is what every organization's logs get written at."
-        >
-          {logLevelSelect()}
-        </Row>
-        <Row
-          label="Content poll interval (minutes)"
-          hint="How stale watched Jira projects, Confluence spaces and document libraries may get before they are polled again. Lower = fresher search results and more provider API calls."
-        >
-          {numberInput('contentPollMinutes', '5–1,440')}
-        </Row>
-        <Row
-          label="WebEx webhook health interval (minutes)"
-          hint="How often each opted-in WebEx user's webhook registration is re-checked and repaired if WebEx dropped it. This is a repair check, not a sync — WebEx pushes messages in real time — so lower only buys faster detection of a dropped webhook at the cost of more WebEx API calls; too low can trip WebEx's rate limit on orgs with many opted-in users."
-        >
-          {numberInput('webexWebhookHealthMinutes', '15–1,440')}
-        </Row>
-        <Row
-          label="Agent notification retention (days)"
-          hint="How long the record of what an agent did — filed this ticket, sent that email — is kept before it is pruned. This is the ceiling; each person chooses which of those they want to be told about at all."
-        >
-          {numberInput('agentNotificationRetentionDays', '1–365')}
-        </Row>
-        <Row
-          label="Usage ledger retention (days)"
-          hint="How long the record behind 'My usage' is kept: one row per agent run (status, timing, cost; on failure the step and a short message) and one per model call (token counts). Default a year — longer than run history on purpose, so usage stays readable after the runs are pruned."
-        >
-          {numberInput('agentUsageRetentionDays', '1–1,825')}
-        </Row>
-        <Row
-          label="Chat retention (days)"
-          hint="How long a chat — its messages and uploaded files — is kept after its last activity before it is deleted, files first. Default a year; 0 keeps chats until their owner deletes them, which is an explicit opt-in."
-        >
-          {numberInput('chatRetentionDays', '0–3,650')}
-        </Row>
-        <Row
-          label="Log retention (days)"
-          hint="How long this organization's own logs are kept before being purged. Default 90 days; 0 keeps them forever, which is an explicit opt-in."
-        >
-          {numberInput('logRetentionDays', '0–3,650')}
-        </Row>
-      </Section>
+        <Section title="Data & logs">
+          <Row
+            label="Log level"
+            hint="Minimum severity written to the console and the logs table. Takes effect within about 30 seconds, no restart needed — but it applies process-wide, so with several organizations sharing a deployment, the most verbose level any of them asks for is what every organization's logs get written at."
+          >
+            {logLevelSelect()}
+          </Row>
+          <Row
+            label="Content poll interval (minutes)"
+            hint="How stale watched Jira projects, Confluence spaces and document libraries may get before they are polled again. Lower = fresher search results and more provider API calls."
+          >
+            {numberInput('contentPollMinutes', '5–1,440')}
+          </Row>
+          <Row
+            label="WebEx webhook health interval (minutes)"
+            hint="How often each opted-in WebEx user's webhook registration is re-checked and repaired if WebEx dropped it. This is a repair check, not a sync — WebEx pushes messages in real time — so lower only buys faster detection of a dropped webhook at the cost of more WebEx API calls; too low can trip WebEx's rate limit on orgs with many opted-in users."
+          >
+            {numberInput('webexWebhookHealthMinutes', '15–1,440')}
+          </Row>
+          <Row
+            label="Agent notification retention (days)"
+            hint="How long the record of what an agent did — filed this ticket, sent that email — is kept before it is pruned. This is the ceiling; each person chooses which of those they want to be told about at all."
+          >
+            {numberInput('agentNotificationRetentionDays', '1–365')}
+          </Row>
+          <Row
+            label="Usage ledger retention (days)"
+            hint="How long the record behind 'My usage' is kept: one row per agent run (status, timing, cost; on failure the step and a short message) and one per model call (token counts). Default a year — longer than run history on purpose, so usage stays readable after the runs are pruned."
+          >
+            {numberInput('agentUsageRetentionDays', '1–1,825')}
+          </Row>
+          <Row
+            label="Chat retention (days)"
+            hint="How long a chat — its messages and uploaded files — is kept after its last activity before it is deleted, files first. Default a year; 0 keeps chats until their owner deletes them, which is an explicit opt-in."
+          >
+            {numberInput('chatRetentionDays', '0–3,650')}
+          </Row>
+          <Row
+            label="Log retention (days)"
+            hint="How long this organization's own logs are kept before being purged. Default 90 days; 0 keeps them forever, which is an explicit opt-in."
+          >
+            {numberInput('logRetentionDays', '0–3,650')}
+          </Row>
+        </Section>
 
-      <Section title="Knowledge search">
-        <Row
-          label="Extract search keywords with the default model"
-          hint="One call to the organization's default LLM model per indexed item, asking for the names, identifiers and topic phrases a person would search for. They rank above the body text in keyword matching. Off by default: for a mailbox backfill this is the dominant cost of indexing. Needs a default model under LLM models."
-        >
-          <Toggle
-            on={values.knowledgeKeywordEnrichment}
-            onChange={(next) => set('knowledgeKeywordEnrichment', next)}
+        <Section title="Knowledge search">
+          <Row
             label="Extract search keywords with the default model"
-          />
-        </Row>
-        <Row
-          label="Minimum item size for keywords (characters)"
-          hint="Items shorter than this are indexed without a model call — a one-line chat message or a two-sentence mail has nothing a model can add over its own words. 0 sends everything."
-        >
-          {numberInput('knowledgeKeywordMinChars', '0–100,000')}
-        </Row>
-        <Row
-          label="Summarize artifacts with the default model"
-          hint="One call to the organization's default LLM model per file that lands in Artifacts (an upload, a file a chat wrote, a scan after OCR), asking for a summary and keywords. They are stored in the clear beside the file's sealed text, shown on the file, and searched by the Artifacts page, so a file is found by what it is about. Off by default: the Artifacts search then matches file names only, and no file text goes to a model on its own. A file a chat writes is described by that chat's own model as it writes it, switch or not. Needs a default model under LLM models."
-        >
-          <Toggle
-            on={values.artifactDigestEnabled}
-            onChange={(next) => set('artifactDigestEnabled', next)}
+            hint="One call to the organization's default LLM model per indexed item, asking for the names, identifiers and topic phrases a person would search for. They rank above the body text in keyword matching. Off by default: for a mailbox backfill this is the dominant cost of indexing. Needs a default model under LLM models."
+          >
+            <Toggle
+              on={values.knowledgeKeywordEnrichment}
+              onChange={(next) => set('knowledgeKeywordEnrichment', next)}
+              label="Extract search keywords with the default model"
+            />
+          </Row>
+          <Row
+            label="Minimum item size for keywords (characters)"
+            hint="Items shorter than this are indexed without a model call — a one-line chat message or a two-sentence mail has nothing a model can add over its own words. 0 sends everything."
+          >
+            {numberInput('knowledgeKeywordMinChars', '0–100,000')}
+          </Row>
+          <Row
             label="Summarize artifacts with the default model"
-          />
-        </Row>
-      </Section>
+            hint="One call to the organization's default LLM model per file that lands in Artifacts (an upload, a file a chat wrote, a scan after OCR), asking for a summary and keywords. They are stored in the clear beside the file's sealed text, shown on the file, and searched by the Artifacts page, so a file is found by what it is about. Off by default: the Artifacts search then matches file names only, and no file text goes to a model on its own. A file a chat writes is described by that chat's own model as it writes it, switch or not. Needs a default model under LLM models."
+          >
+            <Toggle
+              on={values.artifactDigestEnabled}
+              onChange={(next) => set('artifactDigestEnabled', next)}
+              label="Summarize artifacts with the default model"
+            />
+          </Row>
+        </Section>
 
-      <Section title="MCP clients & tokens">
-        <Row
-          label="Dynamic client registration"
-          hint="Lets MCP clients (Claude, editors) register themselves on this org's OAuth server without an admin pre-creating each one. Off by default: turn it on while people are connecting clients. Every connection still stops at a consent page naming the client."
-        >
-          <Toggle
-            on={values.enableDcr}
-            onChange={(next) => set('enableDcr', next)}
+        <Section title="MCP clients & tokens">
+          <Row
             label="Dynamic client registration"
-          />
-        </Row>
-        <Row
-          label="Access token lifetime (minutes)"
-          hint="How long a client's access token lasts before it must refresh."
-        >
-          {numberInput('accessTokenTtlMinutes', '5–1,440')}
-        </Row>
-        <Row
-          label="Refresh token lifetime (days)"
-          hint="How long a signed-in client stays connected without re-authorizing."
-        >
-          {numberInput('refreshTokenTtlDays', '1–365')}
-        </Row>
-        <Row
-          label="Authorization code lifetime (seconds)"
-          hint="How long the one-time code in the OAuth redirect stays valid."
-        >
-          {numberInput('authorizationCodeTtlSeconds', '30–600')}
-        </Row>
-        <Row
-          label="Browser session idle timeout (minutes)"
-          hint="How long a signed-in browser may sit unused before it is signed out. Default 12 hours; sessions end after 30 days regardless."
-        >
-          {numberInput('sessionIdleTimeoutMinutes', '15–43,200')}
-        </Row>
-      </Section>
+            hint="Lets MCP clients (Claude, editors) register themselves on this org's OAuth server without an admin pre-creating each one. Off by default: turn it on while people are connecting clients. Every connection still stops at a consent page naming the client."
+          >
+            <Toggle
+              on={values.enableDcr}
+              onChange={(next) => set('enableDcr', next)}
+              label="Dynamic client registration"
+            />
+          </Row>
+          <Row
+            label="Access token lifetime (minutes)"
+            hint="How long a client's access token lasts before it must refresh."
+          >
+            {numberInput('accessTokenTtlMinutes', '5–1,440')}
+          </Row>
+          <Row
+            label="Refresh token lifetime (days)"
+            hint="How long a signed-in client stays connected without re-authorizing."
+          >
+            {numberInput('refreshTokenTtlDays', '1–365')}
+          </Row>
+          <Row
+            label="Authorization code lifetime (seconds)"
+            hint="How long the one-time code in the OAuth redirect stays valid."
+          >
+            {numberInput('authorizationCodeTtlSeconds', '30–600')}
+          </Row>
+          <Row
+            label="Browser session idle timeout (minutes)"
+            hint="How long a signed-in browser may sit unused before it is signed out. Default 12 hours; sessions end after 30 days regardless."
+          >
+            {numberInput('sessionIdleTimeoutMinutes', '15–43,200')}
+          </Row>
+        </Section>
 
-      <Section title="Request limits">
-        <Row
-          label="Tool calls per user per minute"
-          hint="Rate limit on MCP tool calls, per person."
-        >
-          {numberInput('rateLimitPerUserPerMinute', '1–10,000')}
-        </Row>
-        <Row label="Max search results" hint="Cap on rows a Jira search (JQL) may return.">
-          {numberInput('maxJqlResults', '1–1,000')}
-        </Row>
-        <Row
-          label="Max attachment size"
-          hint="Largest attachment a tool will upload or download. Type a size with a unit, such as 70MB or 2GB."
-        >
-          <ByteSizeInput
-            label="maxAttachmentBytes"
-            value={values.maxAttachmentBytes}
-            onChange={(bytes) => set('maxAttachmentBytes', bytes)}
-            range="1MB–100MB"
-          />
-        </Row>
-        <Row
-          label="Mass upload threshold (files)"
-          hint="A chat upload of more files than this shows a slow-processing warning, is sent to the model as a file list instead of inline text, and has scanned files OCR'd."
-        >
-          {numberInput('massUploadThreshold', '2–500')}
-        </Row>
-      </Section>
+        <Section title="Request limits">
+          <Row
+            label="Tool calls per user per minute"
+            hint="Rate limit on MCP tool calls, per person."
+          >
+            {numberInput('rateLimitPerUserPerMinute', '1–10,000')}
+          </Row>
+          <Row label="Max search results" hint="Cap on rows a Jira search (JQL) may return.">
+            {numberInput('maxJqlResults', '1–1,000')}
+          </Row>
+          <Row
+            label="Max attachment size"
+            hint="Largest attachment a tool will upload or download. Type a size with a unit, such as 70MB or 2GB."
+          >
+            <ByteSizeInput
+              label="maxAttachmentBytes"
+              value={values.maxAttachmentBytes}
+              onChange={(bytes) => set('maxAttachmentBytes', bytes)}
+              range="1MB–100MB"
+            />
+          </Row>
+          <Row
+            label="Mass upload threshold (files)"
+            hint="A chat upload of more files than this shows a slow-processing warning, is sent to the model as a file list instead of inline text, and has scanned files OCR'd."
+          >
+            {numberInput('massUploadThreshold', '2–500')}
+          </Row>
+        </Section>
 
-      <Section title="Sandbox">
-        <Row
-          label="Browser"
-          hint="A headless browser agents and chats can drive through the sandbox_browser_* tools, with every connection through the worker's own egress proxy."
-        >
-          <Toggle
-            on={values.sandboxBrowserEnabled}
-            onChange={(next) => set('sandboxBrowserEnabled', next)}
+        <Section title="Sandbox">
+          <Row
             label="Browser"
-          />
-        </Row>
-        <Row
-          label="Charts"
-          hint="Charts drawn from Mermaid text (sandbox_render_chart and the chat's chat_write_chart), rendered on the sandbox worker with no network at all."
-        >
-          <Toggle
-            on={values.sandboxChartsEnabled}
-            onChange={(next) => set('sandboxChartsEnabled', next)}
+            hint="A headless browser agents and chats can drive through the sandbox_browser_* tools, with every connection through the worker's own egress proxy."
+          >
+            <Toggle
+              on={values.sandboxBrowserEnabled}
+              onChange={(next) => set('sandboxBrowserEnabled', next)}
+              label="Browser"
+            />
+          </Row>
+          <Row
             label="Charts"
-          />
-        </Row>
-        <Row
-          label="Code workspaces"
-          hint="Code projects: a repository cloned on the sandbox worker, where a project's chats read, edit, run its commands, commit and push. Turns on the Code section."
-        >
-          <Toggle
-            on={values.sandboxWorkspacesEnabled}
-            onChange={(next) => set('sandboxWorkspacesEnabled', next)}
+            hint="Charts drawn from Mermaid text (sandbox_render_chart and the chat's chat_write_chart), rendered on the sandbox worker with no network at all."
+          >
+            <Toggle
+              on={values.sandboxChartsEnabled}
+              onChange={(next) => set('sandboxChartsEnabled', next)}
+              label="Charts"
+            />
+          </Row>
+          <Row
             label="Code workspaces"
-          />
-        </Row>
-        <Row
-          label="Code project services"
-          hint="Containers a code project's chat may start beside its checkout (a database, a cache) from the images allowed on the Code services page. Needs code workspaces, and a Docker engine on the worker."
-        >
-          <Toggle
-            on={values.sandboxServicesEnabled}
-            onChange={(next) => set('sandboxServicesEnabled', next)}
+            hint="Code projects: a repository cloned on the sandbox worker, where a project's chats read, edit, run its commands, commit and push. Turns on the Code section."
+          >
+            <Toggle
+              on={values.sandboxWorkspacesEnabled}
+              onChange={(next) => set('sandboxWorkspacesEnabled', next)}
+              label="Code workspaces"
+            />
+          </Row>
+          <Row
             label="Code project services"
-          />
-        </Row>
-        <Row
-          label="Python scripts over staged files"
-          hint="sandbox_run_python: Python a chat writes, run over copies of the person's own staged files with no network. Served only where the worker can cut a run off from the network, unless the switch below accepts otherwise."
-        >
-          <Toggle
-            on={values.sandboxScriptsEnabled}
-            onChange={(next) => set('sandboxScriptsEnabled', next)}
+            hint="Containers a code project's chat may start beside its checkout (a database, a cache) from the images allowed on the Code services page. Needs code workspaces, and a Docker engine on the worker."
+          >
+            <Toggle
+              on={values.sandboxServicesEnabled}
+              onChange={(next) => set('sandboxServicesEnabled', next)}
+              label="Code project services"
+            />
+          </Row>
+          <Row
             label="Python scripts over staged files"
-          />
-        </Row>
-        <Row
-          label="Allow scripts on the worker's network"
-          hint="Where the worker cannot isolate a run's network, run scripts anyway with the worker's network access. Every result and the tool's description then say so. Leave off unless you have weighed what a script could reach."
-        >
-          <Toggle
-            on={values.sandboxScriptsAllowNetwork}
-            onChange={(next) => set('sandboxScriptsAllowNetwork', next)}
+            hint="sandbox_run_python: Python a chat writes, run over copies of the person's own staged files with no network. Served only where the worker can cut a run off from the network, unless the switch below accepts otherwise."
+          >
+            <Toggle
+              on={values.sandboxScriptsEnabled}
+              onChange={(next) => set('sandboxScriptsEnabled', next)}
+              label="Python scripts over staged files"
+            />
+          </Row>
+          <Row
             label="Allow scripts on the worker's network"
-          />
-        </Row>
-        <Row
-          label="Checkout size limit (GB)"
-          hint="How large one code project's checkout on the sandbox may grow before commands and writes in it are refused. People can ask for more on a project's page; you approve or deny those requests below, and an approval raises that project only."
-        >
-          <span className="flex items-center gap-2">
-            <input
-              type="number"
-              aria-label="sandboxWorkspaceMaxGb"
-              min={1}
-              max={64}
-              step={1}
-              value={toGb(values.sandboxWorkspaceMaxBytes)}
-              onChange={(event) => set('sandboxWorkspaceMaxBytes', gbToBytes(event.target.value))}
-              className={inputClass}
+            hint="Where the worker cannot isolate a run's network, run scripts anyway with the worker's network access. Every result and the tool's description then say so. Leave off unless you have weighed what a script could reach."
+          >
+            <Toggle
+              on={values.sandboxScriptsAllowNetwork}
+              onChange={(next) => set('sandboxScriptsAllowNetwork', next)}
+              label="Allow scripts on the worker's network"
             />
-            <span className="w-20 text-xs text-gray-400 dark:text-gray-600">1GB–64GB</span>
-          </span>
-        </Row>
-        <Row
-          label="Script memory (MB)"
-          hint="The address space one Python run over staged files may use before it fails with a MemoryError. Runs share the worker container's own memory limit with the browser and the language servers."
-        >
-          <span className="flex items-center gap-2">
-            <input
-              type="number"
-              aria-label="sandboxScriptMemoryMb"
-              min={64}
-              max={65536}
-              step={64}
-              value={toMb(values.sandboxScriptMemoryBytes)}
-              onChange={(event) => set('sandboxScriptMemoryBytes', mbToBytes(event.target.value))}
-              className={inputClass}
-            />
-            <span className="w-20 text-xs text-gray-400 dark:text-gray-600">64MB–64GB</span>
-          </span>
-        </Row>
-        <Row
-          label="Service memory (MB)"
-          hint="The memory ceiling of each container a code project starts beside its checkout. Applies to containers started after the save."
-        >
-          <span className="flex items-center gap-2">
-            <input
-              type="number"
-              aria-label="sandboxServiceMemoryMb"
-              min={64}
-              max={65536}
-              step={64}
-              value={toMb(values.sandboxServiceMemoryBytes)}
-              onChange={(event) => set('sandboxServiceMemoryBytes', mbToBytes(event.target.value))}
-              className={inputClass}
-            />
-            <span className="w-20 text-xs text-gray-400 dark:text-gray-600">64MB–64GB</span>
-          </span>
-        </Row>
-        <Row
-          label="Service process limit"
-          hint="How many processes each code project service container may run at once."
-        >
-          <span className="flex items-center gap-2">
-            <input
-              type="number"
-              aria-label="sandboxServicePids"
-              min={16}
-              max={65536}
-              step={1}
-              value={values.sandboxServicePids}
-              onChange={(event) => set('sandboxServicePids', Number(event.target.value))}
-              className={inputClass}
-            />
-            <span className="w-20 text-xs text-gray-400 dark:text-gray-600">16–65536</span>
-          </span>
-        </Row>
-        <Row
-          label="Sandbox archive retention"
-          hint="A sandbox nobody has used for a day is evicted and what it held is archived, to be brought back the next time it is needed. An archive nobody comes back for is deleted after this many days."
-        >
-          <span className="flex items-center gap-2">
-            <input
-              type="number"
-              aria-label="sandboxArchiveRetentionDays"
-              min={1}
-              max={3650}
-              step={1}
-              value={values.sandboxArchiveRetentionDays}
-              onChange={(event) => set('sandboxArchiveRetentionDays', Number(event.target.value))}
-              className={inputClass}
-            />
-            <span className="w-20 text-xs text-gray-400 dark:text-gray-600">days</span>
-          </span>
-        </Row>
-        <Row
-          label="Workspace debug logging"
-          hint="Log every workspace operation on the sandbox worker in detail. A diagnostic for a checkout that misbehaves; leave off otherwise, since it is noisy."
-        >
-          <Toggle
-            on={values.sandboxWorkspacesDebug}
-            onChange={(next) => set('sandboxWorkspacesDebug', next)}
+          </Row>
+          <Row
+            label="Checkout size limit (GB)"
+            hint="How large one code project's checkout on the sandbox may grow before commands and writes in it are refused. People can ask for more on a project's page; you approve or deny those requests below, and an approval raises that project only."
+          >
+            <span className="flex items-center gap-2">
+              <input
+                type="number"
+                aria-label="sandboxWorkspaceMaxGb"
+                min={1}
+                max={64}
+                step={1}
+                value={toGb(values.sandboxWorkspaceMaxBytes)}
+                onChange={(event) => set('sandboxWorkspaceMaxBytes', gbToBytes(event.target.value))}
+                className={inputClass}
+              />
+              <span className="w-20 text-xs text-gray-400 dark:text-gray-600">1GB–64GB</span>
+            </span>
+          </Row>
+          <Row
+            label="Script memory (MB)"
+            hint="The address space one Python run over staged files may use before it fails with a MemoryError. Runs share the worker container's own memory limit with the browser and the language servers."
+          >
+            <span className="flex items-center gap-2">
+              <input
+                type="number"
+                aria-label="sandboxScriptMemoryMb"
+                min={64}
+                max={65536}
+                step={64}
+                value={toMb(values.sandboxScriptMemoryBytes)}
+                onChange={(event) => set('sandboxScriptMemoryBytes', mbToBytes(event.target.value))}
+                className={inputClass}
+              />
+              <span className="w-20 text-xs text-gray-400 dark:text-gray-600">64MB–64GB</span>
+            </span>
+          </Row>
+          <Row
+            label="Service memory (MB)"
+            hint="The memory ceiling of each container a code project starts beside its checkout. Applies to containers started after the save."
+          >
+            <span className="flex items-center gap-2">
+              <input
+                type="number"
+                aria-label="sandboxServiceMemoryMb"
+                min={64}
+                max={65536}
+                step={64}
+                value={toMb(values.sandboxServiceMemoryBytes)}
+                onChange={(event) =>
+                  set('sandboxServiceMemoryBytes', mbToBytes(event.target.value))
+                }
+                className={inputClass}
+              />
+              <span className="w-20 text-xs text-gray-400 dark:text-gray-600">64MB–64GB</span>
+            </span>
+          </Row>
+          <Row
+            label="Service process limit"
+            hint="How many processes each code project service container may run at once."
+          >
+            <span className="flex items-center gap-2">
+              <input
+                type="number"
+                aria-label="sandboxServicePids"
+                min={16}
+                max={65536}
+                step={1}
+                value={values.sandboxServicePids}
+                onChange={(event) => set('sandboxServicePids', Number(event.target.value))}
+                className={inputClass}
+              />
+              <span className="w-20 text-xs text-gray-400 dark:text-gray-600">16–65536</span>
+            </span>
+          </Row>
+          <Row
+            label="Sandbox archive retention"
+            hint="A sandbox nobody has used for a day is evicted and what it held is archived, to be brought back the next time it is needed. An archive nobody comes back for is deleted after this many days."
+          >
+            <span className="flex items-center gap-2">
+              <input
+                type="number"
+                aria-label="sandboxArchiveRetentionDays"
+                min={1}
+                max={3650}
+                step={1}
+                value={values.sandboxArchiveRetentionDays}
+                onChange={(event) => set('sandboxArchiveRetentionDays', Number(event.target.value))}
+                className={inputClass}
+              />
+              <span className="w-20 text-xs text-gray-400 dark:text-gray-600">days</span>
+            </span>
+          </Row>
+          <Row
             label="Workspace debug logging"
-          />
-        </Row>
-      </Section>
+            hint="Log every workspace operation on the sandbox worker in detail. A diagnostic for a checkout that misbehaves; leave off otherwise, since it is noisy."
+          >
+            <Toggle
+              on={values.sandboxWorkspacesDebug}
+              onChange={(next) => set('sandboxWorkspacesDebug', next)}
+              label="Workspace debug logging"
+            />
+          </Row>
+        </Section>
 
-      <Section title="AD Manager">
-        <Row
-          label="Product name"
-          hint="What the AD Manager worker calls this deployment on the legacy /RestAPI/* endpoints (unlock, reset password, create, group membership), which authenticate by token and product name. Must match the product the authtoken was issued to."
-        >
-          <input
-            type="text"
-            aria-label="AD Manager product name"
-            maxLength={80}
-            value={values.admanagerProductName}
-            onChange={(event) => set('admanagerProductName', event.target.value)}
-            className="w-56 rounded border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
-          />
-        </Row>
-      </Section>
+        <Section title="AD Manager">
+          <Row
+            label="Product name"
+            hint="What the AD Manager worker calls this deployment on the legacy /RestAPI/* endpoints (unlock, reset password, create, group membership), which authenticate by token and product name. Must match the product the authtoken was issued to."
+          >
+            <input
+              type="text"
+              aria-label="AD Manager product name"
+              maxLength={80}
+              value={values.admanagerProductName}
+              onChange={(event) => set('admanagerProductName', event.target.value)}
+              className="w-56 rounded border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
+            />
+          </Row>
+        </Section>
 
-      <Section title="Code previews">
-        <Row
-          label="Preview host"
-          hint="A host name of its own for code-project previews, such as preview.example.com, so a preview's pages never run on this app's address. Point your reverse proxy for that host at this app's /api/code/preview-host/ path (keep the rest of the path, and send the original host as X-Forwarded-Host). Leave empty to serve previews on this app's own address."
-        >
-          <input
-            type="text"
-            aria-label="Code preview host"
-            placeholder="preview.example.com"
-            maxLength={260}
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            value={values.codePreviewHost}
-            onChange={(event) => set('codePreviewHost', event.target.value)}
-            className="w-64 rounded border border-gray-300 bg-white px-2 py-1 text-base sm:text-sm dark:border-gray-700 dark:bg-gray-900"
-          />
-        </Row>
-      </Section>
+        <Section title="Code previews">
+          <Row
+            label="Preview host"
+            hint="A host name of its own for code-project previews, such as preview.example.com, so a preview's pages never run on this app's address. Point your reverse proxy for that host at this app's /api/code/preview-host/ path (keep the rest of the path, and send the original host as X-Forwarded-Host). Leave empty to serve previews on this app's own address."
+          >
+            <input
+              type="text"
+              aria-label="Code preview host"
+              placeholder="preview.example.com"
+              maxLength={260}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              value={values.codePreviewHost}
+              onChange={(event) => set('codePreviewHost', event.target.value)}
+              className="w-64 rounded border border-gray-300 bg-white px-2 py-1 text-base sm:text-sm dark:border-gray-700 dark:bg-gray-900"
+            />
+          </Row>
+        </Section>
 
-      <div className="flex items-center gap-3">
-        <button
-          {...saveAnchor}
-          type="button"
-          disabled={!canSave(state)}
-          onClick={() => void save()}
-          className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
-        >
-          {saveLabel(state)}
-        </button>
-        {state.phase === 'saved' && <span className="text-xs text-green-600">Saved.</span>}
-        {state.error && (
-          <span className="text-xs text-red-600 dark:text-red-400">{state.error}</span>
-        )}
-        {showsUnsaved(state) && <span className="text-xs text-gray-500">Unsaved changes</span>}
+        <div className="flex items-center gap-3">
+          <button
+            {...saveAnchor}
+            type="button"
+            disabled={!canSave(state)}
+            onClick={() => void save()}
+            className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+          >
+            {saveLabel(state)}
+          </button>
+          {state.phase === 'saved' && <span className="text-xs text-green-600">Saved.</span>}
+          {state.error && (
+            <span className="text-xs text-red-600 dark:text-red-400">{state.error}</span>
+          )}
+          {showsUnsaved(state) && <span className="text-xs text-gray-500">Unsaved changes</span>}
+        </div>
       </div>
-    </div>
+    </ShownParts.Provider>
   );
 }

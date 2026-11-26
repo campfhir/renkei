@@ -346,6 +346,8 @@ export const COACH_ANCHORS = [
   'admin-sanitizer-scripts',
   /** Settings: the Safety section (read-only mode, guided tours). */
   'admin-settings-safety',
+  /** Settings: the list of groups, a row to each group's page. */
+  'admin-settings-groups',
   /** Settings: Save settings. */
   'admin-settings-save',
   /** Settings: the Identity section (sign-in, role and groups claims). */

@@ -4,7 +4,7 @@
  * the area list as the /admin page, each area opening with a link back.
  * Someone without the operator role gets no sidebar at all.
  *
- * Which area a path is in, the groups, and the parts of Settings are
+ * Which area a path is in, the groups, and Settings' own groups are
  * admin/admin-nav.model.test.ts's.
  */
 
@@ -60,17 +60,26 @@ test.describe('an operator', () => {
       'page'
     );
 
-    // Settings lists its parts under it, a link to each heading on the page.
-    // Settings reads the most of any area; give its page the navigation's own time.
+    // Settings is its groups: listed on its page, and under it in the sidebar.
     await sidebar.getByRole('link', { name: 'Settings', exact: true }).click();
     await page.waitForURL(/\/admin\/settings$/);
     await expect(main.getByRole('heading', { level: 1, name: 'Settings' })).toBeVisible();
-    const part = sidebar.getByRole('link', { name: 'Request limits' });
-    await expect(part).toHaveAttribute('href', '#settings-request-limits');
-    await part.click();
-    await expect(main.getByRole('heading', { level: 2, name: 'Request limits' })).toBeInViewport();
-    expect(await overflows(page)).toBe(false);
+    const groups = main.getByRole('navigation', { name: 'Settings groups' });
+    await expect(groups.getByRole('link')).toHaveCount(6);
     await shot(page, testInfo, 'admin-desktop-settings.png');
+
+    // A group is a page of its own, holding its parts of the form and nothing else's.
+    await sidebar.getByRole('link', { name: 'Access & limits' }).click();
+    await page.waitForURL(/\/admin\/settings\/access$/);
+    await expect(sidebar.getByRole('link', { name: 'Access & limits' })).toHaveAttribute(
+      'aria-current',
+      'page'
+    );
+    await expect(main.getByRole('heading', { level: 2, name: 'Request limits' })).toBeVisible();
+    await expect(main.getByRole('heading', { level: 2, name: 'Sandbox' })).toHaveCount(0);
+    await expect(main.getByRole('button', { name: 'Save settings' })).toBeVisible();
+    expect(await overflows(page)).toBe(false);
+    await shot(page, testInfo, 'admin-desktop-settings-group.png');
   });
 
   test('opens an area from the list on a phone, with a way back', async ({
@@ -94,6 +103,17 @@ test.describe('an operator', () => {
     await main.getByRole('link', { name: 'Organization', exact: true }).click();
     await expect(page).toHaveURL(/\/admin$/);
     await expect(main.getByRole('heading', { level: 1, name: 'Organization' })).toBeVisible();
+
+    // Settings: its groups are the list, and a group links back to Settings.
+    await page.goto(`/admin/settings`);
+    await shot(page, testInfo, 'admin-mobile-settings.png');
+    await main.getByRole('link', { name: /^Sandbox & code/ }).click();
+    await page.waitForURL(/\/admin\/settings\/sandbox$/);
+    await expect(main.getByRole('heading', { level: 1, name: 'Sandbox & code' })).toBeVisible();
+    expect(await overflows(page)).toBe(false);
+    await shot(page, testInfo, 'admin-mobile-settings-group.png');
+    await main.getByRole('link', { name: 'Settings', exact: true }).click();
+    await page.waitForURL(/\/admin\/settings$/);
   });
 });
 
