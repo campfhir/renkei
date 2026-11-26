@@ -68,7 +68,7 @@ test('Settings: the locked list shows what is locked, and Save sends the whole l
   person: _person,
 }) => {
   await pinLocked(page.request);
-  await page.goto('/admin/settings');
+  await page.goto('/admin/settings/safety');
   const card = page.getByRole('region', { name: 'Locked high-risk tools' });
   await expect(card).toBeVisible();
   await card.getByLabel('Filter tools').fill('code_git_');

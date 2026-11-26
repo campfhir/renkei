@@ -1,97 +1,24 @@
 import React from 'react';
 import Link from 'next/link';
-import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { redirect } from 'next/navigation';
-import { getOrgSettings } from '@renkei/settings';
-import { SizeRequests } from './size-requests';
-import { listSizeRequests } from '@/lib/code/size-requests';
-import { SettingsForm, type EditableSettings } from './settings-form';
-import IdentityForm from './identity-form';
-import { observedIdpGroups } from '@/lib/identity';
-import { getTenantOidcSummary } from '@/lib/tenant-operations';
+import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
+import { Icon, ICONS } from '@/components/icons';
 import CoachTarget from '@/components/coach-marks/anchor';
-import { listHighRiskToolGroups } from '@/lib/chat/permission-catalog';
-import HighRiskForm from '../../preferences/high-risk-form';
+import { SETTINGS_GROUPS, settingsGroupHref } from '../admin-nav.model';
 
 /**
  * The org's operating settings — everything adjustable that has no more
- * specific home. Connector switches live on Connector setup, redaction on
- * Sensitive data, run retention on Agent oversight; this page owns the
- * rest (read-only mode, agent guardrails, token lifetimes, request
- * limits) and says where the others went instead of duplicating them.
+ * specific home — as its groups, each a page of its own
+ * (settings/[group]/page.tsx). Connector switches live on Connector
+ * setup, redaction on Sensitive data, run retention on Agent oversight;
+ * Settings owns the rest (read-only mode, agent guardrails, token
+ * lifetimes, request limits) and says where the others went instead of
+ * duplicating them.
  */
 export default async function SettingsPage(): Promise<React.ReactNode> {
-  const access = await checkAccess([ROLE_OPERATOR]);
-  if (!access) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     redirect(`/admin`);
   }
-
-  const [settingsResult, oidcResult, observedGroups, sizeRequests, toolGroups] = await Promise.all([
-    getOrgSettings(),
-    getTenantOidcSummary(),
-    observedIdpGroups('', 10_000),
-    listSizeRequests(),
-    // Every act tool this operator can see: the locked list names tools
-    // across connectors, and one locked elsewhere is still said below it.
-    listHighRiskToolGroups(access.subject, access.roles, 'org').catch(() => []),
-  ]);
-  if (!settingsResult.ok || !oidcResult.ok) {
-    return (
-      <div>
-        <h2 className="mb-2 text-lg font-semibold">Error</h2>
-        <p className="text-sm text-gray-600 dark:text-gray-400">Could not read org settings.</p>
-      </div>
-    );
-  }
-  const settings = settingsResult.val;
-  const oidc = oidcResult.val;
-  const initial: EditableSettings = {
-    organizationName: settings.organizationName,
-    readOnly: settings.readOnly,
-    coachMarksEnabled: settings.coachMarksEnabled,
-    phiConnectorsRequireCoveredModel: settings.phiConnectorsRequireCoveredModel,
-    artifactDigestEnabled: settings.artifactDigestEnabled,
-    enableDcr: settings.enableDcr,
-    sandboxBrowserEnabled: settings.sandboxBrowserEnabled,
-    sandboxChartsEnabled: settings.sandboxChartsEnabled,
-    sandboxWorkspacesEnabled: settings.sandboxWorkspacesEnabled,
-    sandboxServicesEnabled: settings.sandboxServicesEnabled,
-    sandboxScriptsEnabled: settings.sandboxScriptsEnabled,
-    sandboxScriptsAllowNetwork: settings.sandboxScriptsAllowNetwork,
-    logLevel: settings.logLevel,
-    maxJqlResults: settings.maxJqlResults,
-    maxAttachmentBytes: settings.maxAttachmentBytes,
-    massUploadThreshold: settings.massUploadThreshold,
-    rateLimitPerUserPerMinute: settings.rateLimitPerUserPerMinute,
-    accessTokenTtlMinutes: settings.accessTokenTtlMinutes,
-    authorizationCodeTtlSeconds: settings.authorizationCodeTtlSeconds,
-    refreshTokenTtlDays: settings.refreshTokenTtlDays,
-    sessionIdleTimeoutMinutes: settings.sessionIdleTimeoutMinutes,
-    agentMaxChainDepth: settings.agentMaxChainDepth,
-    agentRunTimeoutMinutes: settings.agentRunTimeoutMinutes,
-    agentRunToolCallBudget: settings.agentRunToolCallBudget,
-    agentMaxRunsPerDay: settings.agentMaxRunsPerDay,
-    agentApprovalMaxWaitDays: settings.agentApprovalMaxWaitDays,
-    agentActStepsRequireApproval: settings.agentActStepsRequireApproval,
-    contentPollMinutes: settings.contentPollMinutes,
-    webexWebhookHealthMinutes: settings.webexWebhookHealthMinutes,
-    logRetentionDays: settings.logRetentionDays,
-    agentNotificationRetentionDays: settings.agentNotificationRetentionDays,
-    agentUsageRetentionDays: settings.agentUsageRetentionDays,
-    chatRetentionDays: settings.chatRetentionDays,
-    agentOptimizerWindowDays: settings.agentOptimizerWindowDays,
-    knowledgeKeywordEnrichment: settings.knowledgeKeywordEnrichment,
-    knowledgeKeywordMinChars: settings.knowledgeKeywordMinChars,
-    chatReplyPresenceWindowSeconds: settings.chatReplyPresenceWindowSeconds,
-    sandboxWorkspaceMaxBytes: settings.sandboxWorkspaceMaxBytes,
-    sandboxScriptMemoryBytes: settings.sandboxScriptMemoryBytes,
-    sandboxServiceMemoryBytes: settings.sandboxServiceMemoryBytes,
-    sandboxServicePids: settings.sandboxServicePids,
-    sandboxArchiveRetentionDays: settings.sandboxArchiveRetentionDays,
-    sandboxWorkspacesDebug: settings.sandboxWorkspacesDebug,
-    admanagerProductName: settings.admanagerProductName,
-    codePreviewHost: settings.codePreviewHost,
-  };
 
   return (
     <div className="max-w-3xl">
@@ -104,13 +31,39 @@ export default async function SettingsPage(): Promise<React.ReactNode> {
         .
       </p>
 
-      <SettingsForm initial={initial} />
-
-      <div id="locked-high-risk-tools" className="mt-6 scroll-mt-20">
-        <HighRiskForm kind="org" groups={toolGroups} locked={settings.lockedHighRiskTools} />
-      </div>
-
-      <SizeRequests requests={sizeRequests} />
+      <CoachTarget
+        as="section"
+        name="admin-settings-groups"
+        className="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950"
+      >
+        <nav aria-label="Settings groups">
+          <ul>
+            {SETTINGS_GROUPS.map((group, index) => (
+              <li
+                key={group.id}
+                className={index > 0 ? 'border-t border-gray-100 dark:border-gray-900' : ''}
+              >
+                <Link
+                  href={settingsGroupHref(group.id)}
+                  className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-900"
+                >
+                  <Icon
+                    path={ICONS[group.icon]}
+                    className="h-5 w-5 shrink-0 text-gray-500 dark:text-gray-400"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-medium">{group.label}</span>
+                    <span className="line-clamp-2 text-sm text-gray-500 dark:text-gray-400">
+                      {group.blurb}
+                    </span>
+                  </span>
+                  <Icon path={ICONS.chevron} className="h-4 w-4 shrink-0 text-gray-400" />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      </CoachTarget>
 
       <section className="mt-6 rounded-lg border border-gray-200 bg-white p-4 text-sm dark:border-gray-800 dark:bg-gray-950">
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
@@ -146,41 +99,6 @@ export default async function SettingsPage(): Promise<React.ReactNode> {
           </li>
         </ul>
       </section>
-
-      <CoachTarget
-        as="section"
-        name="admin-settings-identity"
-        className="mt-4 rounded-lg border border-gray-200 bg-white p-4 text-sm dark:border-gray-800 dark:bg-gray-950"
-      >
-        <h2
-          id="settings-identity"
-          className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500"
-        >
-          Identity
-        </h2>
-        <p className="text-gray-600 dark:text-gray-400">
-          Sign-in (OIDC):{' '}
-          {oidc ? (
-            <>
-              <span className="font-medium text-green-700 dark:text-green-400">configured</span>
-              <span className="ml-2 break-all font-mono text-xs text-gray-500">{oidc.issuer}</span>
-            </>
-          ) : (
-            <span className="font-medium text-amber-700 dark:text-amber-400">not configured</span>
-          )}
-        </p>
-        {oidc && (
-          <IdentityForm
-            initial={{
-              roleClaim: oidc.roleClaim ?? '',
-              operatorIdpValue: oidc.operatorIdpValue ?? '',
-              userIdpValue: oidc.userIdpValue ?? '',
-              groupsClaim: oidc.groupsClaim ?? '',
-            }}
-            observedGroups={observedGroups.length}
-          />
-        )}
-      </CoachTarget>
     </div>
   );
 }

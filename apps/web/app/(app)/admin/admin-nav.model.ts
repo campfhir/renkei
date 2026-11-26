@@ -1,7 +1,7 @@
 /**
  * The Organization console's navigation, with no React: which area a path
- * is in, whether a path is the area list itself, and the parts of Settings
- * the sidebar lists under it. admin-nav.tsx renders from this — the
+ * is in, whether a path is the area list itself, and the groups Settings
+ * is split into, each its own page. admin-nav.tsx renders from this — the
  * sidebar beside the area on a wide screen, the list as the page on a
  * phone — and the areas themselves are lib/admin-areas.ts's, the same
  * list the Organization page and the top-bar search read. Tested in
@@ -9,6 +9,7 @@
  */
 
 import { adminSections, type AdminArea } from '@/lib/admin-areas';
+import { SETTINGS_HREF, settingsGroup, type SettingsGroupId } from '@/lib/admin-settings';
 
 export const ADMIN_PATH = '/admin';
 
@@ -37,25 +38,33 @@ export function isAreaList(pathname: string): boolean {
   return pathname.replace(/\/+$/, '') === ADMIN_PATH;
 }
 
+export {
+  SETTINGS_GROUPS,
+  SETTINGS_HREF,
+  settingsGroup,
+  settingsGroupHref,
+  settingsGroupOf,
+} from '@/lib/admin-settings';
+export type {
+  SettingsGroup,
+  SettingsGroupIcon,
+  SettingsGroupId,
+  SettingsPart,
+} from '@/lib/admin-settings';
+
+/** The Settings group a path is in, or null for the group list and anywhere else. */
+export function currentSettingsGroup(pathname: string): SettingsGroupId | null {
+  const path = pathname.replace(/\/+$/, '');
+  if (!path.startsWith(`${SETTINGS_HREF}/`)) return null;
+  return settingsGroup(path.slice(SETTINGS_HREF.length + 1).split('/')[0])?.id ?? null;
+}
+
 /**
- * The parts of the Settings page, in page order, for the sidebar's
- * sub-list while Settings is open. settings-form.tsx takes its headings
- * from this type, so a part cannot be on the page and missing here.
+ * Where a phone's link back leads: a Settings group goes back to
+ * Settings, any other page to the area list, and the list itself nowhere.
  */
-export const SETTINGS_PARTS = [
-  'Organization',
-  'Safety',
-  'Agents',
-  'Notifications',
-  'Data & logs',
-  'Knowledge search',
-  'MCP clients & tokens',
-  'Request limits',
-  'Sandbox',
-  'AD Manager',
-  'Code previews',
-] as const;
-
-export type SettingsPart = (typeof SETTINGS_PARTS)[number];
-
-export const SETTINGS_HREF = `${ADMIN_PATH}/settings`;
+export function backLink(pathname: string): { href: string; label: string } | null {
+  if (isAreaList(pathname)) return null;
+  if (currentSettingsGroup(pathname)) return { href: SETTINGS_HREF, label: 'Settings' };
+  return { href: ADMIN_PATH, label: 'Organization' };
+}

@@ -92,7 +92,7 @@ async function checkoutLimit(
   });
   expect(reset.ok()).toBe(true);
   const projectUrl = `/code/${projectId}`;
-  const settingsUrl = `/admin/settings`;
+  const settingsUrl = `/admin/settings/sandbox`;
   // Scoped to the main region: across a navigation the dev server can leave
   // the outgoing page's span in the DOM for a beat, and strict mode would
   // count two.

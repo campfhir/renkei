@@ -46,6 +46,17 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-26',
+    entries: [
+      {
+        kind: 'changed',
+        title: 'Organization settings, in groups',
+        detail:
+          "Settings is now six groups, each a page of its own that saves on its own: General, Safety, Agents, Data & search, Access & limits, and Sandbox & code. They are listed on the Settings page and, on a wide screen, under Settings in the console's sidebar. On a phone the Organization page lists its areas as grouped rows, the way Preferences lists its sections.",
+      },
+    ],
+  },
+  {
     date: '2026-11-25',
     entries: [
       {
