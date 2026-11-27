@@ -46,8 +46,10 @@ import { hasSalesforceAdminConnection } from './salesforce-pull';
 import {
   CLONE_WAIT_MS,
   awaitClone,
+  baseLost,
   registerCheckoutWake,
   resolveBase,
+  worktreeOfBase,
   type Actor,
   type Chat,
   type Target,
@@ -100,13 +102,22 @@ async function recoverCheckout(
   if (settled.status !== 'ready') {
     return { ok: false, message: `the clone is still running after ${seconds()}s.` };
   }
-  const worktree = await ensureChatWorktree(fresh, freshChat, settled, actor);
+  // The base under the chat's worktree may be the one that is gone: its row
+  // reads ready until a worktree is asked of it.
+  const worktree = await worktreeOfBase(
+    fresh,
+    freshChat,
+    settled,
+    actor,
+    target,
+    started + CLONE_WAIT_MS
+  );
   if (!worktree.ok) return { ok: false, message: worktree.message };
   return {
     ok: true,
-    workspaceId: worktree.val.id,
+    workspaceId: worktree.worktree.id,
     seconds: seconds(),
-    how: 'cloned' in base && base.cloned ? 'cloned' : 'adopted',
+    how: worktree.recloned || ('cloned' in base && base.cloned) ? 'cloned' : 'adopted',
   };
 }
 
@@ -185,18 +196,30 @@ export async function codeProjectContext(
   if (!resolvedBase.ok) {
     return unavailable(`the repository could not be cloned: ${resolvedBase.message}`);
   }
-  const clonedNow = 'cloned' in resolvedBase && resolvedBase.cloned === true;
-  const baseWorkspace = resolvedBase.val;
+  let clonedNow = 'cloned' in resolvedBase && resolvedBase.cloned === true;
+  let baseWorkspace = resolvedBase.val;
 
   // The chat works in a worktree of that clone, made now when the clone is
   // ready, or by the first step below once it is.
   let workspace = baseWorkspace;
   if (baseWorkspace.status === 'ready') {
     const worktree = await ensureChatWorktree(project, actor.chat, baseWorkspace, actor);
-    if (!worktree.ok) {
+    if (worktree.ok) {
+      workspace = worktree.val;
+    } else if (baseLost(worktree)) {
+      // The clone's row reads ready and the worker no longer has its files
+      // (a sandbox restarted or replaced without them): cloned again here,
+      // and the turn's first step below waits for it as for any clone.
+      const again = await resolveBase(project, actor, target, { notId: baseWorkspace.id });
+      if (!again.ok) {
+        return unavailable(`the repository could not be cloned again: ${again.message}`);
+      }
+      clonedNow = true;
+      baseWorkspace = again.val;
+      workspace = baseWorkspace;
+    } else {
       return unavailable(`the chat's worktree could not be made: ${worktree.message}`);
     }
-    workspace = worktree.val;
   }
   const workspaceRef = { id: workspace.id };
 

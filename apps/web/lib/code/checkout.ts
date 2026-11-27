@@ -103,6 +103,49 @@ export async function resolveBase(
   return cloned.ok ? { ok: true, val: cloned.val, cloned: true } : cloned;
 }
 
+/**
+ * The worker's answer when the base clone's row reads ready and its files
+ * are not on the worker's disk: a sandbox that was restarted or replaced
+ * without them. The row alone cannot say so, so a worktree asked of it is
+ * where it shows.
+ */
+export function baseLost(outcome: CodeOutcome<WireWorkspace>): boolean {
+  return !outcome.ok && /base checkout is not ready/i.test(outcome.message);
+}
+
+/**
+ * The chat's worktree of a ready base — and, when the worker turns out
+ * not to have the base's files any more, the base cloned again and the
+ * worktree made of the new clone. Without this a project whose sandbox
+ * lost its disk stays unusable until someone clones it again by hand.
+ */
+export async function worktreeOfBase(
+  project: ProjectRow,
+  chat: Chat,
+  base: WireWorkspace,
+  actor: Actor,
+  target: Target,
+  deadline: number
+): Promise<
+  { ok: true; worktree: WireWorkspace; recloned: boolean } | { ok: false; message: string }
+> {
+  const first = await ensureChatWorktree(project, chat, base, actor);
+  if (first.ok) return { ok: true, worktree: first.val, recloned: false };
+  if (!baseLost(first)) return { ok: false, message: first.message };
+  const again = await resolveBase(project, actor, target, { notId: base.id });
+  if (!again.ok) return { ok: false, message: again.message };
+  const settled = await awaitClone(target, again.val, deadline);
+  if (!settled) return { ok: false, message: 'the checkout disappeared while cloning.' };
+  if (settled.status === 'failed') {
+    return { ok: false, message: settled.error ?? 'the clone failed.' };
+  }
+  if (settled.status !== 'ready') return { ok: false, message: 'the clone is still running.' };
+  const second = await ensureChatWorktree(project, chat, settled, actor);
+  return second.ok
+    ? { ok: true, worktree: second.val, recloned: true }
+    : { ok: false, message: second.message };
+}
+
 export type CheckoutPreparation =
   | { ok: true; worktree: WireWorkspace; cloned: boolean; seconds: number }
   | { ok: false; message: string; seconds: number };
@@ -138,12 +181,19 @@ export async function prepareChatCheckout(
     };
   }
   const fresh = (await getChatRow(chat.id)) ?? chat;
-  const worktree = await ensureChatWorktree(project, fresh, settled, actor);
+  const worktree = await worktreeOfBase(
+    project,
+    fresh,
+    settled,
+    actor,
+    target,
+    started + CLONE_WAIT_MS
+  );
   if (!worktree.ok) return { ok: false, message: worktree.message, seconds: seconds() };
   return {
     ok: true,
-    worktree: worktree.val,
-    cloned: 'cloned' in base && base.cloned === true,
+    worktree: worktree.worktree,
+    cloned: worktree.recloned || ('cloned' in base && base.cloned === true),
     seconds: seconds(),
   };
 }

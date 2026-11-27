@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'fixed',
+        title: 'Code projects come back after their sandbox restarts',
+        detail:
+          "After a code project's sandbox was restarted without its files, chats in the project could not use the repository until someone cloned it again from the project page, and repeated attempts ended in At most 3 workspaces at once. The repository is now cloned again on its own, and clones left behind no longer count against that limit.",
+      },
+      {
+        kind: 'fixed',
         title: 'Pulling from Salesforce into a project that has a .forceignore',
         detail:
           "Pulling an org's metadata into a code project failed with No results to format whenever the repository had a .forceignore file, and failed when the project's source folder did not exist yet. Both work now, and the count of what was pulled names a Lightning web component once, not once per file.",

@@ -505,7 +505,26 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     if (!base || base.parentId) {
       return sendError(response, 404, 'not_found', 'No such base checkout to make a worktree of.');
     }
-    if (base.status !== 'ready' || !(await checkoutExists(base.storageKey))) {
+    if (base.status === 'ready' && !(await checkoutExists(base.storageKey))) {
+      // A ready row whose bytes are gone, as in loadReady: the row says so
+      // from now on, so whoever reads it next clones the repository again
+      // rather than asking for a worktree of nothing, over and over.
+      logger.warn(
+        "the base checkout of {repo} of {actor} is missing from this worker's disk although the workspace reads ready; it is marked failed and will be cloned again, and no worktree was made",
+        {
+          component: 'worker-sandbox/workspaces',
+          ...(await actorAttrs(target.subject)),
+          id: base.id,
+          repo: base.repoFullName,
+          worker: workerInstance(),
+        }
+      );
+      await store.setWorkspaceStatus(base.id, 'failed', {
+        error: 'The checkout is no longer on the worker’s disk.',
+      });
+      return sendError(response, 409, 'not_ready', 'The base checkout is not ready.');
+    }
+    if (base.status !== 'ready') {
       return sendError(response, 409, 'not_ready', 'The base checkout is not ready.');
     }
     const existing = (await store.listWorktrees(target, base.id)).find(
