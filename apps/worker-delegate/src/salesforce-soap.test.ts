@@ -168,6 +168,10 @@ describe('salesforceSoapRequest, a retrieve', () => {
     refused(
       `<checkRetrieveStatus xmlns="${NS}"><asyncProcessId>../x</asyncProcessId></checkRetrieveStatus>`
     );
+    // The namespace is matched as written, not as a pattern: a dot is a dot.
+    refused(
+      '<checkRetrieveStatus xmlns="http://soapXsforceXcom/2006/04/metadata"><asyncProcessId>09S5e000001AbCdEAK</asyncProcessId></checkRetrieveStatus>'
+    );
     refused(
       `<checkDeployStatus xmlns="${NS}"><asyncProcessId>0Af5e000001AbCdEAK</asyncProcessId></checkDeployStatus>`
     );

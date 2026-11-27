@@ -116,15 +116,22 @@ function retrieveBody(body: Buffer): RetrieveTypes[] | null {
   return types.length > 0 && rest.trim() === '' ? types : null;
 }
 
-/** Asking how a retrieve is doing: its id alone; the delegate asks for the zip with it. */
-const CHECK_RETRIEVE = new RegExp(
-  `^<checkRetrieveStatus xmlns="${METADATA_NAMESPACE}">\\s*<asyncProcessId>([A-Za-z0-9]{15,18})</asyncProcessId>\\s*</checkRetrieveStatus>$`
-);
+/**
+ * Asking how a retrieve is doing: its id alone; the delegate asks for the
+ * zip with it. The tags are fixed strings, as readMetadata's are, and only
+ * what is between them is matched.
+ */
+const CHECK_OPEN = `<checkRetrieveStatus xmlns="${METADATA_NAMESPACE}">`;
+const CHECK_CLOSE = '</checkRetrieveStatus>';
+const PROCESS_ID = /^\s*<asyncProcessId>([A-Za-z0-9]{15,18})<\/asyncProcessId>\s*$/;
 
 /** The retrieve's id of a checkRetrieveStatus body, or null when it is anything else. */
 function checkRetrieveBody(body: Buffer): string | null {
   if (body.byteLength > 512) return null;
-  return CHECK_RETRIEVE.exec(body.toString('utf8').trim())?.[1] ?? null;
+  const text = body.toString('utf8').trim();
+  if (!text.startsWith(CHECK_OPEN) || !text.endsWith(CHECK_CLOSE)) return null;
+  const inner = text.slice(CHECK_OPEN.length, text.length - CHECK_CLOSE.length);
+  return PROCESS_ID.exec(inner)?.[1] ?? null;
 }
 
 /** The operation a body asks for, as the element that goes in the envelope; null when it is none of the three. */
