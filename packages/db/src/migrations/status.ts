@@ -223,6 +223,7 @@ export const EXPECTED_MIGRATIONS = [
   '197-chat-tool-permissions',
   '198-chat-project-tool-permissions',
   '199-agent-allowed-actions',
+  '200-salesforce-ci-blocks',
 ];
 
 export interface MigrationStatus {

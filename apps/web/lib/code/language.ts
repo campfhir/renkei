@@ -52,6 +52,10 @@ const BY_EXTENSION: Record<string, string> = {
   go: 'go',
   rs: 'rust',
   java: 'java',
+  cls: 'apex',
+  trigger: 'apex',
+  apex: 'apex',
+  soql: 'sql',
   kt: 'kotlin',
   kts: 'kotlin',
   cs: 'csharp',
@@ -150,6 +154,8 @@ export function languageForPath(path: string): string {
 const HIGHLIGHTER_NAMES: Record<string, string | undefined> = {
   shell: 'bash',
   html: 'xml',
+  // No Apex grammar there; Java's is the nearest.
+  apex: 'java',
   mdx: 'markdown',
   pgsql: 'sql',
   mysql: 'sql',

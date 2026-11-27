@@ -85,6 +85,8 @@ import {
 import { moreGitTools } from './git-tools';
 import { previewTools } from './preview-tools';
 import { pipelineVariableTools } from './pipeline-tools';
+import { salesforcePipelineTools } from './salesforce-pipeline';
+import { salesforcePullTools } from './salesforce-pull';
 import { DIFF_FENCE_CLOSE, DIFF_FENCE_OPEN } from './diff';
 import { isRecord } from '@renkei/guards';
 
@@ -134,6 +136,13 @@ export interface CodeToolBinding {
    * the code_service_* tools do not exist in the turn.
    */
   servicesEnabled?: boolean;
+  /**
+   * The chatting person has a Salesforce Admin connection: the
+   * code_salesforce_* tools are in the turn. Without one they do not
+   * exist — a project that has nothing to do with Salesforce never sees
+   * them.
+   */
+  salesforce?: boolean;
   /**
    * These are a sub-agent's tools, bound to its own worktree
    * (`subagentCheckout` below): no delegating from here, so none is built.
@@ -1230,6 +1239,12 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       origin: binding.origin,
     })
   );
+  if (binding.salesforce) {
+    tools.push(
+      ...salesforcePullTools({ target, ref, repoFullName: binding.repoFullName, failed }),
+      ...salesforcePipelineTools({ origin: binding.origin })
+    );
+  }
   if (binding.servicesEnabled) tools.push(...serviceTools(target, failed));
   // One recovery state for the whole turn: the tools share the clone
   // that brings the checkout back, the count of times it was lost, and

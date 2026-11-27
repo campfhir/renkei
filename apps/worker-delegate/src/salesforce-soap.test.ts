@@ -112,6 +112,84 @@ describe('salesforceSoapRequest on crafted bodies', () => {
   });
 });
 
+describe('salesforceSoapRequest, a retrieve', () => {
+  const at = new URL(`${ORG}/services/Soap/m/68.0`);
+  const NS = 'http://soap.sforce.com/2006/04/metadata';
+  const retrieve = (inner: string) => Buffer.from(`<retrieve xmlns="${NS}">${inner}</retrieve>`);
+  const send = (body: Buffer | string) =>
+    salesforceSoapRequest(true, at, 'POST', typeof body === 'string' ? Buffer.from(body) : body);
+
+  it('asks for the named components as one unpackaged package at the endpoint’s version', () => {
+    const soap = send(
+      retrieve(
+        '<types><name>CustomObject</name><members>Account</members><members>Visit__c</members></types>\n' +
+          '<types><name>Layout</name><members>Account-Account %28Sales%29 Layout</members></types>' +
+          '<types><name>ApexClass</name><members>*</members></types>'
+      )
+    );
+    expect(soap).toMatchObject({ ok: true });
+    if (!soap?.ok) return;
+    const xml = soap.envelope('tok').toString('utf8');
+    expect(xml).toContain('<met:sessionId>tok</met:sessionId>');
+    expect(xml).toContain(
+      '<met:retrieve><met:retrieveRequest><met:apiVersion>68.0</met:apiVersion><met:singlePackage>true</met:singlePackage><met:unpackaged>' +
+        '<met:types><met:members>Account</met:members><met:members>Visit__c</met:members><met:name>CustomObject</met:name></met:types>' +
+        '<met:types><met:members>Account-Account %28Sales%29 Layout</met:members><met:name>Layout</met:name></met:types>' +
+        '<met:types><met:members>*</met:members><met:name>ApexClass</met:name></met:types>' +
+        '<met:version>68.0</met:version></met:unpackaged></met:retrieveRequest></met:retrieve>'
+    );
+  });
+
+  it('asks how a retrieve is doing, with its zip', () => {
+    const soap = send(
+      `<checkRetrieveStatus xmlns="${NS}"><asyncProcessId>09S5e000001AbCdEAK</asyncProcessId></checkRetrieveStatus>`
+    );
+    expect(soap?.ok && soap.envelope('t').toString()).toContain(
+      '<soapenv:Body><met:checkRetrieveStatus><met:asyncProcessId>09S5e000001AbCdEAK</met:asyncProcessId><met:includeZip>true</met:includeZip></met:checkRetrieveStatus></soapenv:Body>'
+    );
+  });
+
+  it('refuses a retrieve with anything of its own in it, and still every write', () => {
+    const refused = (body: Buffer | string) => expect(send(body)).toMatchObject({ ok: false });
+    // No types, a type with no members, markup in a member, an option of the caller's, a package by name.
+    refused(retrieve(''));
+    refused(retrieve('<types><name>CustomObject</name></types>'));
+    refused(retrieve('<types><name>CustomObject</name><members>A&amp;B</members></types>'));
+    refused(
+      retrieve(
+        '<types><name>CustomObject</name><members>A</members></types><singlePackage>false</singlePackage>'
+      )
+    );
+    refused(retrieve('<packageNames>Managed</packageNames>'));
+    refused(retrieve(`<types><name>X</name>${'<members>a</members>'.repeat(5_001)}</types>`));
+    refused(
+      `<checkRetrieveStatus xmlns="${NS}"><asyncProcessId>09S5e000001AbCdEAK</asyncProcessId><includeZip>false</includeZip></checkRetrieveStatus>`
+    );
+    refused(
+      `<checkRetrieveStatus xmlns="${NS}"><asyncProcessId>../x</asyncProcessId></checkRetrieveStatus>`
+    );
+    // The namespace is matched as written, not as a pattern: a dot is a dot.
+    refused(
+      '<checkRetrieveStatus xmlns="http://soapXsforceXcom/2006/04/metadata"><asyncProcessId>09S5e000001AbCdEAK</asyncProcessId></checkRetrieveStatus>'
+    );
+    refused(
+      `<checkDeployStatus xmlns="${NS}"><asyncProcessId>0Af5e000001AbCdEAK</asyncProcessId></checkDeployStatus>`
+    );
+    refused(`<deploy xmlns="${NS}"><ZipFile>UEsDBA==</ZipFile></deploy>`);
+  });
+
+  it('reads a crafted retrieve in linear time', () => {
+    const crafted = [
+      `<retrieve xmlns="${NS}">${'<types>'.repeat(40_000)}`,
+      `<retrieve xmlns="${NS}"><types><name>X</name>${'<members>a</members> '.repeat(20_000)}`,
+      `<retrieve xmlns="${NS}"><types><name>X</name><members>${' '.repeat(400_000)}`,
+    ];
+    const started = Date.now();
+    for (const body of crafted) expect(send(body)).toMatchObject({ ok: false });
+    expect(Date.now() - started).toBeLessThan(200);
+  });
+});
+
 describe('isExpiredSession', () => {
   it('reads Salesforce’s INVALID_SESSION_ID fault, and nothing else', () => {
     expect(isExpiredSession(500, '<faultcode>sf:INVALID_SESSION_ID</faultcode>')).toBe(true);

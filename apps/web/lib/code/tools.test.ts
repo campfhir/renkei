@@ -172,6 +172,23 @@ describe('the set', () => {
     expect(set.get('code_delete_file')!.readOnly).toBeUndefined();
     expect(set.get('code_move_file')!.readOnly).toBeUndefined();
   });
+
+  it('has the Salesforce tools only for someone with a Salesforce Admin connection, and never for a sub-agent', () => {
+    expect([...tools().keys()].filter((name) => name.includes('salesforce'))).toEqual([]);
+    const connected = codeTools({
+      target: TARGET,
+      workspaceId: WS_ID,
+      repoFullName: 'acme/demo',
+      repoProvider: 'atlassian-bitbucket',
+      origin: 'https://r.example',
+      salesforce: true,
+    }).map((tool) => tool.def.name);
+    expect(connected).toEqual(
+      expect.arrayContaining(['code_salesforce_pull', 'code_salesforce_setup_pipeline'])
+    );
+    expect(WITHHELD_FROM_SUBAGENTS.has('code_salesforce_pull')).toBe(true);
+    expect(WITHHELD_FROM_SUBAGENTS.has('code_salesforce_setup_pipeline')).toBe(true);
+  });
 });
 
 describe('deleting and moving', () => {

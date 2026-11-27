@@ -235,4 +235,15 @@ export {
   type ReportSpec,
   type FolderAccess,
 } from './report-metadata';
-export { parseXml, xmlToJson, readMetadataRecords } from './xml';
+export { parseXml, xmlToJson, readMetadataRecords, soapResult } from './xml';
+export {
+  RETRIEVE_MAX_MEMBERS,
+  RETRIEVE_MAX_TYPES,
+  checkRetrieveBody,
+  readRetrieveSelection,
+  readRetrieveStarted,
+  readRetrieveStatus,
+  retrieveBody,
+  type RetrieveSelection,
+  type RetrieveStatus,
+} from './retrieve';

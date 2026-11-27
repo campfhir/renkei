@@ -102,6 +102,12 @@ export const WITHHELD_FROM_SUBAGENTS: ReadonlySet<string> = new Set([
   // Changing the host's pipeline variables reaches past the checkout; the
   // orchestrator makes that call with the person. A sub-agent may read them.
   'code_pipeline_set_variables',
+  // Reading a Salesforce org is on the person's own connection and lands a
+  // whole tree of files: the orchestrator's call, made where the person sees it.
+  'code_salesforce_pull',
+  // Setting up the pipeline saves the project's environments and opens pull
+  // requests: the orchestrator's, like the pipeline's variables.
+  'code_salesforce_setup_pipeline',
   // Throwing work away is too: a hard reset or a clean undoes what the
   // orchestrator and the person may be counting on. The rest of git —
   // fetch, branches, log, stash, rebase, merge, a sparse checkout — is a

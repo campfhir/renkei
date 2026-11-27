@@ -140,6 +140,8 @@ export type AuditAction =
   | 'code.pipelines.disabled'
   /** A variable set replaced from its text box: which keys were added, changed, removed. */
   | 'code.pipelines.variables.replaced'
+  /** Metadata pulled from a Salesforce org into a code project's checkout, from its chat: which org, which types, how many components. */
+  | 'code.salesforce.pulled'
   /** Pipeline variables or secrets saved from a project's Environments page; names only, never a value. */
   | 'code.variables.saved'
   /** A pipeline run started from a branch's Runs tab on a code project's Environments page. */

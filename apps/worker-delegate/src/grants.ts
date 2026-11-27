@@ -375,9 +375,9 @@ export class Grants {
 
     const body = await readBody(request, MAX_REQUEST_BYTES);
     if (body === null) return fail('too_large');
-    // The admin connector's one SOAP call, readMetadata, carries the session
-    // in its envelope, which only this process can write (salesforce-soap.ts);
-    // anything else sent to a SOAP endpoint is refused here.
+    // The admin connector's SOAP calls — the Metadata API's reads — carry the
+    // session in their envelope, which only this process can write
+    // (salesforce-soap.ts); anything else sent to a SOAP endpoint is refused here.
     const soap = salesforceSoapRequest(provider === SALESFORCE_ADMIN, url, method, body);
     if (soap && !soap.ok) return fail('bad_request', soap.message);
 

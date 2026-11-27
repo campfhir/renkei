@@ -144,3 +144,27 @@ export function readMetadataRecords(xml: string): Array<Json | null> | { fault: 
     return isRecord(value) && 'fullName' in value ? value : null;
   });
 }
+
+/**
+ * The `result` of a SOAP answer (`Envelope › Body › <operation>Response ›
+ * result`), as JSON; a SOAP fault is returned as its message.
+ */
+export function soapResult(
+  xml: string,
+  operation: string
+): { ok: true; result: Json } | { ok: false; fault: string } {
+  const envelope = parseXml(xml);
+  const body = envelope ? childrenNamed(envelope, 'Body')[0] : undefined;
+  if (!body) return { ok: false, fault: 'The answer was not a SOAP envelope.' };
+  const fault = childrenNamed(body, 'Fault')[0];
+  if (fault) {
+    const message = childrenNamed(fault, 'faultstring')[0]?.text.trim();
+    return { ok: false, fault: message || 'Salesforce answered with a SOAP fault.' };
+  }
+  const response = childrenNamed(body, `${operation}Response`)[0];
+  const result = response ? childrenNamed(response, 'result')[0] : undefined;
+  const value = result ? xmlToJson(result) : undefined;
+  return isRecord(value)
+    ? { ok: true, result: value }
+    : { ok: false, fault: `The answer held no ${operation} result.` };
+}
