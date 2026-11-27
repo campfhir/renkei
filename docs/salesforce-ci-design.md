@@ -92,9 +92,10 @@ works out what a merge removed.
    which the delegate now allows beside `readMetadata` — both read), puts the zip in the chat's
    checkout, and runs `sf project convert mdapi` there, offline, to write source format. It leaves
    uncommitted files; the chat commits them and opens the pull request. The connector is
-   unchanged, so both routes work. Still to do: a tool that sets up the pipeline, as
-   `fabric_setup_pipeline` does; until then the blocks are added on the project's Environments
-   page.
+   unchanged, so both routes work. `code_salesforce_setup_pipeline` puts the two blocks on each
+   environment's branch and opens the pipeline builder's pull requests, as
+   `fabric_setup_pipeline` does. Both tools are in a code project's turn only for someone with a
+   Salesforce Admin connection, and neither is a sub-agent's.
 3. **Proposals become pull requests.** The `salesforce_admin_propose_*` tools commit source to a
    branch and open a pull request, reports and dashboards included. A draft report in the admin's
    private folder stays direct, since that is how a report is tried against real data. Apply stops

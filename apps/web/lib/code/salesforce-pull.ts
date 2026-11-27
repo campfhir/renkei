@@ -44,6 +44,8 @@ import { errorResult, textResult, type LocalTool } from '@/lib/chat/local-tools'
 import { refusalTextOf } from '@/lib/grant-refusals';
 import { resolveSalesforceAccess, type SalesforceAccess } from '@/lib/mcp-tools/salesforce/client';
 import { orgCall } from '@/lib/mcp-tools/salesforce/org-choice';
+import { listSalesforceConnectors } from '@/lib/salesforce-app';
+import { listSalesforceConnections } from '@/lib/salesforce-grants';
 import { SALESFORCE_ADMIN_KIND } from '@/lib/salesforce-kinds';
 
 export interface SalesforcePullDeps {
@@ -206,6 +208,26 @@ async function retrieve(
     error:
       'Salesforce was still assembling the pull after five minutes; ask for fewer types or members at a time.',
   };
+}
+
+/**
+ * Whether the person has connected a Salesforce Admin connector the
+ * organization still has: what puts the code_salesforce_* tools in a code
+ * project's turn (turn.ts). Anything that cannot be read is a no.
+ */
+export async function hasSalesforceAdminConnection(subject: string): Promise<boolean> {
+  try {
+    const connectors = await listSalesforceConnectors(SALESFORCE_ADMIN_KIND);
+    if (connectors.length === 0) return false;
+    const connections = await listSalesforceConnections(
+      subject,
+      connectors,
+      SALESFORCE_ADMIN_KIND.provider
+    );
+    return connections.some((connection) => connection.connector !== null);
+  } catch {
+    return false;
+  }
 }
 
 /** How many of each type came back, most first: `CustomObject 3, ApexClass 2`. */

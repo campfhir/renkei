@@ -42,6 +42,7 @@ import { codeProjectTarget } from './scope';
 import { codeTools, type CheckoutRecovery } from './tools';
 import type { ResourceRole } from '@/lib/chat/access';
 import { codePreviewHost } from './preview-host-server';
+import { hasSalesforceAdminConnection } from './salesforce-pull';
 import {
   CLONE_WAIT_MS,
   awaitClone,
@@ -202,10 +203,11 @@ export async function codeProjectContext(
   // The org's roster, read once per turn: the orchestrator picks a
   // sub-agent's model from it per task (delegate.ts) — the same enabled
   // rows the composer's own picker offers.
-  const [env, subagentModels, previewHost] = await Promise.all([
+  const [env, subagentModels, previewHost, salesforce] = await Promise.all([
     sbEnvList(target),
     listChatModels(),
     codePreviewHost(),
+    hasSalesforceAdminConnection(actor.subject),
   ]);
   const envNames = env.ok ? env.val.map((variable) => variable.name) : [];
   const allTools = codeTools({
@@ -218,6 +220,7 @@ export async function codeProjectContext(
     ...(previewHost ? { previewHost } : {}),
     recover: (lostId) => recoverCheckout(project, actor.chat, actor, target, lostId),
     servicesEnabled,
+    ...(salesforce ? { salesforce: true } : {}),
     ...(actor.auto ? { auto: true } : {}),
     subagentModels: subagentModels.map(({ id, label, provider, model, isDefault }) => ({
       id,

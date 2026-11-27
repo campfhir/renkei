@@ -56,6 +56,7 @@ const LABELS: Record<string, CodeToolLabel> = {
   code_pipeline_variables: { label: 'Pipeline variables' },
   code_pipeline_set_variables: { label: 'Set pipeline variables' },
   code_salesforce_pull: { label: 'Pull from Salesforce' },
+  code_salesforce_setup_pipeline: { label: 'Set up Salesforce deployment' },
   code_delegate: { label: 'Sub-agent' },
   chat_delegate: { label: 'Sub-agent' },
   chat_show_mockup: {
