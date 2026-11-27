@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'fixed',
+        title: 'Pulling from Salesforce works in a sandbox made before the fix',
+        detail:
+          "A code project whose sandbox was made before yesterday's fix still could not pull from Salesforce. The pull no longer depends on the sandbox being a new one.",
+      },
+      {
+        kind: 'fixed',
         title: 'Pulling from Salesforce into a code project',
         detail:
           "Pulling an org's metadata into a code project's checkout failed after Salesforce had answered, because the Salesforce command-line tool could not start in the sandbox. It starts now, and so do other tools that look up the account they run under.",

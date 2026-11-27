@@ -130,6 +130,11 @@ describe('code_salesforce_pull', () => {
     const [, exec] = sandbox.sbWorkspaceExec.mock.calls[0];
     expect(exec.id).toBe('ws-1');
     expect(exec.command).toContain(`zip=${upload.path}`);
+    // SHELL is exported before the CLI runs: a sandbox on an earlier build does not set it.
+    expect(exec.command.indexOf('export SHELL=/bin/sh')).toBeGreaterThan(-1);
+    expect(exec.command.indexOf('export SHELL=/bin/sh')).toBeLessThan(
+      exec.command.indexOf('sf project convert mdapi')
+    );
     expect(exec.command).toContain('sf project convert mdapi');
     expect(exec.command).toContain('trap \'rm -rf "$zip" "$dir"\' EXIT');
     expect(exec.command).not.toMatch(/sf org login|deploy/);

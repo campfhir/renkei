@@ -82,6 +82,11 @@ const ZIP_PATH = '.renkei-salesforce-pull.zip';
  */
 const CONVERT = [
   'set -e',
+  // The Salesforce CLI asks the system for its user's shell when SHELL is
+  // not exported, and a caller's uid has no passwd entry to answer with. The
+  // sandbox worker exports it now (childEnvironment); a sandbox still running
+  // an earlier build does not, so the command says it for itself.
+  'export SHELL=/bin/sh',
   `zip=${ZIP_PATH}`,
   'dir=.renkei-salesforce-pull',
   'trap \'rm -rf "$zip" "$dir"\' EXIT',
