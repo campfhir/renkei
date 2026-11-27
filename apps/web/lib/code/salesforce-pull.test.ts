@@ -137,6 +137,12 @@ describe('code_salesforce_pull', () => {
     );
     expect(exec.command).toContain('sf project convert mdapi');
     expect(exec.command).toContain('trap \'rm -rf "$zip" "$dir"\' EXIT');
+    // Unpacked outside the checkout (a project's .forceignore hides a dot directory in it),
+    // and the project's package directories are made before the CLI looks for them.
+    expect(exec.command).toContain('dir=$(mktemp -d)');
+    expect(exec.command.indexOf('mkdir -p -- "$package_dir"')).toBeLessThan(
+      exec.command.indexOf('sf project convert mdapi')
+    );
     expect(exec.command).not.toMatch(/sf org login|deploy/);
 
     const text = textOf(result);

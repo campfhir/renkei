@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'fixed',
+        title: 'Pulling from Salesforce into a project that has a .forceignore',
+        detail:
+          "Pulling an org's metadata into a code project failed with No results to format whenever the repository had a .forceignore file, and failed when the project's source folder did not exist yet. Both work now, and the count of what was pulled names a Lightning web component once, not once per file.",
+      },
+      {
+        kind: 'fixed',
         title: 'Pulling from Salesforce works in a sandbox made before the fix',
         detail:
           "A code project whose sandbox was made before yesterday's fix still could not pull from Salesforce. The pull no longer depends on the sandbox being a new one.",

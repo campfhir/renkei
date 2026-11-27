@@ -117,13 +117,21 @@ export function readRetrieveStatus(xml: string): RetrieveStatus {
   if (!answer.ok) return { fault: answer.fault };
   const { result } = answer;
   if (result.done !== 'true') return { done: false };
+  // Salesforce lists files, and a bundle (a Lightning web component) is
+  // several under one name: each component is named once.
+  const seen = new Set<string>();
   const components = list(result.fileProperties)
     .filter(isRecord)
     .map((file) => ({
       type: isString(file.type) ? file.type : '',
       fullName: isString(file.fullName) ? file.fullName : '',
     }))
-    .filter((file) => file.type !== '' && file.type !== 'Package');
+    .filter((file) => {
+      const key = `${file.type}\n${file.fullName}`;
+      if (file.type === '' || file.type === 'Package' || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   const problems = list(result.messages)
     .filter(isRecord)
     .map((message) => (isString(message.problem) ? message.problem : ''))
