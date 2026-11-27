@@ -988,6 +988,27 @@ describe('a worktree of a base checkout', () => {
     expect(result.status).toBe(409);
     expect(result.json.error.type).toBe('not_ready');
   });
+
+  it('marks a ready base whose files are gone failed, so it is cloned again and not asked over and over', async () => {
+    workspaceStore.getWorkspace.mockResolvedValueOnce({
+      ...readyWorkspace(),
+      id: 'ws-gone',
+      storageKey: 'tenant-1/hash/ws-gone',
+    });
+    workspaceStore.setWorkspaceStatus.mockResolvedValue(undefined);
+    const result = await post(enabledBase, 'workspaces/worktree', {
+      ...TARGET,
+      baseId: 'ws-gone',
+      branch: 'renkei/a',
+    });
+    expect(result.status).toBe(409);
+    expect(result.json.error.type).toBe('not_ready');
+    // The words the web app reads to clone the base again (lib/code/checkout.ts).
+    expect(result.json.error.message).toBe('The base checkout is not ready.');
+    expect(workspaceStore.setWorkspaceStatus).toHaveBeenCalledWith('ws-gone', 'failed', {
+      error: expect.stringContaining('no longer on the worker'),
+    });
+  });
 });
 
 describe('notebook kernels over the wire', () => {

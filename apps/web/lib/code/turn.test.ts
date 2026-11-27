@@ -242,6 +242,52 @@ describe('codeProjectContext', () => {
     expect(context?.prompt).toMatchObject({ ready: false });
   });
 
+  it('clones again at the start of a turn when the ready clone’s files are gone from the worker', async () => {
+    // A sandbox restarted without the project's files: the row still says ready.
+    get.mockResolvedValueOnce({ ok: true, val: workspace('ready') });
+    worktree.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      message: 'The base checkout is not ready.',
+    });
+    clone.mockResolvedValue({ ok: true, val: workspace('cloning', { id: 'ws-2' }) });
+    const context = await codeProjectContext(project('ws-1'), actor());
+    expect(clone).toHaveBeenCalledTimes(1);
+    expect(context?.tools).toHaveLength(1);
+    expect(context?.prompt).toMatchObject({ ready: true, clonedNow: true });
+    expect(context?.prelude).toMatchObject({ name: CLONE_STEP_NAME });
+    // The first step waits for the new clone and makes the chat's worktree in it.
+    get.mockResolvedValueOnce({ ok: true, val: workspace('ready', { id: 'ws-2' }) });
+    worktree.mockResolvedValueOnce({ ok: true, val: treeOf({ id: 'wt-2', parentId: 'ws-2' }) });
+    const result = await context!.prelude!.run();
+    expect(result.isError).toBe(false);
+    expect(worktree.mock.calls[1]![2]).toMatchObject({ id: 'ws-2' });
+    expect(bound().workspaceRef).toEqual({ id: 'wt-2' });
+  }, 10_000);
+
+  it('brings back a chat whose worktree and base are both gone: the base reads ready until a worktree is asked of it', async () => {
+    get.mockResolvedValueOnce({ ok: true, val: workspace('ready') });
+    get.mockResolvedValueOnce({ ok: true, val: treeOf() });
+    await codeProjectContext(project('ws-1'), actor('wt-1'));
+    row.mockResolvedValue(project('ws-1'));
+    chatRow.mockResolvedValue({ id: 'c1234567-0000', workspaceId: 'wt-1' } as never);
+    // The base row still reads ready; the chat's worktree row is the one marked failed.
+    get.mockResolvedValueOnce({ ok: true, val: workspace('ready') });
+    get.mockResolvedValueOnce({ ok: true, val: treeOf({ status: 'failed' }) });
+    worktree.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      message: 'The base checkout is not ready.',
+    });
+    clone.mockResolvedValue({ ok: true, val: workspace('cloning', { id: 'ws-2' }) });
+    get.mockResolvedValueOnce({ ok: true, val: workspace('ready', { id: 'ws-2' }) });
+    get.mockResolvedValueOnce({ ok: true, val: treeOf({ status: 'failed' }) });
+    worktree.mockResolvedValueOnce({ ok: true, val: treeOf({ id: 'wt-2', parentId: 'ws-2' }) });
+    const recovered = await bound().recover!('wt-1');
+    expect(clone).toHaveBeenCalledTimes(1);
+    expect(recovered).toMatchObject({ ok: true, workspaceId: 'wt-2', how: 'cloned' });
+  }, 10_000);
+
   it('hands the tools a way back: a lost checkout is cloned again and the chat gets a worktree in it', async () => {
     get.mockResolvedValueOnce({ ok: true, val: workspace('ready') });
     get.mockResolvedValueOnce({ ok: true, val: treeOf() });

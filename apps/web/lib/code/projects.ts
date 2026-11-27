@@ -22,6 +22,7 @@ import {
   sbWorkspaceClone,
   sbWorkspaceDelete,
   sbWorkspaceGet,
+  sbWorkspaceList,
   sbWorkspaceWorktree,
   type WireEnvVariable,
   type WireWorkspace,
@@ -34,14 +35,25 @@ import { codeProjectTarget } from './scope';
 export type CodeOutcome<T> = { ok: true; val: T } | { ok: false; status: number; message: string };
 
 /**
+ * How long another request's clone of the same repository and branch is
+ * taken to be in flight, and joined rather than started again. Past this a
+ * row still `cloning` is one its worker never finished.
+ */
+export const CLONE_IN_FLIGHT_MS = 10 * 60_000;
+
+/**
  * Clone the project's repository into a fresh checkout on the worker and
- * record it on the row. An earlier checkout, if any, is dropped first —
- * one project, one checkout.
+ * record it on the row. One project, one checkout: every other clone the
+ * worker holds for the project is dropped first — the one on the row, and
+ * any left behind by a request that started one and never recorded it —
+ * so they cannot add up to the worker's limit. A clone of the same
+ * repository and branch that another request has just started is joined
+ * instead, so two requests arriving together make one clone.
  */
 export async function startProjectClone(
   project: ProjectRow,
   credential: WorkspaceGitAccess,
-  options: { depth?: number } = {}
+  options: { depth?: number; now?: number } = {}
 ): Promise<CodeOutcome<WireWorkspace>> {
   if (!(await sandboxWorkspacesEnabled())) {
     return {
@@ -54,11 +66,30 @@ export async function startProjectClone(
   const repo = validateRepoFullName(project.repo.fullName);
   if (!repo.ok) return { ok: false, status: 400, message: repo.message };
   const target = codeProjectTarget(project.id);
-  if (project.workspaceId) {
-    // Best effort: a checkout the sweep already retired is simply gone.
-    await sbWorkspaceDelete(target, project.workspaceId);
-    await updateProject(project.id, { workspaceId: null });
+  const branch = project.repo.branch || '(default)';
+  const now = options.now ?? Date.now();
+
+  // Best effort throughout: a checkout the sweep already retired is simply
+  // gone, and a worker that cannot list answers the clone below the same way.
+  const listed = await sbWorkspaceList(target);
+  const clones = listed.ok ? listed.val.filter((workspace) => workspace.parentId === null) : [];
+  const inFlight = clones.find(
+    (workspace) =>
+      workspace.status === 'cloning' &&
+      workspace.id !== project.workspaceId &&
+      workspace.repoFullName === repo.fullName &&
+      workspace.branch === branch &&
+      now - Date.parse(workspace.createdAt) < CLONE_IN_FLIGHT_MS
+  );
+  const stale = new Set(clones.filter((workspace) => workspace !== inFlight).map((w) => w.id));
+  if (project.workspaceId) stale.add(project.workspaceId);
+  for (const id of stale) await sbWorkspaceDelete(target, id);
+  if (inFlight) {
+    await updateProject(project.id, { workspaceId: inFlight.id });
+    return { ok: true, val: inFlight };
   }
+  if (project.workspaceId) await updateProject(project.id, { workspaceId: null });
+
   const cloned = await sbWorkspaceClone(target, {
     provider: project.repo.provider,
     repoFullName: repo.fullName,

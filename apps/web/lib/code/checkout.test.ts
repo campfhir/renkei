@@ -107,6 +107,37 @@ describe('startCheckoutPreparation', () => {
     expect(outcome).toMatchObject({ ok: true, cloned: true, worktree: { id: 'wt-1' } });
   }, 10_000);
 
+  it('clones again when the base reads ready and the worker no longer has its files', async () => {
+    // A sandbox restarted without the project's files: the base row still says ready.
+    chatRow.mockResolvedValue(chat());
+    row.mockResolvedValue(project('ws-1'));
+    get
+      .mockResolvedValueOnce({ ok: true, val: workspace('ready') })
+      .mockResolvedValueOnce({ ok: true, val: workspace('ready', { id: 'ws-2' }) });
+    worktree
+      .mockResolvedValueOnce({ ok: false, status: 409, message: 'The base checkout is not ready.' })
+      .mockResolvedValueOnce({
+        ok: true,
+        val: workspace('ready', { id: 'wt-2', parentId: 'ws-2' }),
+      });
+    clone.mockResolvedValue({ ok: true, val: workspace('cloning', { id: 'ws-2' }) });
+    const outcome = await startCheckoutPreparation({ chatId: 'c1', subject: 'alice' });
+    expect(clone).toHaveBeenCalledTimes(1);
+    expect(worktree).toHaveBeenCalledTimes(2);
+    expect(worktree.mock.calls[1]![2]).toMatchObject({ id: 'ws-2' });
+    expect(outcome).toMatchObject({ ok: true, cloned: true, worktree: { id: 'wt-2' } });
+  }, 10_000);
+
+  it('a worktree that fails for another reason is not a reason to clone again', async () => {
+    chatRow.mockResolvedValue(chat());
+    row.mockResolvedValue(project('ws-1'));
+    get.mockResolvedValueOnce({ ok: true, val: workspace('ready') });
+    worktree.mockResolvedValue({ ok: false, status: 409, message: 'fatal: invalid reference' });
+    const outcome = await startCheckoutPreparation({ chatId: 'c1', subject: 'alice' });
+    expect(clone).not.toHaveBeenCalled();
+    expect(outcome).toMatchObject({ ok: false, message: 'fatal: invalid reference' });
+  });
+
   it('does nothing for a chat whose worktree is ready, a chat project, or a chat outside projects', async () => {
     chatRow.mockResolvedValue(chat('wt-1'));
     row.mockResolvedValue(project('ws-1'));

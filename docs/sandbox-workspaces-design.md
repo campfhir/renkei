@@ -468,7 +468,19 @@ the same time. After two consecutive losses in one turn the tools stop
 trying and every call answers the same refusal, telling the model to
 stop and tell the person: a checkout that keeps vanishing is the
 worker's volume, not something another clone fixes. The next turn's
-prelude starts afresh. The model also has `code_clone`, a probe that
+prelude starts afresh. The base clone under a chat's worktree is lost
+the same way and shows it differently: no verb reaches for the base
+itself, so its row reads ready until a worktree is asked of it. The
+worker marks it `failed` then too, and the web app — at the start of a
+turn, in the background preparation and in the tools' recovery alike
+(`worktreeOfBase` and `baseLost`, `lib/code/checkout.ts`) — clones the
+base again on that answer rather than leaving the project unusable until
+someone clones it by hand. Starting a clone (`startProjectClone`) keeps
+to one project, one checkout: it drops every other clone the worker
+holds for the project, so clones left behind by a request that never
+recorded one cannot add up to the worker's limit of three, and joins a
+clone of the same repository and branch another request started in the
+last ten minutes. The model also has `code_clone`, a probe that
 reports the checkout present or, through the same wrapper, brings it
 back — it never re-clones a checkout that is there. The worker's "gone"
 answer says whether it has the project's other files (this checkout
