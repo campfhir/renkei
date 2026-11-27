@@ -168,6 +168,25 @@ describe('the window', () => {
     expect(rect.top).toBeGreaterThanOrEqual(EDGE);
     expect(small.size).toEqual(DEFAULT_SIZE);
   });
+
+  it('shrinks above an on-screen keyboard, and takes its size back when the keyboard goes', () => {
+    // The visible part of a phone with the keyboard up.
+    const keyboard = { width: phone.width, height: 400 };
+    const typing = run(
+      [
+        { type: 'viewport', size: phone },
+        { type: 'viewport', size: keyboard },
+      ],
+      opened
+    );
+    const rect = windowPlacement(typing)!.rect;
+    expect(rect.top).toBeGreaterThanOrEqual(EDGE);
+    expect(rect.top + rect.height).toBeLessThanOrEqual(keyboard.height - EDGE - CTA_SIZE - GAP);
+    const done = run([{ type: 'viewport', size: phone }], typing);
+    expect(windowPlacement(done)!.rect.height).toBe(
+      windowPlacement(run([{ type: 'viewport', size: phone }], opened))!.rect.height
+    );
+  });
 });
 
 describe('resizing', () => {

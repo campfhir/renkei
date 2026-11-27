@@ -185,6 +185,8 @@ export function useAgentMention({
               position: 'fixed',
               top: box?.top ?? 0,
               left: box?.left ?? 0,
+              // Never past the room beside the box — above an iOS keyboard, little.
+              maxHeight: box ? `min(18rem, ${box.maxHeight}px)` : undefined,
               width: width ?? undefined,
               visibility: box ? 'visible' : 'hidden',
             }}

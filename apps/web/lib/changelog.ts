@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-27',
     entries: [
       {
+        kind: 'fixed',
+        title: 'The keyboard no longer covers the pipeline assistant or the agent list on iPhone',
+        detail:
+          "On an iPhone, the on-screen keyboard hid the pipeline assistant's message box, and choosing an agent to message in chat could open the list under the keys. The assistant's window now shrinks to the room above the keyboard, and the agent list (and a code project's file list) opens above the message box, cut to fit and scrolling.",
+      },
+      {
         kind: 'added',
         title: "Salesforce through a code project's pipeline",
         detail:

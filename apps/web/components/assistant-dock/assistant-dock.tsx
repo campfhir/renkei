@@ -189,17 +189,27 @@ function DockFrame({ onBody }: { onBody: (element: HTMLElement | null) => void }
   const dispatch = context?.dispatch;
   const title = context?.slots[context.slots.length - 1]?.title ?? 'Assistant';
 
-  // The viewport, as fixed positioning sees it (without a scrollbar).
+  // The part of the page the person can see. iOS Safari keeps the layout
+  // viewport — and window.innerHeight — when the keyboard opens and lets the
+  // keys cover its bottom; only the visual viewport shrinks (and scrolls).
+  // The dock is sized to it, and its layer moved onto it (below), so the
+  // window and its input stay above the keyboard.
+  const [offset, setOffset] = useState({ left: 0, top: 0 });
   useEffect(() => {
     if (!dispatch) return;
-    const measure = () =>
+    const visual = window.visualViewport;
+    const measure = () => {
+      const width = document.documentElement.clientWidth || window.innerWidth;
       dispatch({
         type: 'viewport',
-        size: {
-          width: document.documentElement.clientWidth || window.innerWidth,
-          height: window.innerHeight,
-        },
+        size: visual
+          ? { width: Math.min(width, visual.width), height: visual.height }
+          : { width, height: window.innerHeight },
       });
+      const left = visual?.offsetLeft ?? 0;
+      const top = visual?.offsetTop ?? 0;
+      setOffset((was) => (was.left === left && was.top === top ? was : { left, top }));
+    };
     measure();
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -209,7 +219,13 @@ function DockFrame({ onBody }: { onBody: (element: HTMLElement | null) => void }
     }
     setMounted(true);
     window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
+    visual?.addEventListener('resize', measure);
+    visual?.addEventListener('scroll', measure);
+    return () => {
+      window.removeEventListener('resize', measure);
+      visual?.removeEventListener('resize', measure);
+      visual?.removeEventListener('scroll', measure);
+    };
   }, [dispatch]);
 
   // Where it sits and its size, once a gesture ends.
@@ -234,7 +250,11 @@ function DockFrame({ onBody }: { onBody: (element: HTMLElement | null) => void }
   const gesture = dragging || state.resize !== null;
   // Snapping to a corner glides; following the pointer does not.
   const glide = gesture ? '' : 'motion-safe:transition-[left,top] motion-safe:duration-200';
-  const at = (e: ReactPointerEvent) => ({ x: e.clientX, y: e.clientY });
+  // Pointer positions in the layer's own coordinates (see the offset above).
+  const at = (e: ReactPointerEvent) => ({
+    x: e.clientX - offset.left,
+    y: e.clientY - offset.top,
+  });
 
   const capture = (e: ReactPointerEvent<HTMLElement>) => {
     e.preventDefault();
@@ -283,8 +303,15 @@ function DockFrame({ onBody }: { onBody: (element: HTMLElement | null) => void }
 
   return createPortal(
     <div
-      className={`pointer-events-none fixed inset-0 ${LAYER} ${gesture ? 'select-none' : ''}`}
+      className={`pointer-events-none fixed top-0 left-0 ${LAYER} ${gesture ? 'select-none' : ''}`}
       data-testid="assistant-dock"
+      // The transform makes this layer the box its fixed children are placed
+      // in, laid over the visible part of the page.
+      style={{
+        width: state.viewport?.width,
+        height: state.viewport?.height,
+        transform: `translate(${offset.left}px, ${offset.top}px)`,
+      }}
     >
       <section
         role="dialog"

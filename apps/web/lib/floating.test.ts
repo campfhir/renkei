@@ -10,7 +10,7 @@ describe('placeFloating', () => {
       viewport,
       { align: 'start' }
     );
-    expect(box).toEqual({ top: 124, left: 50, placement: 'below' });
+    expect(box).toEqual({ top: 124, left: 50, placement: 'below', maxHeight: 800 - 120 - 4 - 8 });
   });
 
   it('flips above when the anchor is near the bottom edge', () => {
@@ -63,5 +63,37 @@ describe('placeFloating', () => {
     );
     expect(box.placement).toBe('below');
     expect(box.top).toBeGreaterThanOrEqual(8);
+    expect(box.maxHeight).toBe(800 - 320 - 4 - 8);
+  });
+
+  it('keeps a composer’s list above an iOS keyboard, cut to the room there', () => {
+    // A phone with the keyboard up: the page keeps its 844px, the person
+    // sees the top 400px, and the composer sits right above the keys.
+    const keyboardUp = { top: 0, left: 0, width: 390, height: 400 };
+    const box = placeFloating(
+      { top: 280, bottom: 380, left: 16, right: 374 },
+      { width: 358, height: 288 },
+      keyboardUp,
+      { align: 'start', prefer: 'above', gap: 6 }
+    );
+    expect(box.placement).toBe('above');
+    expect(box.maxHeight).toBe(280 - 6 - 8);
+    expect(box.top).toBeGreaterThanOrEqual(8);
+  });
+
+  it('places within the visible area when iOS has scrolled it down the page', () => {
+    const scrolled = { top: 300, left: 0, width: 390, height: 400 };
+    const box = placeFloating(
+      { top: 580, bottom: 680, left: 16, right: 374 },
+      { width: 358, height: 150 },
+      scrolled,
+      { align: 'start', prefer: 'above', gap: 6 }
+    );
+    expect(box).toEqual({
+      top: 580 - 6 - 150,
+      left: 16,
+      placement: 'above',
+      maxHeight: 580 - 300 - 6 - 8,
+    });
   });
 });
