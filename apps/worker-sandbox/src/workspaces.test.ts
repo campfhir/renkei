@@ -156,6 +156,8 @@ describe('wrapCommand', () => {
     expect(env.CARGO_HOME).toBe('/h/.cargo');
     expect(env.XDG_CACHE_HOME).toBe('/h/.cache');
     expect(env.SF_DISABLE_TELEMETRY).toBe('true');
+    // Exported, so a tool need not look its user up: the caller's uid has no passwd entry.
+    expect(env.SHELL).toBe('/bin/bash');
     expect(env.DATABASE_URL).toBeUndefined();
     expect(env.SANDBOX_WORKER_API_KEY).toBeUndefined();
     expect(env.GIT_CONFIG_COUNT).toBe('1');
