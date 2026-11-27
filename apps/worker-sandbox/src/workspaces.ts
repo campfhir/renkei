@@ -376,6 +376,12 @@ export function childEnvironment(input: RunInput): Record<string, string> {
     LANG: 'C.UTF-8',
     LC_ALL: 'C.UTF-8',
     TERM: 'dumb',
+    // A caller's uid has no entry in /etc/passwd, so a tool that asks the
+    // system who it is running as fails (Node's os.userInfo() throws). The
+    // Salesforce CLI does exactly that to learn its shell unless SHELL is
+    // set; bash, which runs every command here, sets it for itself but does
+    // not export it.
+    SHELL: '/bin/bash',
     // Tooling that changes behaviour under CI is usually what a non-interactive run wants.
     CI: '1',
     GIT_TERMINAL_PROMPT: '0',
