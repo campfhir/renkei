@@ -75,10 +75,11 @@ export const SALESFORCE_PULL_TIMEOUT_MS = RETRIEVE_WAIT_MS + CONVERT_TIMEOUT_MS 
 const ZIP_PATH = '.renkei-salesforce-pull.zip';
 
 /**
- * Unpacks the zip beside the checkout's files, converts it into the
- * project's default package directory, and leaves neither the zip nor the
- * unpacked copy behind however it ends. A repository that is not a
- * Salesforce DX project yet becomes one.
+ * Unpacks the zip outside the checkout, converts it into the project's
+ * default package directory, and leaves neither the zip nor the unpacked
+ * copy behind however it ends. A repository that is not a Salesforce DX
+ * project yet becomes one, and a package directory the project names but
+ * does not have yet is made.
  */
 const CONVERT = [
   'set -e',
@@ -88,14 +89,15 @@ const CONVERT = [
   // an earlier build does not, so the command says it for itself.
   'export SHELL=/bin/sh',
   `zip=${ZIP_PATH}`,
-  'dir=.renkei-salesforce-pull',
+  // Unpacked outside the checkout, and not under a dot directory: once a
+  // project has a .forceignore the CLI also ignores every dot path beneath
+  // it, and a copy unpacked there converts to nothing.
+  'dir=$(mktemp -d)',
   'trap \'rm -rf "$zip" "$dir"\' EXIT',
   'if ! command -v sf >/dev/null 2>&1; then',
   "  echo 'This sandbox has no Salesforce CLI (sf), so the pull could not be turned into source.' >&2",
   '  exit 1',
   'fi',
-  'rm -rf "$dir"',
-  'mkdir "$dir"',
   'unzip -q -o "$zip" -d "$dir"',
   'manifest=$(find "$dir" -name package.xml | head -n 1)',
   'if [ -z "$manifest" ]; then',
@@ -106,10 +108,15 @@ const CONVERT = [
   '  printf \'%s\\n\' \'{\' \'  "packageDirectories": [{ "path": "force-app", "default": true }],\' \'  "namespace": "",\' \'  "sfdcLoginUrl": "https://login.salesforce.com",\' \'  "sourceApiVersion": "' +
     SALESFORCE_API_VERSION +
     "\"' '}' > sfdx-project.json",
-  '  mkdir -p force-app',
   "  echo 'Started a Salesforce DX project here: sfdx-project.json and force-app/.'",
   'fi',
-  'sf project convert mdapi --root-dir "$(dirname "$manifest")"',
+  // The CLI refuses a project whose package directory is not there yet, as in
+  // one that has only its sfdx-project.json. A file it cannot read is the
+  // CLI's to report, in its own words.
+  'node -e \'for (const d of JSON.parse(require("fs").readFileSync("sfdx-project.json", "utf8")).packageDirectories || []) if (typeof d.path === "string" && d.path) console.log(d.path)\' 2>/dev/null | while IFS= read -r package_dir; do',
+  '  mkdir -p -- "$package_dir"',
+  'done',
+  'sf project convert mdapi --root-dir "$(dirname "$manifest")" 2>&1',
   // Gone before the status below, so it lists only what the pull changed.
   'rm -rf "$zip" "$dir"',
   "echo '--- git status'",

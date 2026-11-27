@@ -112,6 +112,34 @@ describe('Salesforce’s answers', () => {
     });
   });
 
+  it('names a bundle once, however many files it has', () => {
+    const file = (fileName: string, fullName: string, type: string) =>
+      `<fileProperties><fileName>${fileName}</fileName><fullName>${fullName}</fullName><type>${type}</type></fileProperties>`;
+    const status = readRetrieveStatus(
+      envelope(
+        '<checkRetrieveStatusResponse><result><done>true</done>' +
+          file('lwc/referralQueue/referralQueue.js', 'referralQueue', 'LightningComponentBundle') +
+          file(
+            'lwc/referralQueue/referralQueue.html',
+            'referralQueue',
+            'LightningComponentBundle'
+          ) +
+          file(
+            'lwc/tourSlotPicker/tourSlotPicker.js',
+            'tourSlotPicker',
+            'LightningComponentBundle'
+          ) +
+          file('classes/referralQueue.cls', 'referralQueue', 'ApexClass') +
+          '<success>true</success><zipFile>UEsDBA==</zipFile></result></checkRetrieveStatusResponse>'
+      )
+    );
+    expect('components' in status && status.components).toEqual([
+      { type: 'LightningComponentBundle', fullName: 'referralQueue' },
+      { type: 'LightningComponentBundle', fullName: 'tourSlotPicker' },
+      { type: 'ApexClass', fullName: 'referralQueue' },
+    ]);
+  });
+
   it('reads a failed one as why, with no zip', () => {
     expect(
       readRetrieveStatus(
