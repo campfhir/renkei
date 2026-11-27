@@ -697,6 +697,7 @@ ARG RUST_TOOLCHAIN=1.99.0
 ARG TEMURIN_RELEASE=jdk-21.0.12.1+1
 ARG JDTLS_VERSION=1.63.0
 ARG SALESFORCE_CLI_VERSION=2.159.7
+ARG SALESFORCE_CLI_PROTOBUFJS_VERSION=7.6.6
 
 # TypeScript/JavaScript, Python and shell: Node-based, beside the
 # worker's own Node. The shell server lints through shellcheck when it
@@ -821,7 +822,23 @@ RUN ARCH="$(dpkg --print-architecture)" && \
 # it holds no credential; its state goes under the caller's HOME. The same
 # version the starter CI blocks pin (packages/db/src/migrations/
 # 200-salesforce-ci-blocks.ts).
+#
+# The CLI ships its dependencies inside its own package, and its usage
+# reporter (o11y) pins protobufjs 7.5.6, which has an open HIGH advisory
+# (CVE-2026-48712, the image scan's finding) fixed in 7.6.1; no CLI release
+# carries the fix yet. So the bundled copy is replaced with the patched 7.x
+# release, whose own dependencies the bundle already satisfies, and the
+# build fails unless that copy is the one in place and still encodes and
+# decodes. Drop the replacement, and the ARG, once a CLI release bundles
+# protobufjs >= 7.6.1.
 RUN npm install -g --no-audit --no-fund @salesforce/cli@${SALESFORCE_CLI_VERSION} && \
+    cd /usr/local/lib/node_modules/@salesforce/cli/node_modules && \
+    npm pack --silent protobufjs@${SALESFORCE_CLI_PROTOBUFJS_VERSION} && \
+    rm -rf protobufjs && mkdir protobufjs && \
+    tar -xzf protobufjs-${SALESFORCE_CLI_PROTOBUFJS_VERSION}.tgz -C protobufjs --strip-components=1 --no-same-owner && \
+    rm -f protobufjs-${SALESFORCE_CLI_PROTOBUFJS_VERSION}.tgz && \
+    node -e "const pb=require('./protobufjs');const T=new pb.Type('T').add(new pb.Field('a',1,'string'));if(require('./protobufjs/package.json').version!==process.argv[1]||T.decode(T.encode({a:'ok'}).finish()).a!=='ok')process.exit(1)" ${SALESFORCE_CLI_PROTOBUFJS_VERSION} && \
+    chmod -R a+rX protobufjs && \
     rm -rf /root/.npm && \
     SF_DISABLE_TELEMETRY=true SF_AUTOUPDATE_DISABLE=true sf --version
 
