@@ -68,7 +68,11 @@ export function splitMatch(path: string, query: string): [string, string, string
   if (!query) return [path, '', ''];
   const index = path.toLowerCase().indexOf(query.toLowerCase());
   if (index < 0) return [path, '', ''];
-  return [path.slice(0, index), path.slice(index, index + query.length), path.slice(index + query.length)];
+  return [
+    path.slice(0, index),
+    path.slice(index, index + query.length),
+    path.slice(index + query.length),
+  ];
 }
 
 export function usePathCompletions({
@@ -91,8 +95,7 @@ export function usePathCompletions({
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => boolean;
   /** The caret moved without the text changing (a click, an arrow): look again. */
   refresh: () => void;
-}
-{
+} {
   const listboxId = useId();
   const [mention, setMention] = useState<Mention | null>(null);
   const [items, setItems] = useState<string[]>([]);
@@ -117,7 +120,11 @@ export function usePathCompletions({
     const caret = element.selectionStart ?? text.length;
     const next = mentionAt(text, caret);
     setMention((current) =>
-      current && next && current.start === next.start && current.query === next.query && current.end === next.end
+      current &&
+      next &&
+      current.start === next.start &&
+      current.query === next.query &&
+      current.end === next.end
         ? current
         : next
     );
@@ -152,7 +159,10 @@ export function usePathCompletions({
     return () => clearTimeout(timer);
   }, [mention, scope]);
 
-  const open = mention !== null && dismissedStart !== mention.start && (loading || items.length > 0 || mention.query.length > 0);
+  const open =
+    mention !== null &&
+    dismissedStart !== mention.start &&
+    (loading || items.length > 0 || mention.query.length > 0);
   const box = useFloating(open, textareaRef, boxRef, { align: 'start', prefer: 'above', gap: 6 });
 
   useEffect(() => {
@@ -227,6 +237,8 @@ export function usePathCompletions({
               position: 'fixed',
               top: box?.top ?? 0,
               left: box?.left ?? 0,
+              // Never past the room beside the box — above an iOS keyboard, little.
+              maxHeight: box ? `min(16rem, ${box.maxHeight}px)` : undefined,
               width: width ?? undefined,
               visibility: box ? 'visible' : 'hidden',
             }}
