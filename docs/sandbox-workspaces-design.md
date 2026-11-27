@@ -134,6 +134,7 @@ when the project's checkout is ready (`lib/code/turn.ts`):
 | `code_env_names`              | Read | The names of the project's environment variables — never a value.                                                |
 | `code_pipeline_variables`     | Read | The variables the host's pipelines get (repository and environments); secured ones by name, value omitted.       |
 | `code_pipeline_set_variables` | Act  | Add, change or remove plain pipeline variables by name; never a secured one, never a secret-looking name.        |
+| `code_salesforce_pull`        | Act  | Pull named metadata from a Salesforce org, on the person's admin connection, into the checkout as DX source.     |
 | `code_service_*`              |      | Containers beside the checkout, where the deployment offers them — see "Services" below.                         |
 | `code_preview_*`              |      | The project's own server, run in the checkout and served through the app — see "Previews" below.                 |
 

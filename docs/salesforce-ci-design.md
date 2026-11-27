@@ -87,10 +87,14 @@ works out what a merge removed.
 
 1. **Foundations** (this change). The two blocks, the CLI in the sandbox image, Apex colouring in
    the code pane, the default instruction. The connector is unchanged.
-2. **Org to repository.** A tool pulls an org's metadata through the delegate on the person's
-   admin connection, puts the retrieved package in the project's checkout, and runs
-   `sf project convert mdapi` there, offline, to write source format; the result is a pull
-   request. A second tool sets up the pipeline. Both routes work.
+2. **Org to repository.** `code_salesforce_pull`, a tool in a code project's chat, pulls named
+   metadata through the delegate on the person's admin connection (the Metadata API's `retrieve`,
+   which the delegate now allows beside `readMetadata` — both read), puts the zip in the chat's
+   checkout, and runs `sf project convert mdapi` there, offline, to write source format. It leaves
+   uncommitted files; the chat commits them and opens the pull request. The connector is
+   unchanged, so both routes work. Still to do: a tool that sets up the pipeline, as
+   `fabric_setup_pipeline` does; until then the blocks are added on the project's Environments
+   page.
 3. **Proposals become pull requests.** The `salesforce_admin_propose_*` tools commit source to a
    branch and open a pull request, reports and dashboards included. A draft report in the admin's
    private folder stays direct, since that is how a report is tried against real data. Apply stops

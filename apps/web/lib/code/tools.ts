@@ -85,6 +85,7 @@ import {
 import { moreGitTools } from './git-tools';
 import { previewTools } from './preview-tools';
 import { pipelineVariableTools } from './pipeline-tools';
+import { salesforcePullTools } from './salesforce-pull';
 import { DIFF_FENCE_CLOSE, DIFF_FENCE_OPEN } from './diff';
 import { isRecord } from '@renkei/guards';
 
@@ -1228,7 +1229,8 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       repoProvider: binding.repoProvider,
       repoFullName: binding.repoFullName,
       origin: binding.origin,
-    })
+    }),
+    ...salesforcePullTools({ target, ref, repoFullName: binding.repoFullName, failed })
   );
   if (binding.servicesEnabled) tools.push(...serviceTools(target, failed));
   // One recovery state for the whole turn: the tools share the clone

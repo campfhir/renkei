@@ -158,6 +158,7 @@ describe('the set', () => {
       'code_previews',
       'code_read_file',
       'code_run',
+      'code_salesforce_pull',
       'code_write_file',
     ]);
     expect(set.get('code_grep')!.readOnly).toBe(true);

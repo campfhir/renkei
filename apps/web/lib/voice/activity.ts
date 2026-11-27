@@ -100,6 +100,7 @@ const OWN: Record<string, string> = {
   code_env_names: 'Checking the environment',
   code_pipeline_variables: 'Checking the pipeline variables',
   code_pipeline_set_variables: 'Setting pipeline variables',
+  code_salesforce_pull: 'Pulling from Salesforce',
   code_delegate: 'Handing a task to a sub-agent',
   chat_delegate: 'Handing a task to a sub-agent',
   chat_rename: 'Renaming the chat',
