@@ -46,6 +46,17 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-27',
+    entries: [
+      {
+        kind: 'added',
+        title: "Salesforce through a code project's pipeline",
+        detail:
+          "A code project that is a Salesforce DX project can check and deploy its source to an org from its pipeline: two new building blocks, Salesforce: check a deploy and Salesforce: deploy to an org, sign in as your integration user from the pipeline's own variables. In such a project's chat, someone with a Salesforce Admin connection can pull an org's metadata into the repository as source and have the pipeline set up for each environment.",
+      },
+    ],
+  },
+  {
     date: '2026-11-26',
     entries: [
       {
