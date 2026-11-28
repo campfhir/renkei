@@ -1,6 +1,7 @@
 import type { BlockDefinition } from '@renkei/ci-blocks';
 import {
   blockChoices,
+  CUSTOM_STEP_COMMANDS,
   builderReducer,
   canOpenPullRequest,
   canSave,
@@ -693,5 +694,182 @@ describe('a branch whose pipeline was written elsewhere', () => {
     const back = run([{ type: 'mode', mode: 'existing' }], picking);
     expect(back.picking).toBeNull();
     expect(back.selected).toBeNull();
+  });
+});
+
+describe('a custom step', () => {
+  const production = { part: 'production', index: 2 };
+  const added = run([{ type: 'addCustomStep', part: 'production' }], loaded);
+
+  it('is added from a row’s picker as a block of the project’s own, and opens to be written', () => {
+    expect(added.spec?.blocks).toEqual([
+      {
+        key: 'custom-step',
+        name: 'Custom step',
+        version: 1,
+        definition: {
+          kind: 'build',
+          runsOn: { type: 'hosted', image: 'ubuntu:24.04' },
+          inputs: [],
+          variables: [],
+          consumes: [],
+          produces: [],
+          caches: [],
+          commands: CUSTOM_STEP_COMMANDS,
+        },
+      },
+    ]);
+    expect(added.spec?.environments[0].steps[2]).toEqual({
+      block: 'custom-step',
+      version: 1,
+      inputs: {},
+    });
+    expect(added.selected).toEqual(production);
+    expect(added.picking).toBeNull();
+    expect(stepEditor(added)).toMatchObject({
+      name: 'Custom step',
+      where: 'production, step 3',
+      fields: [],
+      targets: null,
+      own: {
+        key: 'custom-step',
+        name: 'Custom step',
+        kind: 'build',
+        runsOn: 'hosted',
+        image: 'ubuntu:24.04',
+        docker: false,
+        commands: CUSTOM_STEP_COMMANDS,
+        problems: [],
+      },
+    });
+    // It reads as it stands, so the pipeline can be saved while it is written.
+    expect(isDirty(added)).toBe(true);
+    expect(saveRequest(added)?.spec.blocks).toHaveLength(1);
+  });
+
+  it('on pull requests is a check, and may not be made a deploy', () => {
+    const check = run([{ type: 'addCustomStep', part: null }], loaded);
+    expect(stepEditor(check)?.own).toMatchObject({ kind: 'check' });
+    expect(stepEditor(check)?.own?.kinds).not.toContain('deploy');
+    expect(stepEditor(added)?.own?.kinds).toContain('deploy');
+  });
+
+  it('gets a key and name of its own each time', () => {
+    const two = run([{ type: 'addCustomStep', part: null }], added);
+    expect(two.spec?.blocks?.map((b) => [b.key, b.name])).toEqual([
+      ['custom-step', 'Custom step'],
+      ['custom-step-2', 'Custom step 2'],
+    ]);
+  });
+
+  it('is written where its step is: its name, image and commands reach the file', () => {
+    const written = run(
+      [
+        { type: 'editOwnBlock', key: 'custom-step', patch: { name: 'Warm the cache' } },
+        { type: 'editOwnBlock', key: 'custom-step', patch: { image: 'curlimages/curl:8.10.1' } },
+        {
+          type: 'editOwnBlock',
+          key: 'custom-step',
+          patch: { commands: 'curl -fsS https://example.test/warm?commit=${commit}' },
+        },
+      ],
+      added
+    );
+    expect(stepEditor(written)).toMatchObject({
+      name: 'Warm the cache',
+      commands: 'curl -fsS https://example.test/warm?commit=$GITHUB_SHA',
+      own: { image: 'curlimages/curl:8.10.1', problems: [] },
+    });
+    const file = fileText(written);
+    expect(file?.ok && file.value).toContain('name: Warm the cache');
+    expect(file?.ok && file.value).toContain('container: curlimages/curl:8.10.1');
+    expect(file?.ok && file.value).toContain('warm?commit=$GITHUB_SHA');
+    // It is offered again in a row's picker, as the project's own.
+    expect(blockChoices(written, null)[0]).toMatchObject({
+      key: 'custom-step',
+      name: 'Warm the cache',
+      own: true,
+    });
+  });
+
+  it('moved to a target, its step names one; moved back, it runs in an image again', () => {
+    const onTarget = run(
+      [{ type: 'editOwnBlock', key: 'custom-step', patch: { runsOn: 'target' } }],
+      added
+    );
+    expect(onTarget.spec?.environments[0].steps[2].target).toBe('onprem-workers');
+    expect(stepEditor(onTarget)).toMatchObject({
+      target: 'onprem-workers',
+      own: { runsOn: 'target' },
+    });
+    expect(stepEditor(onTarget)?.targets).not.toBeNull();
+
+    const hosted = run(
+      [{ type: 'editOwnBlock', key: 'custom-step', patch: { runsOn: 'hosted' } }],
+      onTarget
+    );
+    expect(hosted.spec?.environments[0].steps[2]).toEqual({
+      block: 'custom-step',
+      version: 1,
+      inputs: {},
+    });
+    expect(stepEditor(hosted)?.own).toMatchObject({ runsOn: 'hosted', image: 'ubuntu:24.04' });
+  });
+
+  it('asks for Docker with a tick, and gives it back', () => {
+    const docker = run(
+      [{ type: 'editOwnBlock', key: 'custom-step', patch: { docker: true } }],
+      added
+    );
+    expect(docker.spec?.blocks?.[0].definition.runsOn).toEqual({
+      type: 'hosted',
+      image: 'ubuntu:24.04',
+      docker: {},
+    });
+    const plain = run(
+      [{ type: 'editOwnBlock', key: 'custom-step', patch: { docker: false } }],
+      docker
+    );
+    expect(plain.spec?.blocks?.[0].definition.runsOn).toEqual({
+      type: 'hosted',
+      image: 'ubuntu:24.04',
+    });
+  });
+
+  it('says what it still needs, in the block editor’s words', () => {
+    const unfinished = run(
+      [
+        { type: 'editOwnBlock', key: 'custom-step', patch: { name: ' ' } },
+        { type: 'editOwnBlock', key: 'custom-step', patch: { image: '' } },
+        { type: 'editOwnBlock', key: 'custom-step', patch: { commands: 'echo ${VERSION}' } },
+      ],
+      added
+    );
+    expect(stepEditor(unfinished)?.own?.problems).toEqual([
+      'Give the step a name.',
+      'A block that runs on a hosted runner needs a container image, e.g. node:22.',
+      'The commands use ${VERSION}; the placeholders are ${commit}, ${branch}, ${repo}, ${env} and ${input.NAME}.',
+    ]);
+  });
+
+  it('is refused once the pipeline holds as many of its own blocks as it may, and says so', () => {
+    const full = Array.from({ length: 12 }).reduce<BuilderState>(
+      (state) => builderReducer(state, { type: 'addCustomStep', part: null }),
+      loaded
+    );
+    expect(full.spec?.blocks).toHaveLength(12);
+    const refused = builderReducer(full, { type: 'addCustomStep', part: null });
+    expect(refused.spec).toEqual(full.spec);
+    expect(refused.error).toBe(
+      'A pipeline keeps at most 12 blocks of its own; nothing was added. Change one of them, or make one reusable and use it from the organization’s blocks.'
+    );
+  });
+
+  it('leaves an organization block’s step with nothing of the block to change', () => {
+    const state = run([{ type: 'select', step: { part: 'production', index: 1 } }], loaded);
+    expect(stepEditor(state)?.own).toBeNull();
+    expect(
+      run([{ type: 'editOwnBlock', key: 'deploy-systemd', patch: { commands: 'true' } }], state)
+    ).toBe(state);
   });
 });

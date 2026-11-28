@@ -215,6 +215,23 @@ test('environments: branches, a branch’s pipeline, variables from a .env, and 
     await editor.getByText('The commands it runs').click();
     await expect(editor.getByTestId('step-commands')).toHaveText('sudo systemctl restart billing');
     await editor.getByRole('button', { name: 'Done' }).click();
+
+    // A custom step, for what no block does: written where it is, kept with this project.
+    await deploys.getByRole('button', { name: '+ Add block' }).click();
+    await deploys.getByRole('button', { name: /A custom step/ }).click();
+    const custom = deploys.getByRole('group', { name: /, dev, step \d+$/ });
+    await custom.getByLabel('Step name').fill('Warm the cache');
+    await custom.getByRole('textbox', { name: 'Container image' }).fill('curlimages/curl:8.10.1');
+    await custom
+      .getByLabel('Commands')
+      .fill('curl -fsS https://cache.example.test/warm?commit=${commit}');
+    await expect(custom.getByRole('list', { name: 'What this step still needs' })).toHaveCount(0);
+    await custom.getByRole('button', { name: 'Done' }).click();
+    await main.getByRole('tab', { name: 'The file it writes' }).click();
+    const file = main.getByRole('region', { name: 'The file it writes' });
+    await expect(file).toContainText('name: Warm the cache');
+    await expect(file).toContainText('warm?commit=$BITBUCKET_COMMIT');
+    await main.getByRole('tab', { name: 'Builder' }).click();
     await shot(page, testInfo, 'environments-02-pipeline');
     const opened = page.waitForResponse(
       (r) =>
