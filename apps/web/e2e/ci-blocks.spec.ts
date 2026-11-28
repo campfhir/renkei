@@ -175,6 +175,8 @@ test('building blocks: a hosted block asks for Docker and leaves a variable opti
     await main.getByRole('button', { name: '+ Add variable' }).click();
     await main.getByLabel('Variable 1 name').fill('BASE_PATH');
     await main.getByLabel('Variable 1 is optional').check();
+    await main.getByLabel('Variable 1 description').fill('The prefix it is served under');
+    await shot(page, testInfo, 'ci-blocks-06-optional-variable');
 
     // --- Save sends both, and they are there when the block is opened again. ---
     const created = page.waitForResponse(
