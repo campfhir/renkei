@@ -1,5 +1,6 @@
 export {
   BLOCK_KINDS,
+  DOCKER_MEMORY,
   INPUT_TYPES,
   placeholderPattern,
   placeholdersIn,
@@ -8,6 +9,7 @@ export {
   type BlockArtifact,
   type BlockCache,
   type BlockDefinition,
+  type BlockDocker,
   type BlockInput,
   type BlockKind,
   type BlockRunsOn,

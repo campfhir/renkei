@@ -3,6 +3,7 @@ import {
   canPublish,
   canSave,
   definitionOf,
+  hostNoteOf,
   initialEditor,
   isDirty,
   previewOf,
@@ -133,6 +134,123 @@ describe('a new block', () => {
     expect(
       blockEditorReducer(saved, { type: 'field', field: 'key', value: 'renamed' }).form.key
     ).toBe('deploy-systemd');
+  });
+});
+
+describe('a variable the commands can do without', () => {
+  it('is saved as optional once ticked, and required until then', () => {
+    const state = run([
+      ...filledIn,
+      { type: 'addRow', list: 'variables' },
+      { type: 'variable', index: 1, patch: { name: 'BASE_PATH', optional: true } },
+    ]);
+    expect(problemsOf(state)).toEqual([]);
+    expect(definitionOf(state.form).variables).toEqual([
+      { name: 'DEPLOY_TOKEN', secured: true },
+      { name: 'BASE_PATH', secured: false, optional: true },
+    ]);
+  });
+
+  it('opens ticked from a saved block', () => {
+    const state = run(
+      [
+        {
+          type: 'loaded',
+          block: {
+            ...published,
+            published: {
+              ...publishedDefinition,
+              variables: [{ name: 'BASE_PATH', secured: false, optional: true }],
+            },
+          },
+        },
+      ],
+      initialEditor('b1')
+    );
+    expect(state.form.variables).toEqual([
+      { name: 'BASE_PATH', secured: false, optional: true, description: '' },
+    ]);
+    expect(isDirty(state)).toBe(false);
+  });
+});
+
+describe('a hosted block that needs Docker', () => {
+  const hosted: BlockEditorAction[] = [
+    { type: 'field', field: 'key', value: 'build-image' },
+    { type: 'field', field: 'name', value: 'Build the image' },
+    { type: 'kind', kind: 'package' },
+    { type: 'field', field: 'image', value: 'docker:27-cli' },
+    { type: 'field', field: 'commands', value: 'docker build .' },
+  ];
+
+  it('asks for it with a tick, and for memory only when one is typed', () => {
+    const ticked = run([...hosted, { type: 'docker', docker: true }]);
+    expect(problemsOf(ticked)).toEqual([]);
+    expect(definitionOf(ticked.form).runsOn).toEqual({
+      type: 'hosted',
+      image: 'docker:27-cli',
+      docker: {},
+    });
+    const sized = run([{ type: 'field', field: 'dockerMemory', value: ' 3072 ' }], ticked);
+    expect(definitionOf(sized.form).runsOn).toEqual({
+      type: 'hosted',
+      image: 'docker:27-cli',
+      docker: { memory: 3072 },
+    });
+    expect(previewOf(sized)).toContain('services:\n      - docker');
+    expect(previewOf(sized)).toContain('#   docker:\n#     memory: 3072');
+  });
+
+  it('cannot be published with memory Bitbucket would not give it', () => {
+    for (const value of ['4096', 'lots']) {
+      const state = run([
+        ...hosted,
+        { type: 'docker', docker: true },
+        { type: 'field', field: 'dockerMemory', value },
+      ]);
+      expect(problemsOf(state)).toEqual([
+        'Memory for Docker is a whole number of megabytes from 128 to 3072.',
+      ]);
+      expect(canPublish(state)).toBe(false);
+    }
+  });
+
+  it('says where the engine comes from on each host', () => {
+    const state = run([...hosted, { type: 'docker', docker: true }]);
+    expect(hostNoteOf(state)).toContain('Bitbucket’s Docker service runs beside the step');
+    expect(hostNoteOf(blockEditorReducer(state, { type: 'host', host: 'github' }))).toContain(
+      'the image has to bring the docker command'
+    );
+  });
+
+  it('is dropped when the block moves to a target, whose machine has an engine', () => {
+    const state = run([
+      ...hosted,
+      { type: 'docker', docker: true },
+      { type: 'field', field: 'dockerMemory', value: '3072' },
+      { type: 'runsOn', runsOn: 'target' },
+    ]);
+    expect(definitionOf(state.form).runsOn).toEqual({ type: 'target' });
+  });
+
+  it('opens ticked, with its memory, from a saved block', () => {
+    const state = run(
+      [
+        {
+          type: 'loaded',
+          block: {
+            ...published,
+            published: {
+              ...publishedDefinition,
+              runsOn: { type: 'hosted', image: 'docker:27-cli', docker: { memory: 2048 } },
+            },
+          },
+        },
+      ],
+      initialEditor('b1')
+    );
+    expect(state.form.docker).toBe(true);
+    expect(state.form.dockerMemory).toBe('2048');
   });
 });
 

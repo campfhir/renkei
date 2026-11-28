@@ -14,11 +14,16 @@
  */
 
 import {
+  BLOCK_KINDS,
   HOST_LABEL,
+  MAX_PROJECT_BLOCKS,
   blockOfStep,
   partName,
   pipelineChecks,
+  readBlockDefinition,
   renderPipeline,
+  substitute,
+  type BlockDefinition,
   type BlockKind,
   type CheckTarget,
   type Host,
@@ -96,6 +101,10 @@ export type BuilderAction =
   | { type: 'openPicker'; part: Part }
   | { type: 'closePicker' }
   | { type: 'addStep'; part: Part; block: string }
+  /** A step of the project's own, written here: a block kept with this pipeline, opened to be filled in. */
+  | { type: 'addCustomStep'; part: Part }
+  /** A change to one of the project's own blocks, as its step's editor makes it. */
+  | { type: 'editOwnBlock'; key: string; patch: OwnBlockPatch }
   | { type: 'removeStep'; step: StepRef }
   | { type: 'moveStep'; step: StepRef; by: -1 | 1 }
   | { type: 'setInput'; step: StepRef; name: string; value: string }
@@ -109,6 +118,20 @@ export type BuilderAction =
     }
   /** The assistant's pipeline, as the person applied it (pipeline-assistant.tsx). */
   | { type: 'applyProposal'; spec: PipelineSpec };
+
+export interface OwnBlockPatch {
+  name?: string;
+  kind?: BlockKind;
+  runsOn?: 'hosted' | 'target';
+  image?: string;
+  docker?: boolean;
+  commands?: string;
+}
+
+/** The image a custom step starts in, until the person names the one it needs. */
+export const CUSTOM_STEP_IMAGE = 'ubuntu:24.04';
+/** A custom step starts with a command, so the pipeline still reads while it is written. */
+export const CUSTOM_STEP_COMMANDS = 'echo "Replace this with the step’s commands"';
 
 export const initialBuilder: BuilderState = {
   data: null,
@@ -183,6 +206,36 @@ function defaultTarget(data: BuilderData): string | undefined {
   )?.name;
 }
 
+/** A key and name no block of the project or the organization has: `custom-step`, then `custom-step-2`. */
+function customIdentity(data: BuilderData, spec: PipelineSpec): { key: string; name: string } {
+  const taken = new Set([...(spec.blocks ?? []), ...data.blocks].map((b) => b.key));
+  let n = 1;
+  while (taken.has(n === 1 ? 'custom-step' : `custom-step-${n}`)) n += 1;
+  return n === 1
+    ? { key: 'custom-step', name: 'Custom step' }
+    : { key: `custom-step-${n}`, name: `Custom step ${n}` };
+}
+
+/** One of the project's own block definitions with a patch from its editor applied. */
+function patched(definition: BlockDefinition, patch: OwnBlockPatch): BlockDefinition {
+  let runsOn = definition.runsOn;
+  if (patch.runsOn === 'target') runsOn = { type: 'target' };
+  if (patch.runsOn === 'hosted' && runsOn.type !== 'hosted') {
+    runsOn = { type: 'hosted', image: CUSTOM_STEP_IMAGE };
+  }
+  if (runsOn.type === 'hosted') {
+    if (patch.image !== undefined) runsOn = { ...runsOn, image: patch.image };
+    if (patch.docker === true) runsOn = { ...runsOn, docker: runsOn.docker ?? {} };
+    if (patch.docker === false) runsOn = { type: 'hosted', image: runsOn.image };
+  }
+  return {
+    ...definition,
+    runsOn,
+    ...(patch.kind ? { kind: patch.kind } : {}),
+    ...(patch.commands !== undefined ? { commands: patch.commands } : {}),
+  };
+}
+
 function editing(state: BuilderState, spec: PipelineSpec): BuilderState {
   return { ...state, spec, notice: null, error: null, problems: [] };
 }
@@ -250,6 +303,77 @@ export function builderReducer(state: BuilderState, action: BuilderAction): Buil
           ? { part: action.part, index: steps.length }
           : null,
       };
+    }
+    case 'addCustomStep': {
+      if (!data || !spec) return state;
+      const steps = stepsOf(spec, action.part);
+      if (!steps) return state;
+      if ((spec.blocks ?? []).length >= MAX_PROJECT_BLOCKS) {
+        return {
+          ...state,
+          picking: null,
+          error: `A pipeline keeps at most ${MAX_PROJECT_BLOCKS} blocks of its own; nothing was added. Change one of them, or make one reusable and use it from the organization’s blocks.`,
+        };
+      }
+      const { key, name } = customIdentity(data, spec);
+      const added: PipelineSpec = {
+        ...withSteps(spec, action.part, (list) => [
+          ...list,
+          { block: key, version: 1, inputs: {} },
+        ]),
+        blocks: [
+          ...(spec.blocks ?? []),
+          {
+            key,
+            name,
+            version: 1,
+            definition: {
+              // Pull requests only check; a branch's row builds until the person says it deploys.
+              kind: action.part === null ? 'check' : 'build',
+              runsOn: { type: 'hosted', image: CUSTOM_STEP_IMAGE },
+              inputs: [],
+              variables: [],
+              consumes: [],
+              produces: [],
+              caches: [],
+              commands: CUSTOM_STEP_COMMANDS,
+            },
+          },
+        ],
+      };
+      return {
+        ...editing(state, added),
+        picking: null,
+        selected: { part: action.part, index: steps.length },
+      };
+    }
+    case 'editOwnBlock': {
+      if (!data || !spec?.blocks?.some((b) => b.key === action.key)) return state;
+      const { name, ...rest } = action.patch;
+      const blocks = spec.blocks.map((b) =>
+        b.key === action.key
+          ? {
+              ...b,
+              ...(name !== undefined ? { name } : {}),
+              definition: patched(b.definition, rest),
+            }
+          : b
+      );
+      // Its steps follow where it runs: a target block's steps name one, a hosted block's none.
+      const target = defaultTarget(data);
+      const follow = (steps: PipelineStep[]): PipelineStep[] =>
+        steps.map((step) => {
+          if (step.block !== action.key || !rest.runsOn) return step;
+          const { target: old, ...without } = step;
+          if (rest.runsOn === 'hosted') return without;
+          return old || !target ? step : { ...step, target };
+        });
+      return editing(state, {
+        ...spec,
+        blocks,
+        checks: follow(spec.checks),
+        environments: spec.environments.map((e) => ({ ...e, steps: follow(e.steps) })),
+      });
     }
     case 'removeStep': {
       if (!spec) return state;
@@ -603,6 +727,10 @@ export interface StepEditor {
   ref: StepRef;
   name: string;
   where: string;
+  /** What the block says it does. */
+  description: string | null;
+  /** The commands this step runs, as the file gets them: inputs filled in, one still empty left as `${input.NAME}`. */
+  commands: string;
   fields: {
     name: string;
     type: string;
@@ -617,6 +745,23 @@ export interface StepEditor {
   canMoveBack: boolean;
   canMoveOn: boolean;
   newer: number | null;
+  /** The block itself, for one of the project's own: changed here, in every step that uses it. Null for an organization block. */
+  own: OwnBlockEditor | null;
+}
+
+export interface OwnBlockEditor {
+  key: string;
+  name: string;
+  kind: BlockKind;
+  /** The kinds it may be: only a branch's row deploys, so not one used on pull requests. */
+  kinds: BlockKind[];
+  runsOn: 'hosted' | 'target';
+  image: string;
+  docker: boolean;
+  /** As written, placeholders and all. */
+  commands: string;
+  /** What stops the pipeline from being saved with it, in the block editor's words. */
+  problems: string[];
 }
 
 export function stepEditor(state: BuilderState): StepEditor | null {
@@ -628,10 +773,21 @@ export function stepEditor(state: BuilderState): StepEditor | null {
   const block = blockOfStep(spec, organizationBlock(data))(step.block, step.version);
   if (!block) return null;
   const latest = latestOf(data, step.block, spec);
+  const values: Record<string, string> = {};
+  for (const input of block.definition.inputs) {
+    const value = step.inputs[input.name]?.trim() || input.default;
+    if (value !== undefined) values[input.name] = value;
+  }
   return {
     ref: selected,
     name: block.name,
     where: `${partName(selected.part)}, step ${selected.index + 1}`,
+    description:
+      (
+        spec.blocks?.find((b) => b.key === step.block) ??
+        data.blocks.find((b) => b.key === step.block)
+      )?.description ?? null,
+    commands: substitute(block.definition.commands, data.host, values, selected.part ?? undefined),
     fields: block.definition.inputs.map((input) => ({
       name: input.name,
       type: input.type,
@@ -654,6 +810,27 @@ export function stepEditor(state: BuilderState): StepEditor | null {
     canMoveBack: selected.index > 0,
     canMoveOn: selected.index < steps.length - 1,
     newer: latest && latest.version > step.version ? latest.version : null,
+    own: block.project ? ownBlockEditor(spec, block) : null,
+  };
+}
+
+function ownBlockEditor(spec: PipelineSpec, block: PipelineBlock): OwnBlockEditor {
+  const { definition } = block;
+  const read = readBlockDefinition(definition);
+  const onPullRequests = spec.checks.some((s) => s.block === block.key);
+  return {
+    key: block.key,
+    name: block.name,
+    kind: definition.kind,
+    kinds: BLOCK_KINDS.filter((k) => k !== 'deploy' || !onPullRequests),
+    runsOn: definition.runsOn.type,
+    image: definition.runsOn.type === 'hosted' ? definition.runsOn.image : '',
+    docker: definition.runsOn.type === 'hosted' && definition.runsOn.docker !== undefined,
+    commands: definition.commands,
+    problems: [
+      ...(block.name.trim() ? [] : ['Give the step a name.']),
+      ...(read.ok ? [] : read.errors),
+    ],
   };
 }
 

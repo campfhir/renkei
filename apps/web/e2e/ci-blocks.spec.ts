@@ -143,3 +143,64 @@ test('building blocks: draft with AI, preview both hosts, save, publish @smoke',
     if (blockId) await page.request.delete(`/api/admin/ci-blocks/${blockId}`);
   }
 });
+
+test('building blocks: a hosted block asks for Docker and leaves a variable optional', async ({
+  page,
+  person: _person,
+}, testInfo) => {
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const key = `build-image-${tag}`.toLowerCase();
+  let blockId = '';
+
+  try {
+    await page.goto('/admin/ci-blocks/new');
+    const main = page.getByRole('main');
+    await main.getByLabel('Key').fill(key);
+    await main.getByLabel('Name', { exact: true }).fill(`Build the image ${tag}`);
+    await main.getByRole('textbox', { name: 'Container image' }).fill('docker:27-cli');
+    await main.getByLabel('Commands', { exact: true }).fill('docker build .');
+
+    // --- Docker, with the memory its build needs: the step and the file's definitions show it. ---
+    await main.getByLabel('Needs Docker: it builds or runs containers').check();
+    await main.getByLabel('Memory for Docker (MB)').fill('3072');
+    const preview = page.getByTestId('block-preview');
+    await expect(preview).toContainText('services:');
+    await expect(preview).toContainText('# definitions.services in the pipeline file gains:');
+    await expect(preview).toContainText('memory: 3072');
+    await page.getByRole('button', { name: 'GitHub Actions' }).click();
+    await expect(preview).toContainText('/var/run/docker.sock:/var/run/docker.sock');
+    await shot(page, testInfo, 'ci-blocks-05-docker-github');
+
+    // --- A variable it can do without. ---
+    await main.getByRole('button', { name: '+ Add variable' }).click();
+    await main.getByLabel('Variable 1 name').fill('BASE_PATH');
+    await main.getByLabel('Variable 1 is optional').check();
+    await main.getByRole('button', { name: '+ Add cache' }).click();
+    await main.getByLabel('Cache 1 name').fill('pnpm');
+    await main.getByLabel('Cache 1 directory').fill('~/.local/share/pnpm/store');
+    await main.getByLabel('Cache 1 key files').fill('**/pnpm-lock.yaml');
+    await main.getByLabel('Variable 1 description').fill('The prefix it is served under');
+    await shot(page, testInfo, 'ci-blocks-06-optional-variable');
+
+    // --- Save sends both, and they are there when the block is opened again. ---
+    const created = page.waitForResponse(
+      (response) =>
+        response.url().endsWith('/api/admin/ci-blocks') && response.request().method() === 'POST'
+    );
+    await page.getByRole('button', { name: 'Save draft' }).click();
+    const response = await created;
+    expect(response.request().postDataJSON().definition).toMatchObject({
+      runsOn: { type: 'hosted', image: 'docker:27-cli', docker: { memory: 3072 } },
+      variables: [{ name: 'BASE_PATH', secured: false, optional: true }],
+    });
+    const body: unknown = await response.json();
+    blockId = typeof body === 'object' && body !== null && 'id' in body ? String(body.id) : '';
+    await expect(page).toHaveURL(new RegExp(`/admin/ci-blocks/${blockId}$`));
+    await page.reload();
+    await expect(main.getByLabel('Needs Docker: it builds or runs containers')).toBeChecked();
+    await expect(main.getByLabel('Memory for Docker (MB)')).toHaveValue('3072');
+    await expect(main.getByLabel('Variable 1 is optional')).toBeChecked();
+  } finally {
+    if (blockId) await page.request.delete(`/api/admin/ci-blocks/${blockId}`);
+  }
+});

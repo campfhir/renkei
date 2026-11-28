@@ -40,6 +40,8 @@ import {
   type BuilderState,
   type PartCard,
   type StepCard,
+  type OwnBlockEditor,
+  type OwnBlockPatch,
 } from './pipeline-builder.model';
 import { AssistantDockPanel, useAssistantDock } from '@/components/assistant-dock/assistant-dock';
 import ExistingPipeline from './existing-pipeline';
@@ -639,32 +641,46 @@ function Picker({
             Building blocks
           </Link>
         </p>
-      ) : (
-        <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {choices.map((choice) => (
-            <li key={choice.key}>
-              <button
-                type="button"
-                onClick={() => dispatch({ type: 'addStep', part, block: choice.key })}
-                className="flex w-full flex-col items-start gap-0.5 rounded-md border border-gray-200 bg-white p-2 text-left hover:border-blue-400 dark:border-gray-700 dark:bg-gray-950"
-              >
-                <span className="text-[11px] font-semibold text-gray-500 uppercase">
-                  {KIND_LABEL[choice.kind]}
-                  {choice.own ? (
-                    <span className="ml-2 normal-case text-violet-700 dark:text-violet-400">
-                      this project’s own
-                    </span>
-                  ) : null}
-                </span>
-                <span className="text-sm font-medium">{choice.name}</span>
-                {choice.description ? (
-                  <span className="text-xs text-gray-500">{choice.description}</span>
+      ) : null}
+      <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <li>
+          <button
+            type="button"
+            onClick={() => dispatch({ type: 'addCustomStep', part })}
+            className="flex w-full flex-col items-start gap-0.5 rounded-md border border-dashed border-gray-300 bg-white p-2 text-left hover:border-blue-400 dark:border-gray-600 dark:bg-gray-950"
+          >
+            <span className="text-[11px] font-semibold text-violet-700 uppercase dark:text-violet-400">
+              Custom
+            </span>
+            <span className="text-sm font-medium">A custom step</span>
+            <span className="text-xs text-gray-500">
+              Your own commands, for this project only: say where it runs and what it runs.
+            </span>
+          </button>
+        </li>
+        {choices.map((choice) => (
+          <li key={choice.key}>
+            <button
+              type="button"
+              onClick={() => dispatch({ type: 'addStep', part, block: choice.key })}
+              className="flex w-full flex-col items-start gap-0.5 rounded-md border border-gray-200 bg-white p-2 text-left hover:border-blue-400 dark:border-gray-700 dark:bg-gray-950"
+            >
+              <span className="text-[11px] font-semibold text-gray-500 uppercase">
+                {KIND_LABEL[choice.kind]}
+                {choice.own ? (
+                  <span className="ml-2 normal-case text-violet-700 dark:text-violet-400">
+                    this project’s own
+                  </span>
                 ) : null}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+              </span>
+              <span className="text-sm font-medium">{choice.name}</span>
+              {choice.description ? (
+                <span className="text-xs text-gray-500">{choice.description}</span>
+              ) : null}
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -698,6 +714,23 @@ function Editor({
           </button>
         ) : null}
       </div>
+      {editor.description ? (
+        <p className="text-xs whitespace-pre-line text-gray-600 dark:text-gray-400">
+          {editor.description}
+        </p>
+      ) : null}
+      {editor.own ? <OwnBlockFields own={editor.own} dispatch={dispatch} /> : null}
+      <details className="min-w-0 text-xs">
+        <summary className="cursor-pointer font-medium text-blue-600 dark:text-blue-400">
+          The commands it runs
+        </summary>
+        <pre
+          data-testid="step-commands"
+          className="mt-1.5 overflow-x-auto rounded-md bg-gray-900 p-2 font-mono text-gray-100"
+        >
+          {editor.commands}
+        </pre>
+      </details>
       <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
         {editor.targets ? (
           <label className="flex flex-col gap-1 text-xs font-semibold text-gray-700 dark:text-gray-300">
@@ -772,6 +805,116 @@ function Editor({
         </button>
       </div>
     </fieldset>
+  );
+}
+
+const fieldLabelClass =
+  'flex flex-col gap-1 text-xs font-semibold text-gray-700 dark:text-gray-300';
+
+/** One of the project's own blocks, changed where its step is: its name, where it runs and its commands. */
+function OwnBlockFields({
+  own,
+  dispatch,
+}: {
+  own: OwnBlockEditor;
+  dispatch: Dispatch<BuilderAction>;
+}) {
+  const edit = (patch: OwnBlockPatch) => dispatch({ type: 'editOwnBlock', key: own.key, patch });
+  return (
+    <div className="space-y-3 rounded-md border border-violet-200 p-3 dark:border-violet-900">
+      <p className="text-xs text-gray-500">
+        <span className="font-semibold text-violet-700 dark:text-violet-400">
+          This project’s own.
+        </span>{' '}
+        Written here and kept with this pipeline; a change shows in every step that uses it.
+      </p>
+      <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
+        <label className={fieldLabelClass}>
+          Step name
+          <input
+            value={own.name}
+            maxLength={200}
+            onChange={(e) => edit({ name: e.target.value })}
+            className={inputClass}
+          />
+        </label>
+        <label className={fieldLabelClass}>
+          Kind
+          <select
+            value={own.kind}
+            onChange={(e) => {
+              const kind = own.kinds.find((k) => k === e.target.value);
+              if (kind) edit({ kind });
+            }}
+            className={inputClass}
+          >
+            {own.kinds.map((kind) => (
+              <option key={kind} value={kind}>
+                {KIND_LABEL[kind]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className={fieldLabelClass}>
+          Runs on
+          <select
+            value={own.runsOn}
+            onChange={(e) => edit({ runsOn: e.target.value === 'target' ? 'target' : 'hosted' })}
+            className={inputClass}
+          >
+            <option value="hosted">A hosted runner, in a container image</option>
+            <option value="target">A target (self-hosted runners)</option>
+          </select>
+        </label>
+        {own.runsOn === 'hosted' ? (
+          <label className={fieldLabelClass}>
+            Container image
+            <input
+              value={own.image}
+              placeholder="node:22"
+              onChange={(e) => edit({ image: e.target.value })}
+              className={`${inputClass} font-mono`}
+            />
+          </label>
+        ) : null}
+        {own.runsOn === 'hosted' ? (
+          <label className="flex items-center gap-1.5 text-xs sm:col-span-2">
+            <input
+              type="checkbox"
+              checked={own.docker}
+              onChange={(e) => edit({ docker: e.target.checked })}
+            />
+            Needs Docker: it builds or runs containers
+          </label>
+        ) : null}
+        <label className={`${fieldLabelClass} sm:col-span-2`}>
+          Commands
+          <textarea
+            value={own.commands}
+            rows={6}
+            spellCheck={false}
+            onChange={(e) => edit({ commands: e.target.value })}
+            className={`${inputClass} font-mono text-xs font-normal`}
+          />
+          <span className="font-normal text-gray-500">
+            Shell, one command per line. <span className="font-mono">{'${commit}'}</span>,{' '}
+            <span className="font-mono">{'${branch}'}</span> and{' '}
+            <span className="font-mono">{'${repo}'}</span> become the host’s own; variables are read
+            as <span className="font-mono">$NAME</span>.
+          </span>
+        </label>
+      </div>
+      {own.problems.length > 0 ? (
+        <ul
+          aria-label="What this step still needs"
+          className="list-disc space-y-0.5 pl-5 text-xs text-amber-700 dark:text-amber-400"
+        >
+          {own.problems.map((problem) => (
+            <li key={problem}>{problem}</li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
   );
 }
 

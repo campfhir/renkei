@@ -37,6 +37,8 @@ const field =
   'rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
 const input = `w-full ${field}`;
 const label = 'flex flex-col gap-1 text-xs font-semibold text-gray-700 dark:text-gray-300';
+/** A cache's field, named above it on every row: rows stack at a phone's width. */
+const cacheLabel = 'flex flex-col gap-0.5 text-xs font-normal text-gray-500';
 const secondary =
   'rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900';
 const primary =
@@ -296,7 +298,12 @@ export default function BlockEditor({
               />
             </label>
             <label className={label}>
-              Key
+              <span>
+                Key{' '}
+                <span className="font-normal text-gray-500">
+                  — how pipelines name it{state.blockId ? '; fixed once created' : ''}
+                </span>
+              </span>
               <input
                 className={`${input} font-mono`}
                 value={form.key}
@@ -305,14 +312,12 @@ export default function BlockEditor({
                 maxLength={80}
                 onChange={(e) => dispatch({ type: 'field', field: 'key', value: e.target.value })}
               />
-              <span className="font-normal text-gray-500">
-                How pipelines name it{state.blockId ? '; fixed once created' : ''}.
-              </span>
             </label>
             <label className={`${label} sm:col-span-2`}>
               Description
-              <input
-                className={input}
+              <textarea
+                className={`${input} font-normal`}
+                rows={3}
                 value={form.description}
                 maxLength={1000}
                 onChange={(e) =>
@@ -367,6 +372,32 @@ export default function BlockEditor({
                   }
                 />
               </label>
+            ) : null}
+            {form.runsOn === 'hosted' ? (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:col-span-2">
+                <label className="flex items-center gap-1.5 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={form.docker}
+                    onChange={(e) => dispatch({ type: 'docker', docker: e.target.checked })}
+                  />
+                  Needs Docker: it builds or runs containers
+                </label>
+                {form.docker ? (
+                  <label className="flex items-center gap-1.5 text-xs">
+                    Memory for Docker (MB)
+                    <input
+                      className={`${field} w-24 font-mono`}
+                      inputMode="numeric"
+                      value={form.dockerMemory}
+                      placeholder="1024"
+                      onChange={(e) =>
+                        dispatch({ type: 'field', field: 'dockerMemory', value: e.target.value })
+                      }
+                    />
+                  </label>
+                ) : null}
+              </div>
             ) : null}
           </div>
 
@@ -495,6 +526,17 @@ export default function BlockEditor({
                   />
                   Secret
                 </label>
+                <label className="flex items-center gap-1 text-xs">
+                  <input
+                    type="checkbox"
+                    aria-label={`Variable ${index + 1} is optional`}
+                    checked={row.optional}
+                    onChange={(e) =>
+                      dispatch({ type: 'variable', index, patch: { optional: e.target.checked } })
+                    }
+                  />
+                  Optional
+                </label>
                 <input
                   aria-label={`Variable ${index + 1} description`}
                   className={`${field} min-w-0 flex-1`}
@@ -585,34 +627,43 @@ export default function BlockEditor({
               Caches
             </legend>
             {form.caches.map((row, index) => (
-              <div key={index} className="flex flex-wrap gap-1.5">
-                <input
-                  aria-label={`Cache ${index + 1} name`}
-                  className={`${field} w-24 flex-none font-mono`}
-                  value={row.name}
-                  placeholder="npm"
-                  onChange={(e) =>
-                    dispatch({ type: 'cache', index, patch: { name: e.target.value } })
-                  }
-                />
-                <input
-                  aria-label={`Cache ${index + 1} directory`}
-                  className={`${field} w-40 flex-none font-mono`}
-                  value={row.path}
-                  placeholder="~/.npm"
-                  onChange={(e) =>
-                    dispatch({ type: 'cache', index, patch: { path: e.target.value } })
-                  }
-                />
-                <input
-                  aria-label={`Cache ${index + 1} key files`}
-                  className={`${field} min-w-0 flex-1 font-mono`}
-                  value={row.keyFiles}
-                  placeholder="package-lock.json"
-                  onChange={(e) =>
-                    dispatch({ type: 'cache', index, patch: { keyFiles: e.target.value } })
-                  }
-                />
+              <div key={index} className="flex flex-wrap items-end gap-1.5">
+                <label className={`${cacheLabel} w-24 flex-none`}>
+                  Name
+                  <input
+                    aria-label={`Cache ${index + 1} name`}
+                    className={`${input} font-mono text-gray-900 dark:text-gray-100`}
+                    value={row.name}
+                    placeholder="npm"
+                    onChange={(e) =>
+                      dispatch({ type: 'cache', index, patch: { name: e.target.value } })
+                    }
+                  />
+                </label>
+                <label className={`${cacheLabel} w-56 flex-none`}>
+                  Directory
+                  <input
+                    aria-label={`Cache ${index + 1} directory`}
+                    className={`${input} font-mono text-gray-900 dark:text-gray-100`}
+                    value={row.path}
+                    placeholder="~/.npm"
+                    onChange={(e) =>
+                      dispatch({ type: 'cache', index, patch: { path: e.target.value } })
+                    }
+                  />
+                </label>
+                <label className={`${cacheLabel} min-w-40 flex-1`}>
+                  Key files
+                  <input
+                    aria-label={`Cache ${index + 1} key files`}
+                    className={`${input} font-mono text-gray-900 dark:text-gray-100`}
+                    value={row.keyFiles}
+                    placeholder="package-lock.json"
+                    onChange={(e) =>
+                      dispatch({ type: 'cache', index, patch: { keyFiles: e.target.value } })
+                    }
+                  />
+                </label>
                 <button
                   type="button"
                   aria-label={`Remove cache ${index + 1}`}
