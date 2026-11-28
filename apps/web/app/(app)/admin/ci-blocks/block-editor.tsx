@@ -502,7 +502,7 @@ export default function BlockEditor({
               Variables and secrets it reads
             </legend>
             {form.variables.map((row, index) => (
-              <div key={index} className="flex flex-wrap items-center gap-2 pb-1">
+              <div key={index} className="flex flex-wrap items-center gap-2">
                 <input
                   aria-label={`Variable ${index + 1} name`}
                   className={`${field} w-48 flex-none font-mono`}
@@ -533,6 +533,15 @@ export default function BlockEditor({
                   />
                   Optional
                 </label>
+                <input
+                  aria-label={`Variable ${index + 1} description`}
+                  className={`${field} min-w-0 flex-1`}
+                  value={row.description}
+                  placeholder="What it is"
+                  onChange={(e) =>
+                    dispatch({ type: 'variable', index, patch: { description: e.target.value } })
+                  }
+                />
                 <button
                   type="button"
                   aria-label={`Remove variable ${index + 1}`}
@@ -541,16 +550,6 @@ export default function BlockEditor({
                 >
                   Remove
                 </button>
-                <textarea
-                  aria-label={`Variable ${index + 1} description`}
-                  className={`${field} w-full`}
-                  rows={2}
-                  value={row.description}
-                  placeholder="What it is, and where a person finds its value"
-                  onChange={(e) =>
-                    dispatch({ type: 'variable', index, patch: { description: e.target.value } })
-                  }
-                />
               </div>
             ))}
             <button
