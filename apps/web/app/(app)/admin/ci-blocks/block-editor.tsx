@@ -311,8 +311,9 @@ export default function BlockEditor({
             </label>
             <label className={`${label} sm:col-span-2`}>
               Description
-              <input
-                className={input}
+              <textarea
+                className={`${input} font-normal`}
+                rows={3}
                 value={form.description}
                 maxLength={1000}
                 onChange={(e) =>
