@@ -46,6 +46,23 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-28',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Building blocks: optional variables and Docker',
+        detail:
+          'A building block can mark a variable optional, so the pipeline builder no longer asks for it to be set, and a block that runs in a container image can ask for Docker to build or run containers.',
+      },
+      {
+        kind: 'added',
+        title: 'Custom steps in a pipeline',
+        detail:
+          "A row's Add block now offers a custom step: say where it runs and what it runs, for this project only. Opening any step also shows what its block does and the commands it will run.",
+      },
+    ],
+  },
+  {
     date: '2026-11-27',
     entries: [
       {
