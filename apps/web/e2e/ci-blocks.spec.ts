@@ -175,6 +175,10 @@ test('building blocks: a hosted block asks for Docker and leaves a variable opti
     await main.getByRole('button', { name: '+ Add variable' }).click();
     await main.getByLabel('Variable 1 name').fill('BASE_PATH');
     await main.getByLabel('Variable 1 is optional').check();
+    await main.getByRole('button', { name: '+ Add cache' }).click();
+    await main.getByLabel('Cache 1 name').fill('pnpm');
+    await main.getByLabel('Cache 1 directory').fill('~/.local/share/pnpm/store');
+    await main.getByLabel('Cache 1 key files').fill('**/pnpm-lock.yaml');
     await main.getByLabel('Variable 1 description').fill('The prefix it is served under');
     await shot(page, testInfo, 'ci-blocks-06-optional-variable');
 

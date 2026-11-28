@@ -698,6 +698,22 @@ function Editor({
           </button>
         ) : null}
       </div>
+      {editor.description ? (
+        <p className="text-xs whitespace-pre-line text-gray-600 dark:text-gray-400">
+          {editor.description}
+        </p>
+      ) : null}
+      <details className="min-w-0 text-xs">
+        <summary className="cursor-pointer font-medium text-blue-600 dark:text-blue-400">
+          The commands it runs
+        </summary>
+        <pre
+          data-testid="step-commands"
+          className="mt-1.5 overflow-x-auto rounded-md bg-gray-900 p-2 font-mono text-gray-100"
+        >
+          {editor.commands}
+        </pre>
+      </details>
       <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
         {editor.targets ? (
           <label className="flex flex-col gap-1 text-xs font-semibold text-gray-700 dark:text-gray-300">

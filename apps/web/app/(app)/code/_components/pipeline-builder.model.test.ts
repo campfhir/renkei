@@ -193,6 +193,30 @@ describe('editing the rows', () => {
     expect(run([{ type: 'addStep', part: null, block: 'go-lint' }], loaded).selected).toBeNull();
   });
 
+  it('shows what a step’s block does, and the commands it runs as the inputs are filled in', () => {
+    const at = { part: 'production', index: 1 };
+    const opened = run([{ type: 'select', step: at }], loaded);
+    expect(stepEditor(opened)).toMatchObject({
+      description: 'Restart a unit',
+      commands: 'sudo systemctl restart sync-worker',
+    });
+    // An input emptied, with no default to fall back on, stays as the block wrote it.
+    const emptied = run([{ type: 'setInput', step: at, name: 'service_name', value: '' }], opened);
+    expect(stepEditor(emptied)?.commands).toBe('sudo systemctl restart ${input.service_name}');
+    const filled = run(
+      [{ type: 'setInput', step: at, name: 'service_name', value: 'sync' }],
+      emptied
+    );
+    expect(stepEditor(filled)?.commands).toBe('sudo systemctl restart sync');
+
+    // An input left empty takes its default; a block with no description shows none.
+    const build = run([{ type: 'select', step: { part: 'production', index: 0 } }], loaded);
+    expect(stepEditor(build)).toMatchObject({
+      description: null,
+      commands: 'go build -o dist/ ./...',
+    });
+  });
+
   it('fills in a step’s inputs and target, and says what each input is', () => {
     const state = run(
       [

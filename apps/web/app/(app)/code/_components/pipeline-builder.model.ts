@@ -19,6 +19,7 @@ import {
   partName,
   pipelineChecks,
   renderPipeline,
+  substitute,
   type BlockKind,
   type CheckTarget,
   type Host,
@@ -603,6 +604,10 @@ export interface StepEditor {
   ref: StepRef;
   name: string;
   where: string;
+  /** What the block says it does. */
+  description: string | null;
+  /** The commands this step runs, as the file gets them: inputs filled in, one still empty left as `${input.NAME}`. */
+  commands: string;
   fields: {
     name: string;
     type: string;
@@ -628,10 +633,21 @@ export function stepEditor(state: BuilderState): StepEditor | null {
   const block = blockOfStep(spec, organizationBlock(data))(step.block, step.version);
   if (!block) return null;
   const latest = latestOf(data, step.block, spec);
+  const values: Record<string, string> = {};
+  for (const input of block.definition.inputs) {
+    const value = step.inputs[input.name]?.trim() || input.default;
+    if (value !== undefined) values[input.name] = value;
+  }
   return {
     ref: selected,
     name: block.name,
     where: `${partName(selected.part)}, step ${selected.index + 1}`,
+    description:
+      (
+        spec.blocks?.find((b) => b.key === step.block) ??
+        data.blocks.find((b) => b.key === step.block)
+      )?.description ?? null,
+    commands: substitute(block.definition.commands, data.host, values, selected.part ?? undefined),
     fields: block.definition.inputs.map((input) => ({
       name: input.name,
       type: input.type,

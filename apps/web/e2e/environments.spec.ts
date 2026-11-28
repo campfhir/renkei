@@ -123,6 +123,7 @@ test('environments: branches, a branch’s pipeline, variables from a .env, and 
         key: `deploy-${tag}`,
         name: deployName,
         kind: 'deploy',
+        description: 'Restarts the systemd unit on the target.',
         definition: {
           kind: 'deploy',
           runsOn: { type: 'target' },
@@ -136,8 +137,8 @@ test('environments: branches, a branch’s pipeline, variables from a .env, and 
       },
     ]) {
       const id = await created(page.request, '/api/admin/ci-blocks', {
-        ...block,
         description: null,
+        ...block,
       });
       blockIds.push(id);
       const published = await page.request.post(`/api/admin/ci-blocks/${id}/publish`);
@@ -209,6 +210,10 @@ test('environments: branches, a branch’s pipeline, variables from a .env, and 
     const editor = deploys.getByRole('group', { name: new RegExp(`^${deployName}, dev, step`) });
     await editor.getByRole('combobox', { name: 'Target' }).selectOption(target);
     await editor.getByRole('textbox', { name: 'service_name' }).fill('billing');
+    // The step says what its block does, and the commands it runs with the input filled in.
+    await expect(editor).toContainText('Restarts the systemd unit on the target.');
+    await editor.getByText('The commands it runs').click();
+    await expect(editor.getByTestId('step-commands')).toHaveText('sudo systemctl restart billing');
     await editor.getByRole('button', { name: 'Done' }).click();
     await shot(page, testInfo, 'environments-02-pipeline');
     const opened = page.waitForResponse(
