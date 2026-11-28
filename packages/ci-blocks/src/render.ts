@@ -17,7 +17,11 @@
  *   tar so its paths arrive as they were left (upload-artifact would
  *   strip a single directory's name);
  * - where it runs: a hosted block's image is Bitbucket's `image` and
- *   GitHub's `container`; a target's labels are each host's `runs-on`.
+ *   GitHub's `container`; a target's labels are each host's `runs-on`;
+ * - Docker, for a hosted block that needs it: Bitbucket's `docker`
+ *   service beside the step, which also puts the `docker` command in its
+ *   container; on GitHub the runner's own engine, by its socket mounted
+ *   into the job's container, whose image has to bring the command.
  */
 
 import { stringify } from 'yaml';
@@ -117,6 +121,8 @@ export interface BitbucketStep {
   step: Record<string, unknown>;
   /** What the pipeline's `definitions.caches` must hold for it. */
   caches: Record<string, { key?: { files: string[] }; path: string }>;
+  /** The memory its Docker service asks of `definitions.services.docker`; null when it asks none. */
+  dockerMemory: number | null;
 }
 
 export function renderBitbucketStep(
@@ -133,12 +139,14 @@ export function renderBitbucketStep(
       path: cache.path,
     };
   }
+  const docker = definition.runsOn.type === 'hosted' ? definition.runsOn.docker : undefined;
   const step: Record<string, unknown> = {
     name: use.title,
     ...(definition.runsOn.type === 'hosted'
       ? { image: definition.runsOn.image }
       : { 'runs-on': use.target?.bitbucket ?? [] }),
     ...(definition.kind === 'deploy' && use.environment ? { deployment: use.environment } : {}),
+    ...(docker ? { services: ['docker'] } : {}),
     ...(definition.caches.length > 0 ? { caches: Object.keys(caches) } : {}),
     // One script item: Bitbucket runs it as one command, so if/fi and
     // loops spanning lines work as written.
@@ -147,8 +155,11 @@ export function renderBitbucketStep(
       ? { artifacts: definition.produces.flatMap((artifact) => artifact.paths) }
       : {}),
   };
-  return { ok: true, value: { step: { step }, caches } };
+  return { ok: true, value: { step: { step }, caches, dockerMemory: docker?.memory ?? null } };
 }
+
+/** The runner's Docker engine, as a GitHub job's container reaches it. */
+const DOCKER_SOCKET = '/var/run/docker.sock:/var/run/docker.sock';
 
 export interface GithubJob {
   id: string;
@@ -197,7 +208,13 @@ export function renderGithubJob(definition: BlockDefinition, use: BlockUse): Rea
   const job: Record<string, unknown> = {
     name: use.title,
     'runs-on': definition.runsOn.type === 'hosted' ? 'ubuntu-latest' : (use.target?.github ?? []),
-    ...(definition.runsOn.type === 'hosted' ? { container: definition.runsOn.image } : {}),
+    ...(definition.runsOn.type === 'hosted'
+      ? {
+          container: definition.runsOn.docker
+            ? { image: definition.runsOn.image, volumes: [DOCKER_SOCKET] }
+            : definition.runsOn.image,
+        }
+      : {}),
     ...(use.needs && use.needs.length > 0 ? { needs: use.needs } : {}),
     ...(definition.kind === 'deploy' && use.environment ? { environment: use.environment } : {}),
     ...(Object.keys(env).length > 0 ? { env } : {}),
@@ -236,7 +253,11 @@ export function blockYaml(definition: BlockDefinition, host: Host, use: BlockUse
       Object.keys(rendered.value.caches).length > 0
         ? `# definitions.caches in the pipeline file gains:\n${stringify(rendered.value.caches, options).replace(/^/gm, '#   ')}`
         : '';
-    return { ok: true, value: `${stringify([rendered.value.step], options)}${caches}` };
+    const services =
+      rendered.value.dockerMemory !== null
+        ? `# definitions.services in the pipeline file gains:\n${stringify({ docker: { memory: rendered.value.dockerMemory } }, options).replace(/^/gm, '#   ')}`
+        : '';
+    return { ok: true, value: `${stringify([rendered.value.step], options)}${caches}${services}` };
   }
   const rendered = renderGithubJob(definition, use);
   if (!rendered.ok) return rendered;

@@ -104,6 +104,103 @@ describe('reading a block', () => {
   });
 });
 
+describe('a variable the commands can do without', () => {
+  it('is required unless the block says it is optional', () => {
+    const definition = read({
+      ...nodeBuild,
+      variables: [
+        { name: 'NPM_TOKEN', secured: true },
+        { name: 'BASE_PATH', secured: false, optional: true },
+      ],
+    });
+    expect(definition.variables).toEqual([
+      { name: 'NPM_TOKEN', secured: true },
+      { name: 'BASE_PATH', secured: false, optional: true },
+    ]);
+  });
+
+  it('still reaches a GitHub job, empty when nobody set it', () => {
+    const rendered = renderGithubJob(
+      read({ ...nodeBuild, variables: [{ name: 'BASE_PATH', secured: false, optional: true }] }),
+      use({ id: 'build', title: 'Build', environment: undefined, needs: [] })
+    );
+    if (!rendered.ok) throw new Error(rendered.errors.join());
+    expect(rendered.value.job.env).toEqual({ BASE_PATH: '${{ vars.BASE_PATH }}' });
+  });
+});
+
+describe('a hosted block that needs Docker', () => {
+  const image = (docker: unknown) => ({
+    ...nodeBuild,
+    runsOn: { type: 'hosted', image: 'docker:27-cli', docker },
+  });
+
+  it('is read with the memory it asks for, or none', () => {
+    expect(read(image({ memory: 3072 })).runsOn).toEqual({
+      type: 'hosted',
+      image: 'docker:27-cli',
+      docker: { memory: 3072 },
+    });
+    expect(read(image({})).runsOn).toEqual({ type: 'hosted', image: 'docker:27-cli', docker: {} });
+  });
+
+  it('is refused more memory than a Bitbucket step leaves, less than it allows, or no number', () => {
+    for (const memory of [4096, 64, 1024.5, 'lots']) {
+      const result = readBlockDefinition(image({ memory }));
+      expect(result.ok ? [] : result.errors).toEqual([
+        'Memory for Docker is a whole number of megabytes from 128 to 3072.',
+      ]);
+    }
+  });
+
+  it('is not a target block’s to ask: its machine has an engine', () => {
+    expect(
+      read({ ...systemd, runsOn: { type: 'target', docker: { memory: 2048 } } }).runsOn
+    ).toEqual({ type: 'target' });
+  });
+
+  it('gets Bitbucket’s docker service beside the step, and says what memory the file must give it', () => {
+    const rendered = renderBitbucketStep(
+      read(image({ memory: 3072 })),
+      use({ title: 'Build', environment: undefined })
+    );
+    if (!rendered.ok) throw new Error(rendered.errors.join());
+    expect(rendered.value.step.step).toMatchObject({
+      image: 'docker:27-cli',
+      services: ['docker'],
+    });
+    expect(rendered.value.dockerMemory).toBe(3072);
+
+    const plain = renderBitbucketStep(
+      read(image({})),
+      use({ title: 'Build', environment: undefined })
+    );
+    if (!plain.ok) throw new Error(plain.errors.join());
+    expect(plain.value.step.step).toMatchObject({ services: ['docker'] });
+    expect(plain.value.dockerMemory).toBeNull();
+  });
+
+  it('gets the runner’s engine in a GitHub job, by its socket', () => {
+    const rendered = renderGithubJob(
+      read(image({ memory: 3072 })),
+      use({ id: 'build', title: 'Build', environment: undefined, needs: [] })
+    );
+    if (!rendered.ok) throw new Error(rendered.errors.join());
+    expect(rendered.value.job.container).toEqual({
+      image: 'docker:27-cli',
+      volumes: ['/var/run/docker.sock:/var/run/docker.sock'],
+    });
+  });
+
+  it('shows in the preview what definitions.services gains', () => {
+    const definition = read(image({ memory: 2048 }));
+    const preview = blockYaml(definition, 'bitbucket', sampleUse(definition, 'Build'));
+    expect(preview.ok && preview.value).toContain(
+      '# definitions.services in the pipeline file gains:\n#   docker:\n#     memory: 2048'
+    );
+  });
+});
+
 describe('as a Bitbucket step', () => {
   it('runs a target block on its runner labels, deploys its environment, and spells placeholders Bitbucket’s way', () => {
     const rendered = renderBitbucketStep(read(systemd), use());

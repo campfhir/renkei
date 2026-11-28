@@ -40,6 +40,8 @@ export interface InputRow {
 export interface VariableRow {
   name: string;
   secured: boolean;
+  /** The commands run without it, so a pipeline is not told to set it. */
+  optional: boolean;
   description: string;
 }
 export interface ArtifactRow {
@@ -61,6 +63,10 @@ export interface BlockForm {
   kind: BlockKind;
   runsOn: 'hosted' | 'target';
   image: string;
+  /** A hosted block that builds or runs containers. */
+  docker: boolean;
+  /** Megabytes for Docker on Bitbucket, as typed; empty is Bitbucket's own 1024. */
+  dockerMemory: string;
   inputs: InputRow[];
   variables: VariableRow[];
   /** Artifacts it takes, comma-separated as typed. */
@@ -112,7 +118,8 @@ export interface BlockEditorState {
   gone: boolean;
 }
 
-export type FieldName = 'key' | 'name' | 'description' | 'image' | 'consumes' | 'commands';
+export type FieldName =
+  'key' | 'name' | 'description' | 'image' | 'dockerMemory' | 'consumes' | 'commands';
 
 export type BlockEditorAction =
   | { type: 'loaded'; block: BlockDetailView }
@@ -120,6 +127,7 @@ export type BlockEditorAction =
   | { type: 'field'; field: FieldName; value: string }
   | { type: 'kind'; kind: BlockKind }
   | { type: 'runsOn'; runsOn: 'hosted' | 'target' }
+  | { type: 'docker'; docker: boolean }
   | { type: 'addRow'; list: 'inputs' | 'variables' | 'produces' | 'caches' }
   | { type: 'removeRow'; list: 'inputs' | 'variables' | 'produces' | 'caches'; index: number }
   | { type: 'input'; index: number; patch: Partial<InputRow> }
@@ -142,6 +150,8 @@ export const EMPTY_FORM: BlockForm = {
   kind: 'build',
   runsOn: 'hosted',
   image: '',
+  docker: false,
+  dockerMemory: '',
   inputs: [],
   variables: [],
   consumes: '',
@@ -185,6 +195,7 @@ export function formFromDefinition(
 ): BlockForm {
   const def = isRecord(definition) ? definition : {};
   const runsOn = isRecord(def.runsOn) ? def.runsOn : {};
+  const docker = runsOn.type !== 'target' && isRecord(runsOn.docker) ? runsOn.docker : null;
   return {
     key: block.key,
     name: block.name,
@@ -192,6 +203,8 @@ export function formFromDefinition(
     kind: BLOCK_KINDS.find((k) => k === block.kind) ?? 'build',
     runsOn: runsOn.type === 'target' ? 'target' : 'hosted',
     image: text(runsOn.image),
+    docker: docker !== null,
+    dockerMemory: typeof docker?.memory === 'number' ? String(docker.memory) : '',
     inputs: rows(def.inputs).map((row) => ({
       name: text(row.name),
       type: INPUT_TYPES.find((t) => t === row.type) ?? 'text',
@@ -201,6 +214,7 @@ export function formFromDefinition(
     variables: rows(def.variables).map((row) => ({
       name: text(row.name),
       secured: row.secured === true,
+      optional: row.optional === true,
       description: text(row.description),
     })),
     consumes: (Array.isArray(def.consumes) ? def.consumes.map(text) : [])
@@ -221,10 +235,15 @@ export function formFromDefinition(
 
 /** The definition the form makes, as the server keeps it. */
 export function definitionOf(form: BlockForm): Record<string, unknown> {
+  // Docker is a hosted block's to ask for; what is typed that is no number goes as typed, to be refused by name.
+  const memory = form.dockerMemory.trim();
+  const docker = { ...(memory ? { memory: /^\d+$/.test(memory) ? Number(memory) : memory } : {}) };
   return {
     kind: form.kind,
     runsOn:
-      form.runsOn === 'hosted' ? { type: 'hosted', image: form.image.trim() } : { type: 'target' },
+      form.runsOn === 'hosted'
+        ? { type: 'hosted', image: form.image.trim(), ...(form.docker ? { docker } : {}) }
+        : { type: 'target' },
     inputs: form.inputs.map((row) => ({
       name: row.name.trim(),
       type: row.type,
@@ -234,6 +253,7 @@ export function definitionOf(form: BlockForm): Record<string, unknown> {
     variables: form.variables.map((row) => ({
       name: row.name.trim(),
       secured: row.secured,
+      ...(row.optional ? { optional: true } : {}),
       ...(row.description.trim() ? { description: row.description.trim() } : {}),
     })),
     consumes: splitList(form.consumes),
@@ -264,7 +284,7 @@ function fromDetail(state: BlockEditorState, block: BlockDetailView): BlockEdito
 
 const NEW_ROWS = {
   inputs: (): InputRow => ({ name: '', type: 'text', default: '', description: '' }),
-  variables: (): VariableRow => ({ name: '', secured: false, description: '' }),
+  variables: (): VariableRow => ({ name: '', secured: false, optional: false, description: '' }),
   produces: (): ArtifactRow => ({ name: '', paths: '' }),
   caches: (): CacheRow => ({ name: '', path: '', keyFiles: '' }),
 };
@@ -294,6 +314,8 @@ export function blockEditorReducer(
       return editing(state, { ...state.form, kind: action.kind });
     case 'runsOn':
       return editing(state, { ...state.form, runsOn: action.runsOn });
+    case 'docker':
+      return editing(state, { ...state.form, docker: action.docker });
     case 'addRow':
       return editing(state, {
         ...state.form,
@@ -476,7 +498,15 @@ export function hostNoteOf(state: BlockEditorState): string {
       ? 'Runs on the target a pipeline picks: its Bitbucket runner labels become runs-on. Shown with sample labels.'
       : 'Runs on the target a pipeline picks: its GitHub runner labels become runs-on. Shown with sample labels.';
   }
-  return state.host === 'bitbucket'
-    ? 'Runs in the image on Bitbucket’s own runners. Repository and deployment variables reach the step by themselves.'
-    : 'Runs in the image as a container job on ubuntu-latest. Variables are passed from vars, secured ones from secrets.';
+  const docker = !state.form.docker
+    ? ''
+    : state.host === 'bitbucket'
+      ? ' Bitbucket’s Docker service runs beside the step and puts the docker command in its container.'
+      : ' Docker is the runner’s own engine, by its socket: the image has to bring the docker command.';
+  return (
+    (state.host === 'bitbucket'
+      ? 'Runs in the image on Bitbucket’s own runners. Repository and deployment variables reach the step by themselves.'
+      : 'Runs in the image as a container job on ubuntu-latest. Variables are passed from vars, secured ones from secrets.') +
+    docker
+  );
 }

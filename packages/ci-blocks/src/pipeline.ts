@@ -376,6 +376,8 @@ function bitbucketFile(
   report: ReportTo | null
 ): string {
   const caches: Record<string, unknown> = {};
+  // Bitbucket has one `docker` service for the file: it gets the most any step asks for.
+  let dockerMemory: number | null = null;
   const markers: { path: (string | number)[]; text: string }[] = [];
   const pipelines: Record<string, unknown> = {};
   const branches: Record<string, unknown[]> = {};
@@ -390,6 +392,9 @@ function bitbucketFile(
         return;
       }
       Object.assign(caches, out.value.caches);
+      if (out.value.dockerMemory !== null) {
+        dockerMemory = Math.max(dockerMemory ?? 0, out.value.dockerMemory);
+      }
       if (report && part.environment && rendered.block.definition.kind === 'deploy') {
         out.value.step.step = bitbucketReporting(
           out.value.step.step,
@@ -409,8 +414,12 @@ function bitbucketFile(
     else pipelines['pull-requests'] = { '**': items };
   }
   if (Object.keys(branches).length > 0) pipelines.branches = branches;
+  const definitions = {
+    ...(Object.keys(caches).length > 0 ? { caches } : {}),
+    ...(dockerMemory !== null ? { services: { docker: { memory: dockerMemory } } } : {}),
+  };
   const doc = new Document(
-    { ...(Object.keys(caches).length > 0 ? { definitions: { caches } } : {}), pipelines },
+    { ...(Object.keys(definitions).length > 0 ? { definitions } : {}), pipelines },
     NO_ALIASES
   );
   doc.commentBefore = FILE_HEADER;
@@ -674,7 +683,8 @@ export function pipelineChecks(
           ...(environment ? environment.variables : []),
         ]);
         for (const variable of block.definition.variables) {
-          if (!has.has(variable.name)) {
+          // An optional one is the block's to do without: unset, it holds nothing up.
+          if (!variable.optional && !has.has(variable.name)) {
             const missing = missingVariables.get(variable.name) ?? {
               secured: false,
               where: new Set<string | null>(),

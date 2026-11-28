@@ -368,6 +368,32 @@ export default function BlockEditor({
                 />
               </label>
             ) : null}
+            {form.runsOn === 'hosted' ? (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:col-span-2">
+                <label className="flex items-center gap-1.5 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={form.docker}
+                    onChange={(e) => dispatch({ type: 'docker', docker: e.target.checked })}
+                  />
+                  Needs Docker: it builds or runs containers
+                </label>
+                {form.docker ? (
+                  <label className="flex items-center gap-1.5 text-xs">
+                    Memory for Docker (MB)
+                    <input
+                      className={`${field} w-24 font-mono`}
+                      inputMode="numeric"
+                      value={form.dockerMemory}
+                      placeholder="1024"
+                      onChange={(e) =>
+                        dispatch({ type: 'field', field: 'dockerMemory', value: e.target.value })
+                      }
+                    />
+                  </label>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           <fieldset className="min-w-0 space-y-1">
@@ -494,6 +520,17 @@ export default function BlockEditor({
                     }
                   />
                   Secret
+                </label>
+                <label className="flex items-center gap-1 text-xs">
+                  <input
+                    type="checkbox"
+                    aria-label={`Variable ${index + 1} is optional`}
+                    checked={row.optional}
+                    onChange={(e) =>
+                      dispatch({ type: 'variable', index, patch: { optional: e.target.checked } })
+                    }
+                  />
+                  Optional
                 </label>
                 <input
                   aria-label={`Variable ${index + 1} description`}

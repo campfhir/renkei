@@ -127,6 +127,44 @@ describe('the file each host runs', () => {
     expect(rendered.value).toContain('# block: deploy-systemd@v1, target onprem-workers');
   });
 
+  it('Bitbucket: steps that need Docker share one docker service, given the most memory any asks for', () => {
+    const image = (key: string, memory?: number): PipelineBlock => ({
+      key,
+      name: key,
+      version: 1,
+      definition: {
+        ...nodeTest,
+        runsOn: {
+          type: 'hosted',
+          image: 'docker:27-cli',
+          docker: memory === undefined ? {} : { memory },
+        },
+      },
+    });
+    const blocks = [image('small', 2048), image('large', 3072), image('default')];
+    const file = (keys: string[]) => {
+      const rendered = renderPipeline(
+        { checks: keys.map((block) => ({ block, version: 1, inputs: {} })), environments: [] },
+        { ...context('bitbucket'), block: (key) => blocks.find((b) => b.key === key) ?? null }
+      );
+      if (!rendered.ok) throw new Error(rendered.errors.join('\n'));
+      return parse(rendered.value);
+    };
+
+    const both = file(['small', 'large']);
+    expect(both.definitions).toEqual({ services: { docker: { memory: 3072 } } });
+    expect(
+      both.pipelines['pull-requests']['**'].map(
+        (s: { step: { services: string[] } }) => s.step.services
+      )
+    ).toEqual([['docker'], ['docker']]);
+
+    // One that names no memory takes Bitbucket's own, and the file defines nothing for it.
+    const plain = file(['default']);
+    expect(plain.definitions).toBeUndefined();
+    expect(plain.pipelines['pull-requests']['**'][0].step.services).toEqual(['docker']);
+  });
+
   it('GitHub: one workflow, each job gated on its event and branch, waiting for the one before it', () => {
     const rendered = renderPipeline(spec, context('github'));
     if (!rendered.ok) throw new Error(rendered.errors.join('\n'));
@@ -282,6 +320,33 @@ describe('before it runs', () => {
         null,
       ],
     ]);
+  });
+
+  it('does not hold a pipeline up for an optional variable nobody set', () => {
+    const optional: PipelineBlock = {
+      key: 'deploy-systemd',
+      name: 'Deploy with systemd',
+      version: 1,
+      definition: {
+        ...systemd,
+        variables: [
+          { name: 'DEPLOY_NOTIFY_URL', secured: false },
+          { name: 'BASE_PATH', secured: false, optional: true },
+        ],
+      },
+    };
+    const blocks = {
+      at: (key: string, version: number) =>
+        key === 'deploy-systemd' ? optional : at(key, version),
+      latest,
+    };
+    const failed = (repoVariables: string[]) =>
+      pipelineChecks(spec, blocks, targets, facts({ repoVariables }))
+        .filter((c) => c.state === 'fail')
+        .map((c) => c.text);
+    expect(failed(['DEPLOY_NOTIFY_URL'])).toEqual([]);
+    // The one it cannot do without is still asked for, alone.
+    expect(failed([])).toEqual(['DEPLOY_NOTIFY_URL is not set for dev, production.']);
   });
 
   it('offers a newer block version, and says what the pull request replaces', () => {

@@ -16,7 +16,13 @@
  *
  * Variables are read as ordinary shell variables (`$REGISTRY_TOKEN`): a
  * Bitbucket step gets repository and deployment variables by itself; a
- * GitHub job is given them from `vars` or `secrets` by the renderer.
+ * GitHub job is given them from `vars` or `secrets` by the renderer. A
+ * variable the commands can do without is marked optional, and a pipeline
+ * is not told to set it.
+ *
+ * A hosted block that builds or runs containers says it needs Docker: a
+ * container has no engine of its own, and each host lends one its own way
+ * (render.ts). A block on a target uses the engine its machine has.
  */
 
 import { isRecord } from '@renkei/guards';
@@ -41,7 +47,15 @@ export interface BlockVariable {
   name: string;
   /** A secret: a secured variable on Bitbucket, a secret on GitHub. */
   secured: boolean;
+  /** The commands run without it: a pipeline that has not set it is not held up. */
+  optional?: true;
   description?: string;
+}
+
+/** The Docker engine a hosted block is lent. */
+export interface BlockDocker {
+  /** Megabytes for the engine on Bitbucket, out of the step's 4096; unset is Bitbucket's 1024. */
+  memory?: number;
 }
 
 export interface BlockArtifact {
@@ -61,7 +75,7 @@ export interface BlockCache {
 
 export type BlockRunsOn =
   /** In this container image on a hosted runner. */
-  | { type: 'hosted'; image: string }
+  | { type: 'hosted'; image: string; docker?: BlockDocker }
   /** On the target a pipeline picks: a runner group's machines (no container). */
   | { type: 'target' };
 
@@ -81,6 +95,12 @@ const INPUT_NAME = /^[a-z][a-z0-9_]{0,39}$/;
 const VARIABLE_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
 const ARTIFACT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const IMAGE = /^[a-z0-9][a-z0-9._\-/:@]{0,199}$/;
+/**
+ * What Bitbucket lets its Docker service have on a standard step: no less
+ * than 128 MB, and no more than leaves the step's own container 1024 of
+ * the 4096 they share.
+ */
+export const DOCKER_MEMORY = { min: 128, max: 3072 } as const;
 /** Names a host keeps for itself and a block may not shadow. */
 const RESERVED_VARIABLE = /^(BITBUCKET_|GITHUB_|RUNNER_|CI$|HOME$|PATH$|RENKEI_)/;
 /**
@@ -131,6 +151,23 @@ export function readBlockDefinition(value: unknown): Read<BlockDefinition> {
     if (!IMAGE.test(image))
       errors.push('A block that runs on a hosted runner needs a container image, e.g. node:22.');
     runsOn = { type: 'hosted', image };
+    if (isRecord(where.docker)) {
+      const memory = where.docker.memory;
+      if (memory === undefined || memory === null) {
+        runsOn.docker = {};
+      } else if (
+        typeof memory === 'number' &&
+        Number.isInteger(memory) &&
+        memory >= DOCKER_MEMORY.min &&
+        memory <= DOCKER_MEMORY.max
+      ) {
+        runsOn.docker = { memory };
+      } else {
+        errors.push(
+          `Memory for Docker is a whole number of megabytes from ${DOCKER_MEMORY.min} to ${DOCKER_MEMORY.max}.`
+        );
+      }
+    }
   } else if (where.type !== 'target') {
     errors.push('Say where the block runs: a container image on a hosted runner, or a target.');
   }
@@ -197,6 +234,7 @@ export function readBlockDefinition(value: unknown): Read<BlockDefinition> {
     variables.push({
       name,
       secured: entry.secured === true,
+      ...(entry.optional === true ? { optional: true as const } : {}),
       ...(text(entry.description).trim() ? { description: text(entry.description).trim() } : {}),
     });
   }
